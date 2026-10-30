@@ -37,6 +37,8 @@ jobs:
           npm install --no-save --package-lock=false playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
+        env:
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'consolidated-desktop,consolidated-six-weeks,consolidated-mobile' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"

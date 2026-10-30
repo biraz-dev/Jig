@@ -31,6 +31,8 @@ pub struct Task {
     pub id: u64,
     pub text: String,
     pub complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Deadline {
@@ -174,11 +176,14 @@ impl State {
         {
             title(text)?;
         }
-        if self
-            .featured
-            .is_some_and(|id| !self.deadlines.iter().any(|d| d.id == id))
-        {
-            return Err("Featured deadline is missing".into());
+        let mut linked = std::collections::HashSet::new();
+        for deadline in self.tasks.iter().filter_map(|task| task.deadline) {
+            if !self.deadlines.iter().any(|item| item.id == deadline) || !linked.insert(deadline) {
+                return Err("Task deadline is missing or linked to more than one task".into());
+            }
+        }
+        if self.featured.is_some_and(|id| !self.is_deadline_active(id)) {
+            return Err("Featured deadline is missing or completed".into());
         }
         Ok(())
     }
@@ -212,16 +217,23 @@ impl State {
             id,
             text: title(text)?,
             complete: false,
+            deadline: None,
         });
         Ok(id)
     }
     pub fn edit_task(&mut self, id: u64, text: &str) -> Result<()> {
         let text = title(text)?;
-        self.tasks
+        let task = self
+            .tasks
             .iter_mut()
             .find(|t| t.id == id)
-            .ok_or("Task not found")?
-            .text = text;
+            .ok_or("Task not found")?;
+        task.text = text.clone();
+        if let Some(deadline) = task.deadline {
+            if let Some(item) = self.deadlines.iter_mut().find(|item| item.id == deadline) {
+                item.title = text;
+            }
+        }
         Ok(())
     }
     pub fn toggle_task(&mut self, id: u64) -> Result<()> {
@@ -231,6 +243,9 @@ impl State {
             .find(|t| t.id == id)
             .ok_or("Task not found")?;
         task.complete = !task.complete;
+        if task.complete && task.deadline.is_some() && self.featured == task.deadline {
+            self.featured = None;
+        }
         Ok(())
     }
     pub fn remove_task(&mut self, id: u64) -> Result<()> {
@@ -239,13 +254,98 @@ impl State {
             .iter()
             .position(|t| t.id == id)
             .ok_or("Task not found")?;
+        if let Some(deadline) = self.tasks[index].deadline {
+            self.remove_deadline(deadline)?;
+        }
         self.tasks.remove(index);
         Ok(())
     }
     pub fn remove_completed_tasks(&mut self) -> usize {
         let before = self.tasks.len();
+        let removed: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|task| task.complete)
+            .filter_map(|task| task.deadline)
+            .collect();
         self.tasks.retain(|task| !task.complete);
+        self.deadlines
+            .retain(|deadline| !removed.contains(&deadline.id));
+        if self.featured.is_some_and(|id| removed.contains(&id)) {
+            self.featured = None;
+        }
         before - self.tasks.len()
+    }
+    pub fn task_deadline(&self, id: u64) -> Option<&Deadline> {
+        let deadline = self.tasks.iter().find(|task| task.id == id)?.deadline?;
+        self.deadlines.iter().find(|item| item.id == deadline)
+    }
+    /// A date belongs to its checklist task; assigning one does not feature it.
+    pub fn set_task_deadline(&mut self, id: u64, at: Option<&str>) -> Result<()> {
+        let at = at.map(parse_deadline).transpose()?;
+        let index = self
+            .tasks
+            .iter()
+            .position(|task| task.id == id)
+            .ok_or("Task not found")?;
+        if let Some(at) = at {
+            let title = self.tasks[index].text.clone();
+            if let Some(deadline) = self.tasks[index].deadline {
+                let item = self
+                    .deadlines
+                    .iter_mut()
+                    .find(|item| item.id == deadline)
+                    .ok_or("Task deadline not found")?;
+                item.title = title;
+                item.at = at;
+            } else {
+                let deadline = self.id()?;
+                self.deadlines.push(Deadline {
+                    id: deadline,
+                    title,
+                    at,
+                });
+                self.tasks[index].deadline = Some(deadline);
+            }
+        } else if let Some(deadline) = self.tasks[index].deadline {
+            self.remove_deadline(deadline)?;
+        }
+        Ok(())
+    }
+    pub fn feature_task(&mut self, id: u64) -> Result<()> {
+        let task = self
+            .tasks
+            .iter()
+            .find(|task| task.id == id)
+            .ok_or("Task not found")?;
+        if task.complete {
+            return Err("Completed tasks cannot be featured".into());
+        }
+        let deadline = task.deadline.ok_or("Add a date before featuring this task")?;
+        self.feature(deadline)
+    }
+    /// Keep old deadline-only files intact until the user acts on that row.
+    pub fn ensure_task_for_deadline(&mut self, id: u64) -> Result<u64> {
+        if let Some(task) = self.tasks.iter().find(|task| task.deadline == Some(id)) {
+            return Ok(task.id);
+        }
+        let text = self
+            .deadlines
+            .iter()
+            .find(|deadline| deadline.id == id)
+            .ok_or("Deadline not found")?
+            .title
+            .clone();
+        let task = self.add_task(&text)?;
+        self.tasks.last_mut().ok_or("Task not found")?.deadline = Some(id);
+        Ok(task)
+    }
+    pub fn is_deadline_active(&self, id: u64) -> bool {
+        self.deadlines.iter().any(|deadline| deadline.id == id)
+            && !self
+                .tasks
+                .iter()
+                .any(|task| task.deadline == Some(id) && task.complete)
     }
     pub fn move_task(&mut self, id: u64, position: usize) -> Result<()> {
         if position == 0 || position > self.tasks.len() {
@@ -269,8 +369,11 @@ impl State {
                 .iter_mut()
                 .find(|d| d.id == id)
                 .ok_or("Deadline not found")?;
-            d.title = title;
+            d.title = title.clone();
             d.at = at;
+            if let Some(task) = self.tasks.iter_mut().find(|task| task.deadline == Some(id)) {
+                task.text = title;
+            }
             Ok(id)
         } else {
             let id = self.id()?;
@@ -285,6 +388,9 @@ impl State {
         if !self.deadlines.iter().any(|d| d.id == id) {
             return Err("Deadline not found".into());
         }
+        if !self.is_deadline_active(id) {
+            return Err("Completed tasks cannot be featured".into());
+        }
         self.featured = Some(id);
         Ok(())
     }
@@ -295,6 +401,11 @@ impl State {
             .position(|d| d.id == id)
             .ok_or("Deadline not found")?;
         self.deadlines.remove(i);
+        for task in &mut self.tasks {
+            if task.deadline == Some(id) {
+                task.deadline = None;
+            }
+        }
         if self.featured == Some(id) {
             self.featured = None;
         }

@@ -52,13 +52,36 @@ async function release(context, label) {
   await bounded(context.close(), 5000, `Closing ${label}`);
 }
 
+async function paint(page) {
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function capture(page, name) {
+  const png = await page.screenshot({ path: resolve(results, `${name}.png`) });
+  // Optional visual-review output contains only these synthetic test scenes.
+  // Normal CI keeps PNGs in its artifact without printing their encoded bytes.
+  const allowed = new Set([
+    "consolidated-sample", "consolidated-desktop", "consolidated-medium",
+    "consolidated-mobile", "consolidated-six-weeks", "consolidated-data-open",
+    "consolidated-math-maximized", "consolidated-calendar-maximized",
+    "consolidated-checklist-maximized", "consolidated-dated-task",
+  ]);
+  const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
+  if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
+    console.log(`JIG_RENDER_BEGIN_${name}`);
+    const encoded = png.toString("base64");
+    for (let offset = 0; offset < encoded.length; offset += 2048) console.log(encoded.slice(offset, offset + 2048));
+    console.log(`JIG_RENDER_END_${name}`);
+  }
+}
+
 const browser = await chromium.launch({
   headless: true,
   args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"],
 });
 
 async function newPage(label, {
-  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache,
+  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime,
 } = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true });
   await context.addInitScript(() => {
@@ -120,7 +143,7 @@ async function newPage(label, {
         if (weather.fail) {
           await route.fulfill({ status: 503, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: '{"error":true,"reason":"Synthetic provider outage"}' });
         } else {
-          await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(mockForecast(weather.config)) });
+          await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(mockForecast(weather.config, weather.now)) });
         }
       } else {
         assert.equal(url.pathname, "/v1/search");
@@ -131,6 +154,7 @@ async function newPage(label, {
     });
   }
   const page = await context.newPage();
+  if (fixedTime) await page.clock.setFixedTime(new Date(fixedTime));
   observe(page, label, weather ? weatherOrigins : []);
   return { context, page };
 }
@@ -210,9 +234,9 @@ async function expectCalculation(page, expression, result, length, unit) {
   }, { key, expression, result, length, unit }, { timeout: 15000 });
 }
 
-function mockForecast(config) {
+function mockForecast(config, at = new Date()) {
   const unit = config.unit;
-  const today = new Date();
+  const today = new Date(at);
   today.setUTCHours(0, 0, 0, 0);
   const dates = [0, 1].map(offset => new Date(today.getTime() + offset * 86400000).toISOString().slice(0, 10));
   const fahrenheit = unit === "fahrenheit";
@@ -243,8 +267,8 @@ async function expectWeatherCache(page, config) {
   return page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey);
 }
 
-function checkWeather(cache, config) {
-  const raw = mockForecast(config);
+function checkWeather(cache, config, at) {
+  const raw = mockForecast(config, at);
   assert.deepEqual(cache.config, config);
   assert.equal(cache.forecast.timezone, "Etc/UTC");
   assert.ok(Number.isFinite(Date.parse(cache.forecast.fetched_at)));
@@ -265,7 +289,7 @@ try {
   const demo = await newPage("sample-desktop");
   await boot(demo.page, false, `${base}#weather=Sample%20Harbor`);
   assert.equal(await saved(demo.page), null, "Fresh preview should start with temporary sample data");
-  await demo.page.screenshot({ path: resolve(results, "sample-desktop.png") });
+  await capture(demo.page, "consolidated-sample");
   await calculate(demo.page, "1 / 3");
   await demo.page.waitForTimeout(1200);
   assert.equal(await saved(demo.page), null, "Editing sample data must not create personal browser state");
@@ -275,10 +299,18 @@ try {
   await boot(personal.page);
   assert.equal(await saved(personal.page), fixtureRaw, "Opening personal state must not rewrite it");
   await personal.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  // Data tools remain inline and must not interfere with ordinary math focus.
+  await personal.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await personal.page.keyboard.press("Control+Alt+d");
+  await paint(personal.page);
+  assert.equal(await saved(personal.page), fixtureRaw, "Opening Data must not rewrite the saved workbench");
+  await capture(personal.page, "consolidated-data-open");
   // Arithmetic and lengths use the same ordinary input and saved history. Old
   // arithmetic entries have no unit field; conversions retain canonical units.
   await calculate(personal.page, "72 in mm");
   await expectCalculation(personal.page, "72 in mm", 1828.8, 2, "mm");
+  await personal.page.keyboard.press("Control+Alt+d");
+  await paint(personal.page);
   await personal.page.screenshot({ path: resolve(results, "hybrid-conversion-desktop.png") });
   const fractionalLength = 1.5 * 0.0254 / 0.01;
   await calculate(personal.page, "1 1/2 in cm");
@@ -306,20 +338,20 @@ try {
   await personal.page.keyboard.press("Control+a");
   await personal.page.keyboard.press("Backspace");
 
-  // The merged calculator/converter must work in both its expanded and closed
-  // dashboard forms, with no extra history records caused by switching views.
-  await personal.page.keyboard.press("F2");
+  // Ctrl+M must let the same input work in maximized and restored dashboard
+  // views, without creating extra history records while switching.
+  await personal.page.keyboard.press("Control+m");
   await calculate(personal.page, "3 / 8");
   await expectCalculation(personal.page, "3 / 8", 0.375, 7);
-  await personal.page.screenshot({ path: resolve(results, "calculator-units-expanded.png") });
-  await personal.page.keyboard.press("F2");
+  await capture(personal.page, "consolidated-math-maximized");
+  await personal.page.keyboard.press("Control+m");
   await calculate(personal.page, "ans * 8");
   await expectCalculation(personal.page, "ans * 8", 3, 8);
-  // Repeatedly rebuild the same input in expanded and dashboard layouts. Every
+  // Repeatedly rebuild the same input in maximized and dashboard layouts. Every
   // keystroke must still reach it, without retries or duplicate calculations.
   const repeated = [1, 2, 3, 4].map(value => ({ expression: `7 + ${value}`, result: 7 + value }));
   for (const [index, calculation] of repeated.entries()) {
-    await personal.page.keyboard.press("F2");
+    await personal.page.keyboard.press("Control+m");
     await calculate(personal.page, calculation.expression);
     await expectCalculation(personal.page, calculation.expression, calculation.result, 9 + index);
   }
@@ -333,8 +365,48 @@ try {
     { expression: "3 / 8", result: 0.375 },
     { expression: "ans * 8", result: 3 },
     ...repeated,
-  ], "Repeated expand/close must preserve the exact calculation order and results");
+  ], "Repeated maximize/restore must preserve the exact calculation order and results");
   assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Combined-tool interactions must preserve hidden calendar notes");
+
+  // A plain arrow remains a caret operation while editing, rather than moving
+  // selection into another applet. Insert a digit before the final operand.
+  progress("calculate using ArrowLeft inside the input");
+  await personal.page.keyboard.press("Control+Alt+4");
+  await personal.page.waitForTimeout(300);
+  await personal.page.keyboard.type("12 + 3", { delay: 15 });
+  await personal.page.keyboard.press("ArrowLeft");
+  await personal.page.keyboard.type("4", { delay: 15 });
+  await personal.page.keyboard.press("Enter");
+  await expectCalculation(personal.page, "12 + 43", 55, 13);
+
+  // Escape exits text editing; arrows then select calendar/checklist applets.
+  // Maximizing and restoring those applets must leave every saved item intact.
+  progress("navigate and maximize selected applets");
+  const beforeNavigation = JSON.parse(await saved(personal.page));
+  await personal.page.keyboard.press("Escape");
+  await paint(personal.page);
+  await personal.page.keyboard.press("ArrowLeft");
+  await paint(personal.page);
+  await personal.page.keyboard.press("ArrowLeft");
+  await paint(personal.page);
+  await personal.page.keyboard.press("Control+m");
+  await paint(personal.page);
+  await capture(personal.page, "consolidated-calendar-maximized");
+  await personal.page.keyboard.press("Escape");
+  await paint(personal.page);
+  await personal.page.keyboard.press("ArrowRight");
+  await paint(personal.page);
+  await personal.page.keyboard.press("Control+m");
+  await paint(personal.page);
+  await capture(personal.page, "consolidated-checklist-maximized");
+  await personal.page.keyboard.press("Escape");
+  await paint(personal.page);
+  const afterNavigation = JSON.parse(await saved(personal.page));
+  for (const field of ["history", "tasks", "deadlines", "entries", "featured"]) {
+    assert.deepEqual(afterNavigation[field], beforeNavigation[field], `Applet navigation changed ${field}`);
+  }
+  await calculate(personal.page, "18 in cm");
+  await expectCalculation(personal.page, "18 in cm", 18 * 0.0254 / 0.01, 14, "cm");
   await personal.page.screenshot({ path: resolve(results, "personal-desktop.png") });
 
   // Exercise the public file bridge: export is a local browser download.
@@ -359,6 +431,66 @@ try {
   }
 
   await release(personal.context, "personal-desktop");
+
+  const linkedFixture = {
+    ...fixture,
+    tasks: [{ ...fixture.tasks[0], text: fixture.deadlines[0].title, deadline: 2 }],
+    featured: null,
+  };
+  const linkedRaw = JSON.stringify(linkedFixture);
+  const linked = await newPage("dated-task-desktop", {
+    raw: linkedRaw, viewport: { width: 1440, height: 1000 },
+  });
+  await boot(linked.page);
+  assert.equal(await saved(linked.page), linkedRaw, "Opening a dated checklist must not migrate or rewrite the saved workbench");
+  await calculate(linked.page, "72 in mm");
+  await expectCalculation(linked.page, "72 in mm", 1828.8, 2, "mm");
+  assert.equal(JSON.parse(await saved(linked.page)).tasks[0].deadline, 2);
+  await boot(linked.page, true);
+  const linkedRestored = JSON.parse(await saved(linked.page));
+  assert.equal(linkedRestored.tasks[0].deadline, 2, "Task dates must survive other edits and restart");
+  assert.equal(linkedRestored.featured, null, "Loading a dated task must not automatically feature it");
+  assert.deepEqual(linkedRestored.entries, fixture.entries);
+  // Maximize the checklist through ordinary selection keys. With text focus
+  // surrendered, Tab visits Data, Source, then its leading task-star button.
+  progress("feature a dated task with the keyboard star");
+  await linked.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await linked.page.keyboard.press("Control+Alt+4");
+  await paint(linked.page);
+  await linked.page.keyboard.press("Escape");
+  await paint(linked.page);
+  await linked.page.keyboard.press("ArrowLeft");
+  await paint(linked.page);
+  await linked.page.keyboard.press("Control+m");
+  await paint(linked.page);
+  for (let index = 0; index < 3; index++) {
+    await linked.page.keyboard.press("Tab");
+    await paint(linked.page);
+  }
+  await linked.page.keyboard.press("Space");
+  await linked.page.waitForFunction(key => {
+    const state = JSON.parse(localStorage.getItem(key));
+    return state.featured === 2 && state.tasks[0].deadline === 2;
+  }, key);
+  const starred = JSON.parse(await saved(linked.page));
+  assert.equal(starred.tasks.length, 1, "Starring a linked task must not duplicate the checklist row");
+  assert.deepEqual(starred.history, linkedRestored.history);
+  assert.deepEqual(starred.deadlines, linkedRestored.deadlines);
+  await linked.page.keyboard.press("Escape");
+  await paint(linked.page);
+  await capture(linked.page, "consolidated-dated-task");
+  await release(linked.context, "dated-task-desktop");
+
+  const medium = await newPage("personal-medium", {
+    raw: fixtureRaw, viewport: { width: 1024, height: 768 },
+  });
+  await boot(medium.page);
+  assert.equal(await medium.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await capture(medium.page, "consolidated-medium");
+  await calculate(medium.page, "24 in cm");
+  await expectCalculation(medium.page, "24 in cm", 24 * 0.0254 / 0.01, 2, "cm");
+  assert.deepEqual(JSON.parse(await saved(medium.page)).entries, fixture.entries);
+  await release(medium.context, "personal-medium");
 
   const malformedRaw = "{broken saved sample fixture";
   const malformed = await newPage("malformed-preserved", { raw: malformedRaw });
@@ -410,7 +542,7 @@ try {
   assert.equal(await saved(shared.page), fixtureRaw, "The other profile must still retain its separate dataset");
   await release(shared.context, "cross-tab pair");
   assert.equal(await compact.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-  await compact.page.screenshot({ path: resolve(results, "sample-mobile.png") });
+  await capture(compact.page, "consolidated-mobile");
   // Reload explicit synthetic personal state so narrow-screen keyboard input
   // is verified through a real saved result rather than only a screenshot.
   await compact.page.evaluate(text => window.jigSave(text), fixtureRaw);
@@ -430,6 +562,7 @@ try {
   const weatherMock = { config: celsius, requests: [] };
   const weather = await newPage("weather-celsius", {
     raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: weatherMock,
+    viewport: { width: 1440, height: 1000 },
   });
   await boot(weather.page);
   const cached = await expectWeatherCache(weather.page, celsius);
@@ -437,7 +570,7 @@ try {
   assert.equal(weatherMock.requests.length, 1, "A configured location needs one forecast request");
   assert.deepEqual(JSON.parse(await saved(weather.page)).tasks, fixture.tasks);
   assert.deepEqual(JSON.parse(await saved(weather.page)).history, fixture.history);
-  await weather.page.screenshot({ path: resolve(results, "weather-desktop.png") });
+  await capture(weather.page, "consolidated-desktop");
   await boot(weather.page, true);
   await weather.page.waitForTimeout(1600);
   assert.equal(weatherMock.requests.length, 1, "A fresh cached forecast should survive restart without another provider request");
@@ -447,6 +580,23 @@ try {
   assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await weather.page.screenshot({ path: resolve(results, "weather-compact.png") });
   await release(weather.context, "weather-celsius");
+
+  // November 2026 needs six Monday-first calendar rows. Freeze Date without
+  // freezing timers so the real Rust startup, rendering and inputs still run.
+  const november = "2026-11-01T12:00:00Z";
+  const sixWeekMock = { config: celsius, requests: [], now: november };
+  const sixWeeks = await newPage("weather-six-weeks", {
+    raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: sixWeekMock,
+    viewport: { width: 1440, height: 1000 }, fixedTime: november,
+  });
+  await boot(sixWeeks.page);
+  assert.equal(await sixWeeks.page.evaluate(() => new Date().toISOString()), november.replace("Z", ".000Z"));
+  checkWeather(await expectWeatherCache(sixWeeks.page, celsius), celsius, november);
+  assert.equal(sixWeekMock.requests.length, 1);
+  await capture(sixWeeks.page, "consolidated-six-weeks");
+  await calculate(sixWeeks.page, "72 in mm");
+  await expectCalculation(sixWeeks.page, "72 in mm", 1828.8, 2, "mm");
+  await release(sixWeeks.context, "weather-six-weeks");
 
   // A second city/unit configuration is independent and must request Fahrenheit.
   const fahrenheit = { name: "Sample Ridge", latitude: 35.68, longitude: 139.76, unit: "fahrenheit" };
@@ -478,7 +628,7 @@ try {
   await release(outage.context, "weather-stale-outage");
 
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded hybrid math and conversion input, fractions, unrounded ans reuse, unit-aware restart persistence, invalid conversion preservation, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, compact layout, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
+  console.log("Browser smoke passed: WASM startup, sample isolation, inline Data with math input, Ctrl+M maximize/restore, arrow applet navigation and caret editing, hybrid math and conversion input, fractions, unrounded ans reuse, unit-aware restart persistence, invalid conversion preservation, dated-task star and restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, desktop/medium/mobile layouts, six-week weather calendar, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`);
   // Earlier completed cases already have screenshots; avoid multiplying failure

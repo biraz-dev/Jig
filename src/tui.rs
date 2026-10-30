@@ -742,7 +742,10 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                                 let deadline = state
                                     .deadlines
                                     .iter()
-                                    .any(|d| d.at.with_timezone(&Local).date_naive() == *day);
+                                    .any(|d| {
+                                        state.is_deadline_active(d.id)
+                                            && d.at.with_timezone(&Local).date_naive() == *day
+                                    });
                                 let entry = state.entries.iter().any(|e| e.date == *day);
                                 let style = if *day == today {
                                     Style::default()

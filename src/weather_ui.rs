@@ -15,6 +15,7 @@ pub struct WeatherPanel {
     query: String,
     locations: Vec<WeatherConfig>,
     editing: bool,
+    options_open: bool,
     searching: bool,
     pending: bool,
     last_attempt: Option<DateTime<Utc>>,
@@ -44,6 +45,7 @@ impl WeatherPanel {
             query: setup.clone().unwrap_or_default(),
             locations: vec![],
             editing: setup.is_some(),
+            options_open: false,
             searching: false,
             pending: false,
             last_attempt: None,
@@ -62,10 +64,6 @@ impl WeatherPanel {
     pub fn config(&self) -> Option<&WeatherConfig> {
         self.config.as_ref()
     }
-    pub fn is_enabled(&self) -> bool {
-        self.config.is_some()
-    }
-
     /// Used after an explicit dataset import/open. Passing None explicitly
     /// disables weather; callers can preserve a local preference by skipping it.
     pub fn replace_config(&mut self, config: Option<WeatherConfig>) {
@@ -82,6 +80,7 @@ impl WeatherPanel {
             self.cache = None;
             self.query.clear();
             self.editing = false;
+            self.options_open = false;
             self.searching = false;
             self.search_error = None;
             if let Err(error) = weather_client::clear_cache() {
@@ -168,7 +167,14 @@ impl WeatherPanel {
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             if let Some(config) = self.config.clone() {
-                ui.label(&config.name);
+                let place = config.name.split(',').next().unwrap_or(&config.name);
+                if ui
+                    .small_button(format!("{place} ▾"))
+                    .on_hover_text(format!("{} · Change weather location", config.name))
+                    .clicked()
+                {
+                    self.editing = !self.editing;
+                }
                 for (unit, label) in [
                     (TemperatureUnit::Fahrenheit, "°F"),
                     (TemperatureUnit::Celsius, "°C"),
@@ -182,19 +188,8 @@ impl WeatherPanel {
                         changed = true;
                     }
                 }
-                if ui.small_button("location").clicked() {
-                    self.editing = !self.editing;
-                }
-                if ui
-                    .add_enabled(!self.pending, egui::Button::new("refresh").small())
-                    .clicked()
-                {
-                    self.refresh();
-                }
-                if ui.small_button("off").clicked() {
-                    self.disable();
-                    self.editing = false;
-                    changed = true;
+                if ui.small_button("options").clicked() {
+                    self.options_open = !self.options_open;
                 }
             } else {
                 ui.label(RichText::new("Weather off").color(MUTED).small());
@@ -203,6 +198,20 @@ impl WeatherPanel {
                 }
             }
         });
+        if self.options_open {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(!self.pending, egui::Button::new("refresh").small())
+                    .clicked()
+                {
+                    self.refresh();
+                }
+                if ui.small_button("off").clicked() {
+                    self.disable();
+                    changed = true;
+                }
+            });
+        }
         if self.editing {
             ui.label(RichText::new("Location searches and chosen coordinates go to Open-Meteo. No Jig records are sent.").small().color(MUTED));
             ui.horizontal(|ui| {
@@ -247,73 +256,6 @@ impl WeatherPanel {
                 }
             }
         }
-        if let Some(cache) = &self.cache {
-            if let Some(current) = &cache.forecast.current {
-                let unit = self.unit();
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} {} · humidity {}",
-                            if self.fresh() && self.error.is_none() {
-                                "Now"
-                            } else {
-                                "Cached"
-                            },
-                            temperature(current.temperature, unit),
-                            percentage(current.humidity)
-                        ))
-                        .color(ACCENT),
-                    );
-                    let condition = condition(current.code);
-                    if !condition.is_empty() {
-                        ui.label(RichText::new(condition).small().color(MUTED));
-                    }
-                });
-            }
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{}updated {} · {}",
-                        if self.fresh() && self.error.is_none() {
-                            ""
-                        } else {
-                            "Stale/offline · "
-                        },
-                        cache
-                            .forecast
-                            .fetched_at
-                            .with_timezone(&Local)
-                            .format("%d %b %H:%M"),
-                        cache.forecast.timezone
-                    ))
-                    .small()
-                    .color(MUTED),
-                );
-            });
-        } else if self.pending {
-            ui.label(RichText::new("Loading weather…").small().color(MUTED));
-        }
-        if let Some(error) = &self.error {
-            ui.label(RichText::new(error).small().color(ERROR));
-        }
-        if self.config.is_some() || self.editing {
-            ui.horizontal_wrapped(|ui| {
-                ui.hyperlink_to(
-                    RichText::new("Weather data by Open-Meteo").small(),
-                    "https://open-meteo.com/",
-                );
-                ui.hyperlink_to(
-                    RichText::new("CC BY 4.0").small(),
-                    "https://creativecommons.org/licenses/by/4.0/",
-                );
-                if self.editing {
-                    ui.hyperlink_to(
-                        RichText::new("Locations: GeoNames").small(),
-                        "https://www.geonames.org/",
-                    );
-                }
-            });
-        }
         changed
     }
 
@@ -336,18 +278,6 @@ impl WeatherPanel {
             .find(|day| day.date == date)
     }
 
-    pub fn cell_text(&self, date: NaiveDate) -> String {
-        match self.day(date) {
-            Some(day) if day.high.is_some() || day.rain_probability.is_some() => format!(
-                "{}\n{}°\nR{}",
-                date.format("%-d"),
-                number(day.high),
-                percentage(day.rain_probability)
-            ),
-            _ => date.format("%-d").to_string(),
-        }
-    }
-
     pub fn day_tooltip(&self, date: NaiveDate) -> Option<String> {
         let day = self.day(date)?;
         let name = &self.config.as_ref()?.name;
@@ -363,20 +293,75 @@ impl WeatherPanel {
 
     pub fn selected_day(&self, ui: &mut Ui, date: NaiveDate) {
         if let Some(day) = self.day(date) {
+            ui.label(
+                RichText::new(format!(
+                    "{} · High {} · Low {}",
+                    date.format("%a %d %b"),
+                    temperature(day.high, self.unit()),
+                    temperature(day.low, self.unit())
+                ))
+                .color(ACCENT),
+            );
+            let mut detail = format!(
+                "Rain {} · Mean humidity {}",
+                percentage(day.rain_probability),
+                percentage(day.humidity_mean)
+            );
+            let condition = condition(day.code);
+            if !condition.is_empty() {
+                detail.push_str(" · ");
+                detail.push_str(condition);
+            }
+            ui.label(RichText::new(detail).small().color(MUTED));
+        } else if self.config.is_some() {
+            let message = if self.cache.is_none() && self.pending {
+                "Loading weather…".to_owned()
+            } else {
+                format!("{} · Forecast unavailable", date.format("%a %d %b"))
+            };
+            ui.label(RichText::new(message).small().color(MUTED));
+        }
+        if self.config.is_some() || self.editing {
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{} · {} / {} · Rain {} · Mean humidity {}",
-                        date.format("%d %b"),
-                        temperature(day.high, self.unit()),
-                        temperature(day.low, self.unit()),
-                        percentage(day.rain_probability),
-                        percentage(day.humidity_mean)
-                    ))
-                    .small()
-                    .color(ACCENT),
+                if let Some(cache) = &self.cache {
+                    let fresh = self.fresh() && self.error.is_none();
+                    ui.label(
+                        RichText::new(format!(
+                            "{}updated {} · {}",
+                            if fresh {
+                                ""
+                            } else {
+                                "Cached · stale/offline · "
+                            },
+                            cache
+                                .forecast
+                                .fetched_at
+                                .with_timezone(&Local)
+                                .format("%d %b %H:%M"),
+                            cache.forecast.timezone
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+                }
+                ui.hyperlink_to(
+                    RichText::new("Open-Meteo").small(),
+                    "https://open-meteo.com/",
                 );
+                ui.hyperlink_to(
+                    RichText::new("CC BY 4.0").small(),
+                    "https://creativecommons.org/licenses/by/4.0/",
+                );
+                if self.editing {
+                    ui.hyperlink_to(
+                        RichText::new("Locations: GeoNames").small(),
+                        "https://www.geonames.org/",
+                    );
+                }
             });
+        }
+        if let Some(error) = &self.error {
+            ui.label(RichText::new(error).small().color(ERROR));
         }
     }
 }

@@ -2,10 +2,11 @@
 
 The egui/eframe browser dashboard now uses the same Rust calculator, length,
 task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows
-the approved two-column composition on wide screens, stacks panels on narrow
-screens, and can expand one instrument. Calculator and length conversion share
-one input, result display and history in a compact panel. Task and deadline
-forms stay inline. There is no
+the approved dark terminal aesthetic with a compact featured countdown, one
+checklist of tasks with optional dates, a small month grid and a shared math
+strip. Applets stack and scroll on narrow screens, and one can be maximized.
+Calculator and length conversion share one input, result display and history.
+Forms and Data controls stay inline. There is no
 application backend, account or telemetry. Optional weather uses Open-Meteo;
 only the chosen location and weather query are sent, never workbench records.
 
@@ -42,12 +43,13 @@ appropriate when dependable offline startup is needed.
 
 ## Sample and personal data
 
-Fresh profiles display **Development preview — sample data**. The synthetic
+Fresh profiles display a clearly labelled **Sample data** indicator. The synthetic
 sample constructor uses a supplied clock and labels every task, deadline and
 calendar note as a sample. Calculator examples also come from code. Demo edits
 are temporary and never write the saved personal dataset.
 
-**Start empty** asks before creating or replacing personal data. **Open local
+Open **Data** (or Ctrl-Alt-D) for the dataset controls. **Start empty** asks before
+creating or replacing personal data. **Open local
 data** returns to the saved personal dataset; **Sample mode** returns to a new
 temporary demo. The header always distinguishes samples from **your local data**.
 Successful personal edits save to localStorage key `jig.personal.v1` in this
@@ -75,16 +77,23 @@ backup service.
 
 ## Browser controls
 
-Use each panel's **open** / **close** buttons. F2 toggles the focused instrument
-between expanded and dashboard views; Esc returns to all tools. Ctrl-Alt-4 focuses calculator input, and
+Click an applet to highlight it. Outside text editors, the arrow keys move the
+highlight between applets. Ctrl-M maximizes or restores the selection; Esc leaves
+an editor and returns to the dashboard. Ctrl-Alt-4 focuses math input, and
 Ctrl-Alt-N opens the start-empty confirmation. Tab/Shift-Tab navigate controls;
 normal mouse and text editing work. Type `125 * 1.15` for arithmetic or
 `72 in mm` for a length conversion. History results can be clicked to reuse their
-full precision, including the source unit of a converted result. Task arrows reorder the checklist, deadline stars
-choose the featured countdown and reveal its date in the calendar. The calendar
-is a month grid only: today is highlighted, deadline dates are accented, and
-clicking a deadline date features its earliest deadline. Hover shows matching
-deadline titles. Entry forms and markers are hidden, while existing entries
+full precision, including the source unit of a converted result. Task arrows
+reorder the checklist. Tasks may have a due date; a star chooses the featured
+countdown and reveals its date in the calendar. Starring an undated task opens
+its date editor first. Completing a task clears its star and calendar marker;
+removing a task also removes its linked date. Existing standalone deadlines
+appear in the same list without a migration or save merely to display them.
+
+The compact calendar contains day numbers with today and active due dates
+highlighted. Clicking a day selects its weather details beneath the grid and
+does not change the starred task. Hover shows matching due-task titles.
+Entry forms and markers are hidden, while existing entries
 remain intact in stored state and JSON exports. Times display in the device's
 timezone; deadline input requires a qualified RFC3339 time.
 
@@ -93,8 +102,8 @@ fractions such as `1 1/2 in cm`. There is one saved record per successful
 submission. Target units are stored with converted results; old history records
 remain compatible. `ans` is the last numeric answer, and `ans in mm` supplies an
 explicit source unit for a conversion. Decimal places and **Copy** are inside the
-same instrument. The **open** / **close** buttons expand an instrument and return
-to the four-panel dashboard.
+same instrument. Selection highlighting and Ctrl-M replace open/close controls.
+The browser reserves Ctrl-M only while the Jig canvas or its text input has focus.
 
 ## GitHub Actions and Pages
 
@@ -103,6 +112,11 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
+
+Screenshots normally stay in the test artifact. A push whose commit message
+contains `[render]` also prints three allowlisted synthetic screenshots as
+bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
+locally to request named scenes; personal workbench data is never used.
 
 Deployment runs only after a push to `main`; pull requests build and test without
 publishing. To activate the public preview:

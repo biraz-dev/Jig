@@ -75,3 +75,75 @@ fn cli_shares_state_and_returns_predictable_errors() {
     assert!(invoke(&["tasks"]).stdout.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn cli_dated_tasks_share_the_countdown_and_calendar() {
+    let dir = std::env::temp_dir().join(format!("jig-cli-dated-test-{}", std::process::id()));
+    let path = dir.join("state.json");
+    let invoke = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_jig"))
+            .arg("--state")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let load = || jig::model::State::from_json(&fs::read_to_string(&path).unwrap()).unwrap();
+    let added = invoke(&["tasks", "add", "Prepare installation"]);
+    assert!(added.status.success());
+    assert_eq!(String::from_utf8_lossy(&added.stdout).trim(), "1");
+    let undated = invoke(&["tasks"]);
+    assert_eq!(
+        String::from_utf8_lossy(&undated.stdout).trim(),
+        "1 [ ] Prepare installation"
+    );
+
+    let dated = invoke(&["tasks", "due", "1", "2030-01-15T12:00:00Z"]);
+    assert!(dated.status.success());
+    let state = load();
+    let deadline_id = state.task_deadline(1).unwrap().id;
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.deadlines.len(), 1);
+    assert_eq!(state.featured, None);
+    assert!(invoke(&["tasks", "star", "1"]).status.success());
+    assert_eq!(load().featured, Some(deadline_id));
+    let listed = invoke(&["tasks"]);
+    let listed = String::from_utf8_lossy(&listed.stdout);
+    assert!(listed.contains("due 2030-01-15T12:00:00+00:00 *"));
+    let countdown = invoke(&["deadline", "countdown"]);
+    assert!(countdown.status.success());
+    assert!(String::from_utf8_lossy(&countdown.stdout).contains("Prepare installation"));
+    let calendar = ["calendar", "--year", "2030", "--month", "1"];
+    assert!(String::from_utf8_lossy(&invoke(&calendar).stdout).contains('*'));
+
+    let before_invalid = fs::read(&path).unwrap();
+    assert!(!invoke(&["tasks", "due", "1", "not a date"]).status.success());
+    assert_eq!(fs::read(&path).unwrap(), before_invalid);
+    assert!(invoke(&["tasks", "done", "1"]).status.success());
+    assert_eq!(load().featured, None);
+    assert!(!invoke(&["deadline", "countdown"]).status.success());
+    assert!(!String::from_utf8_lossy(&invoke(&calendar).stdout).contains('*'));
+    let before_star = fs::read(&path).unwrap();
+    assert!(!invoke(&["tasks", "star", "1"]).status.success());
+    assert_eq!(fs::read(&path).unwrap(), before_star);
+
+    assert!(invoke(&["tasks", "done", "1"]).status.success());
+    assert_eq!(load().featured, None);
+    assert!(invoke(&["tasks", "star", "1"]).status.success());
+    assert!(invoke(&["tasks", "edit", "1", "Install new work"]).status.success());
+    let countdown = invoke(&["deadline", "countdown"]);
+    assert!(String::from_utf8_lossy(&countdown.stdout).contains("Install new work"));
+    assert!(invoke(&["tasks", "due", "1"]).status.success());
+    let state = load();
+    assert_eq!(state.tasks.len(), 1);
+    assert!(state.task_deadline(1).is_none());
+    assert!(state.deadlines.is_empty());
+    assert_eq!(state.featured, None);
+    assert!(state.history.is_empty());
+    let listed = invoke(&["tasks"]);
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout).trim(),
+        "1 [ ] Install new work"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}

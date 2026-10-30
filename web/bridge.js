@@ -1,6 +1,18 @@
 /* Browser files and storage only. No network, analytics, cookies or backend. */
 (() => {
   "use strict";
+  // Keep the panel shortcut in Jig while allowing egui to receive the event.
+  document.addEventListener("keydown", event => {
+    const canvas = document.getElementById("jig_canvas");
+    const target = event.target;
+    const textAgent = target instanceof HTMLInputElement
+      && target.type === "text" && !target.id && target.parentElement === document.body;
+    if (canvas && (target === canvas || textAgent)
+      && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
+      && event.key.toLowerCase() === "m") {
+      event.preventDefault();
+    }
+  }, true);
   const key = "jig.personal.v1";
   const maximumBytes = 2 * 1024 * 1024;
   let observed = null;

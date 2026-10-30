@@ -27,7 +27,7 @@ enum Command {
     History,
     /// Convert a length, e.g. units '1 1/2in' mm
     Units { input: String, target: String },
-    /// A simple ordered checklist
+    /// A simple ordered checklist with optional due dates
     Tasks {
         #[command(subcommand)]
         action: Option<TaskAction>,
@@ -66,6 +66,15 @@ enum TaskAction {
     },
     /// Toggle completion
     Done {
+        id: u64,
+    },
+    /// Set a due date (RFC3339 with timezone), or omit AT to remove the date
+    Due {
+        id: u64,
+        at: Option<String>,
+    },
+    /// Feature an unfinished dated task in the large countdown
+    Star {
         id: u64,
     },
     Delete {
@@ -163,11 +172,25 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
         Command::Tasks { action } => match action.unwrap_or(TaskAction::List) {
             TaskAction::List => {
                 for t in &state.tasks {
+                    let due = if let Some(deadline) = state.task_deadline(t.id) {
+                        format!(
+                            "  due {}{}",
+                            deadline.at.to_rfc3339(),
+                            if state.featured == Some(deadline.id) {
+                                " *"
+                            } else {
+                                ""
+                            }
+                        )
+                    } else {
+                        String::new()
+                    };
                     println!(
-                        "{} [{}] {}",
+                        "{} [{}] {}{}",
                         t.id,
                         if t.complete { "x" } else { " " },
-                        t.text
+                        t.text,
+                        due
                     );
                 }
                 return Ok(false);
@@ -178,6 +201,8 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
             TaskAction::Add { text } => println!("{}", state.add_task(&text)?),
             TaskAction::Edit { id, text } => state.edit_task(id, &text)?,
             TaskAction::Done { id } => state.toggle_task(id)?,
+            TaskAction::Due { id, at } => state.set_task_deadline(id, at.as_deref())?,
+            TaskAction::Star { id } => state.feature_task(id)?,
             TaskAction::Delete { id } => state.remove_task(id)?,
             TaskAction::Move { id, position } => state.move_task(id, position)?,
         },
@@ -242,11 +267,11 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
                 for week in calendar::month(y, m)?.chunks(7) {
                     for day in week {
                         if let Some(day) = day {
-                            let marker = if state
-                                .deadlines
-                                .iter()
-                                .any(|d| d.at.with_timezone(&Local).date_naive() == *day)
-                            {
+                            let has_deadline = state.deadlines.iter().any(|d| {
+                                state.is_deadline_active(d.id)
+                                    && d.at.with_timezone(&Local).date_naive() == *day
+                            });
+                            let marker = if has_deadline {
                                 '*'
                             } else if state.entries.iter().any(|e| e.date == *day) {
                                 '+'

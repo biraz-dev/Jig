@@ -271,3 +271,157 @@ fn deleting_completed_tasks_keeps_unfinished_order_and_other_state() {
     assert_eq!(state.remove_completed_tasks(), 2);
     assert!(state.tasks.is_empty());
 }
+
+#[test]
+fn dated_task_lifecycle_keeps_one_checklist_item_and_explicit_star() {
+    let mut state = State::default();
+    let task = state.add_task("Photograph work").unwrap();
+    state.calculate("1 / 3").unwrap();
+    assert!(state.feature_task(task).is_err());
+    state
+        .set_task_deadline(task, Some("2026-12-01T09:00:00-05:00"))
+        .unwrap();
+    let deadline = state.task_deadline(task).unwrap().id;
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.deadlines.len(), 1);
+    assert_eq!(
+        state.featured,
+        None,
+        "A date alone must not select the countdown"
+    );
+    assert!(state.is_deadline_active(deadline));
+    assert!(!state.is_deadline_active(999999));
+    state.feature_task(task).unwrap();
+    assert_eq!(state.featured, Some(deadline));
+    state.edit_task(task, "Photograph finished work").unwrap();
+    assert_eq!(
+        state.task_deadline(task).unwrap().title,
+        "Photograph finished work"
+    );
+    state
+        .set_task_deadline(task, Some("2026-12-02T10:00:00-05:00"))
+        .unwrap();
+    assert_eq!(state.task_deadline(task).unwrap().id, deadline);
+    state
+        .set_deadline(Some(deadline), "New name", "2026-12-03T15:00:00Z")
+        .unwrap();
+    assert_eq!(state.tasks[0].text, "New name");
+    state.toggle_task(task).unwrap();
+    assert_eq!(state.featured, None);
+    assert!(!state.is_deadline_active(deadline));
+    assert!(state.feature_task(task).is_err());
+    assert!(state.feature(deadline).is_err());
+    state.toggle_task(task).unwrap();
+    assert!(state.is_deadline_active(deadline));
+    assert_eq!(
+        state.featured,
+        None,
+        "Reopening must not silently restore a star"
+    );
+    state.feature_task(task).unwrap();
+    state.set_task_deadline(task, None).unwrap();
+    assert_eq!(state.featured, None);
+    assert!(state.task_deadline(task).is_none());
+    assert!(state.deadlines.is_empty());
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.history[0].result, 1.0 / 3.0);
+    state.validate().unwrap();
+}
+
+#[test]
+fn dated_task_state_preserves_legacy_files_and_validates_links() {
+    let mut state = State::default();
+    let task = state.add_task("Existing checklist item").unwrap();
+    let deadline = state
+        .set_deadline(None, "Existing opening", "2026-12-01T18:00:00Z")
+        .unwrap();
+    let old_json = serde_json::to_string(&state).unwrap();
+    assert!(!old_json.contains("\"deadline\":"));
+    let mut restored = State::from_json(&old_json).unwrap();
+    assert_eq!(
+        restored.tasks.len(),
+        1,
+        "Loading must not migrate legacy deadlines"
+    );
+    assert_eq!(restored.tasks[0].deadline, None);
+    assert!(restored.is_deadline_active(deadline));
+    let converted = restored.ensure_task_for_deadline(deadline).unwrap();
+    assert_ne!(converted, task);
+    assert_eq!(
+        restored.ensure_task_for_deadline(deadline).unwrap(),
+        converted
+    );
+    assert_eq!(restored.tasks.len(), 2);
+    assert_eq!(
+        restored.task_deadline(converted).unwrap().title,
+        "Existing opening"
+    );
+    assert_eq!(restored.featured, Some(deadline));
+    let roundtrip = State::from_json(&serde_json::to_string(&restored).unwrap()).unwrap();
+    assert_eq!(roundtrip.task_deadline(converted).unwrap().id, deadline);
+    let before = serde_json::to_string(&restored).unwrap();
+    assert!(restored
+        .set_task_deadline(converted, Some("not a date"))
+        .is_err());
+    assert!(restored.set_task_deadline(999999, None).is_err());
+    assert!(restored.ensure_task_for_deadline(999999).is_err());
+    assert_eq!(serde_json::to_string(&restored).unwrap(), before);
+
+    let mut invalid = roundtrip.clone();
+    invalid.tasks[0].deadline = Some(deadline);
+    assert!(
+        invalid.validate().is_err(),
+        "Two tasks cannot share one date record"
+    );
+    invalid.tasks[0].deadline = Some(999999);
+    assert!(invalid.validate().is_err(), "A linked deadline must exist");
+    invalid = roundtrip.clone();
+    invalid
+        .tasks
+        .iter_mut()
+        .find(|item| item.id == converted)
+        .unwrap()
+        .complete = true;
+    assert!(
+        invalid.validate().is_err(),
+        "A completed task cannot remain featured"
+    );
+    restored.remove_deadline(deadline).unwrap();
+    assert_eq!(restored.tasks.len(), 2);
+    assert!(restored.task_deadline(converted).is_none());
+    assert_eq!(restored.featured, None);
+    restored.validate().unwrap();
+}
+
+#[test]
+fn deleting_dated_tasks_removes_their_dates_without_orphans() {
+    let mut state = State::default();
+    let first = state.add_task("Keep first").unwrap();
+    let completed = state.add_task("Remove completed").unwrap();
+    let last = state.add_task("Keep last").unwrap();
+    for task in [first, completed, last] {
+        state
+            .set_task_deadline(task, Some("2026-12-01T18:00:00Z"))
+            .unwrap();
+    }
+    let kept_deadline = state.task_deadline(last).unwrap().id;
+    let removed_deadline = state.task_deadline(completed).unwrap().id;
+    state.feature_task(last).unwrap();
+    state.toggle_task(completed).unwrap();
+    assert_eq!(state.remove_completed_tasks(), 1);
+    assert_eq!(
+        state.tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+        vec![first, last]
+    );
+    assert!(!state
+        .deadlines
+        .iter()
+        .any(|item| item.id == removed_deadline));
+    assert_eq!(state.featured, Some(kept_deadline));
+    state.remove_task(last).unwrap();
+    assert_eq!(state.featured, None);
+    assert!(!state.deadlines.iter().any(|item| item.id == kept_deadline));
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.deadlines.len(), 1);
+    state.validate().unwrap();
+}

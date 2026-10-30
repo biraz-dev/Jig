@@ -13,8 +13,8 @@ Open-Meteo for the location you select.
 ![Jig terminal dashboard — sample data](docs/sample-dashboard.svg)
 
 The image above renders the Ratatui dashboard with clearly labelled sample data.
-The browser preview puts the same five utilities into four compact panels,
-combining the calculator and length converter; the calendar can also show optional weather.
+The browser preview combines tasks and deadlines in one checklist, with a
+featured countdown, compact calendar and shared calculator/converter.
 The [browser preview](https://biraz-dev.github.io/Jig/) is deployed from `main`
 through GitHub Actions. Fresh visitors see clearly labelled sample data.
 
@@ -51,8 +51,9 @@ The preview needs JavaScript, WebAssembly and WebGL enabled. Native terminal
 dependencies are excluded from the WASM build; `jig` still launches the TUI by
 default.
 
-A fresh browser opens **Development preview — sample data**. Demo edits are
-temporary and never replace saved personal data. **Start empty** creates your own
+A fresh browser opens a clearly labelled **Sample data** workbench. Open **Data**
+for import/export and dataset controls. Demo edits are temporary and never
+replace saved personal data. **Start empty** creates your own
 workbench after confirmation; **Open local data** returns to saved personal data;
 **Sample mode** returns to the demo. Personal edits save in this browser profile
 under `jig.personal.v1`. **Import JSON** validates a complete Jig state file and
@@ -61,24 +62,32 @@ workbench as `jig.json`. **Clear saved data** requires confirmation and returns 
 temporary samples. Use export for backups and to transfer data between the
 browser and CLI. Importing a file never uploads it.
 
-The preview supports mouse interaction and normal text editing. Use each panel's **open** / **close** buttons, **F2** to expand the focused tool,
-and **Esc** to return to the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
-start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate controls. On narrow screens the
-panels stack vertically; inline forms and individual panels can scroll.
+The preview supports mouse interaction and normal text editing. Click an applet
+to select it, or use the arrow keys while no text field is being edited. The
+selected applet is highlighted. **Ctrl-M** maximizes or restores it; **Esc** leaves
+an editor and returns to the dashboard. **Ctrl-Alt-4** focuses the math input;
+**Ctrl-Alt-D** opens the inline **Data** controls; **Ctrl-Alt-N** opens the
+start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate
+controls. On narrow screens the applets stack and the dashboard scrolls.
 
 The calculator and converter use one input, result display and history. Type
 `125 * 1.15` for arithmetic or `72 in mm` for a conversion (`1828.80 mm`).
 `72in to mm`, `72in -> mm`, `72in → mm` and `1 1/2 in cm` also work.
 Decimal places and **Copy** stay inside this instrument. Click a history result
 to reuse its full precision; a converted result includes its source unit, ready
-for another target, such as `1828.8 mm in`. **Open** expands a tool and **close**
-returns to the dashboard.
+for another target, such as `1828.8 mm in`.
 
-The browser calendar is a month grid with today and deadline dates highlighted.
-Click a deadline date to feature its earliest deadline; choosing a deadline star
-shows that date in the calendar. Calendar note controls and markers are hidden
-in this view. Existing notes remain in saved/imported/exported data and are still
-available through the native CLI and terminal dashboard.
+The browser uses one checklist. Add a task, give it an optional due date, then
+star it to drive the large countdown. Starring an undated task opens its date
+editor first. Completing a dated task clears its star and calendar marker;
+deleting it also removes its linked date. Previously saved deadlines appear in
+the same list without rewriting the saved file merely to display them.
+
+The compact calendar shows day numbers, today and active due dates. Click a day
+to see its weather details beneath the grid; calendar selection does not change
+the starred task. Starring a dated task reveals its day in the calendar. Calendar
+note controls and markers stay hidden; existing notes remain in saved/imported/
+exported data and are still available through the native CLI and terminal.
 
 Browser imports and saves have a 2 MiB limit. Invalid saved data is preserved and
 reported. If a save fails, edits remain in memory and **Retry save** becomes
@@ -112,10 +121,10 @@ disable it at any time. Settings stay in this browser; personal JSON exports
 also carry the chosen weather preference. Changing weather in sample mode does
 not save the sample checklist as personal data.
 
-Forecast days show the daily high and rain probability; select a date for the
-high/low and mean relative humidity. The current row includes current temperature
-and humidity. Days outside the returned forecast range remain plain. Calendar
-entry controls remain hidden and existing entries are preserved.
+The month grid stays compact and contains only days. Select a date for forecast
+high/low, rain probability and mean relative humidity beneath the grid. Dates
+outside the returned forecast range have no forecast. Calendar entry controls
+remain hidden and existing entries are preserved.
 
 Weather data comes from [Open-Meteo](https://open-meteo.com/) without a key or
 account, using national forecast models. It is a forecast, not a guarantee for
@@ -148,6 +157,9 @@ jig units 304.8mm ft
 jig tasks
 jig tasks add 'Photograph sculptures'
 jig tasks edit 1 'Photograph new sculptures'
+jig tasks due 1 '2026-12-01T18:00:00-05:00'
+jig tasks star 1
+jig tasks due 1
 jig tasks done 1
 jig tasks move 1 2
 jig tasks delete 1
@@ -174,6 +186,10 @@ across tasks, deadlines and calendar notes; use the actual returned IDs.
 `tasks done` toggles completion. Task positions are 1-based. Errors go to stderr
 with a nonzero exit status. `deadline countdown` prints one snapshot; the TUI
 refreshes the countdown every second.
+
+`tasks due ID AT` assigns a timezone-qualified due date; omit `AT` to clear it.
+`tasks star ID` features a dated, unfinished task. Assigning a date alone does
+not star it. Existing `deadline` commands remain compatible with portable files.
 
 Arithmetic syntax: `+ - * /`, decimals, unary signs, parentheses, postfix `%`,
 and `ans` (the last result). Percent always divides its operand by 100:
@@ -229,6 +245,12 @@ State includes preferences, complete calculator history, task order, deadlines,
 calendar notes and featured deadline ID. New terminal installations start empty;
 the converter initially displays 12 inches as an instrument example. Browser demo
 samples are generated in code and kept separate from saved personal state.
+
+Dated tasks carry an optional link to a deadline record. Old task records without
+that field remain valid. Task and linked deadline edits stay synchronized;
+completing a task clears its featured countdown, and removing a task or its date
+cleans up the link. Older standalone deadlines remain usable in the unified
+browser list and through the existing CLI commands.
 
 JSON is deliberately simpler than Markdown front matter: one established serde
 parser, an explicit format version, and no ambiguity between prose and structured

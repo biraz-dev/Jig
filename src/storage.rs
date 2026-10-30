@@ -11,6 +11,13 @@ pub struct Store {
     pub path: PathBuf,
     lock: PathBuf,
 }
+
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
 impl Store {
     pub fn open(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let parent = path
@@ -21,7 +28,7 @@ impl Store {
         let path = parent
             .canonicalize()?
             .join(path.file_name().ok_or("State path needs a filename")?);
-        let lock = path.with_extension("json.lock");
+        let lock = append_suffix(&path, ".lock");
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -47,7 +54,7 @@ impl Store {
     }
     pub fn save(&self, state: &State) -> Result<(), Box<dyn std::error::Error>> {
         state.validate()?;
-        let temporary = self.path.with_extension("json.tmp");
+        let temporary = append_suffix(&self.path, ".tmp");
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
@@ -92,10 +99,10 @@ mod tests {
             store.save(&state).unwrap();
             assert_eq!(store.load().unwrap().tasks.len(), 2);
             // A failed temporary write cannot truncate the saved state.
-            fs::write(path.with_extension("json.tmp"), "recover me").unwrap();
+            fs::write(append_suffix(&path, ".tmp"), "recover me").unwrap();
             assert!(store.save(&State::default()).is_err());
             assert_eq!(store.load().unwrap().tasks.len(), 2);
-            fs::remove_file(path.with_extension("json.tmp")).unwrap();
+            fs::remove_file(append_suffix(&path, ".tmp")).unwrap();
         }
         let store = Store::open(path.clone()).unwrap();
         assert_eq!(store.load().unwrap().tasks.len(), 2);
@@ -103,6 +110,30 @@ mod tests {
         assert!(store.load().is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "broken state");
         drop(store);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn same_stem_state_files_have_independent_locks_and_temporary_files() {
+        let dir = std::env::temp_dir().join(format!("jig-sidecars-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let first = Store::open(dir.join("work.json")).unwrap();
+        let second = Store::open(dir.join("work.toml")).unwrap();
+        let third = Store::open(dir.join("work")).unwrap();
+        let mut state = State::default();
+        state.add_task("Independent file").unwrap();
+        // A recoverable temporary file for one state must not block another.
+        fs::write(append_suffix(&first.path, ".tmp"), "recover me").unwrap();
+        assert!(first.save(&state).is_err());
+        second.save(&state).unwrap();
+        third.save(&state).unwrap();
+        assert_eq!(second.load().unwrap().tasks[0].text, "Independent file");
+        assert_eq!(third.load().unwrap().tasks.len(), 1);
+        assert!(first.load().unwrap().tasks.is_empty());
+        assert!(Store::open(first.path.clone()).is_err());
+        fs::remove_file(append_suffix(&first.path, ".tmp")).unwrap();
+        first.save(&state).unwrap();
+        drop((first, second, third));
         fs::remove_dir_all(dir).unwrap();
     }
 }

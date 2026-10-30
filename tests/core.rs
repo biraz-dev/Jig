@@ -20,6 +20,20 @@ fn arithmetic_precedence_percent_and_reuse() {
     assert!(evaluate(&"(".repeat(1000), 0.0).is_err());
 }
 #[test]
+fn invalid_intermediate_arithmetic_cannot_be_masked_by_later_operations() {
+    for expression in ["1 / (1 / 0)", "0 / (1 / 0)", "1 / (0 / 0)"] {
+        assert!(evaluate(expression, 0.0).is_err(), "{expression}");
+    }
+    let overflowing_literal = "9".repeat(400);
+    assert!(evaluate(&format!("1 / {overflowing_literal}"), 0.0).is_err());
+    let finite_literal = "9".repeat(200);
+    let overflowing_product = format!("1 / ({finite_literal} * {finite_literal})");
+    assert!(evaluate(&overflowing_product, 0.0).is_err());
+    assert_eq!(evaluate("1 / (1 / 2)", 0.0).unwrap(), 2.0);
+    assert!(evaluate(&format!("1 / {finite_literal}"), 0.0).unwrap() > 0.0);
+}
+
+#[test]
 fn conversions_are_bidirectional_and_fractional() {
     assert!((convert("12in", "mm").unwrap() - 304.8).abs() < 1e-10);
     assert!((convert("304.8mm", "ft").unwrap() - 1.0).abs() < 1e-10);
@@ -95,4 +109,24 @@ fn portable_state_roundtrip_preserves_precision_and_entries() {
     assert_eq!(decoded.featured, s.featured);
     s.remove_entry(id).unwrap();
     assert!(s.entries.is_empty());
+}
+
+#[test]
+fn imported_history_rejects_terminal_controls_and_preserves_ascii_whitespace() {
+    let expression = "1 +\n 2\t* 3";
+    let mut state = State::default();
+    assert_eq!(state.calculate(expression).unwrap(), 7.0);
+    let restored: State = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    restored.validate().unwrap();
+    assert_eq!(restored.history[0].expression, expression);
+    for invalid in ["\x1b[31m1", "\u{009b}31m1", "1\x7f"] {
+        let mut imported = restored.clone();
+        imported.history[0].expression = invalid.into();
+        assert!(imported.validate().is_err());
+    }
+    let maximum_length = format!("1{}", " ".repeat(4095));
+    state.calculate(&maximum_length).unwrap();
+    state.validate().unwrap();
+    state.history[0].expression = "1".repeat(4097);
+    assert!(state.validate().is_err());
 }

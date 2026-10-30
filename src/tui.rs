@@ -884,7 +884,11 @@ mod tests {
             }
             if width == 120 {
                 let svg = sample_svg(terminal.backend().buffer(), width, height);
-                std::fs::write("target/sample-dashboard.svg", &svg).unwrap();
+                let output = std::env::var_os("CARGO_TARGET_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("target"));
+                std::fs::create_dir_all(&output).unwrap();
+                std::fs::write(output.join("sample-dashboard.svg"), &svg).unwrap();
             }
             app.begin(&state, false);
             terminal

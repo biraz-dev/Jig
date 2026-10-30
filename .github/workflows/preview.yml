@@ -1,0 +1,66 @@
+name: Browser preview
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - run: cargo generate-lockfile
+      - run: cargo clippy --target wasm32-unknown-unknown --no-default-features --features web --bin jig-web -- -D warnings
+      - name: Install pinned Trunk
+        run: |
+          curl -fsSL --retry 3 https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz -o "$RUNNER_TEMP/trunk.tar.gz"
+          tar -xzf "$RUNNER_TEMP/trunk.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: trunk build --release --public-url /Jig/
+      - name: Inspect static artifact
+        run: |
+          test -f dist/index.html
+          test -f dist/bridge.js
+          test -f dist/preview.css
+          test -n "$(find dist -name '*.wasm' -print -quit)"
+          if find dist -type f \( -name 'jig.json' -o -name '*.md' -o -name '*.lock' -o -name '.env*' \) | grep .; then exit 1; fi
+      - name: Install browser test tools
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Exercise the real browser app
+        run: |
+          mkdir -p "$RUNNER_TEMP/jig-site/Jig"
+          cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"
+          python3 -m http.server 4173 --directory "$RUNNER_TEMP/jig-site" > "$RUNNER_TEMP/jig-http.log" 2>&1 &
+          node tests/browser_smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-test-results
+          path: playwright-results/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy static WASM application
+        id: deployment
+        uses: actions/deploy-pages@v4

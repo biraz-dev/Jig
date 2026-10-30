@@ -17,10 +17,15 @@ pub fn evaluate(input: &str, ans: f64) -> Result<f64> {
     if parser.pos != parser.text.len() {
         return Err("Unexpected input".into());
     }
-    if !value.is_finite() {
-        return Err("Result is not finite (check division by zero)".into());
+    finite(value)
+}
+
+fn finite(value: f64) -> Result<f64> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err("Result is not finite (check division by zero or overflow)".into())
     }
-    Ok(value)
 }
 
 struct Parser<'a> {
@@ -70,17 +75,18 @@ impl Parser<'_> {
                 {
                     self.pos += 1;
                 }
-                std::str::from_utf8(&self.text[start..self.pos])
+                let number = std::str::from_utf8(&self.text[start..self.pos])
                     .unwrap_or("")
                     .parse::<f64>()
-                    .map_err(|_| "Expected a number".to_string())?
+                    .map_err(|_| "Expected a number".to_string())?;
+                finite(number)?
             }
         };
         loop {
             self.space();
             if self.text.get(self.pos) == Some(&b'%') {
                 self.pos += 1;
-                value /= 100.0;
+                value = finite(value / 100.0)?;
                 continue;
             }
             let Some(op) = self.text.get(self.pos).copied() else {
@@ -96,12 +102,12 @@ impl Parser<'_> {
             }
             self.pos += 1;
             let right = self.expr(precedence + 1)?;
-            value = match op {
+            value = finite(match op {
                 b'+' => value + right,
                 b'-' => value - right,
                 b'*' => value * right,
                 _ => value / right,
-            };
+            })?;
         }
         self.depth -= 1;
         Ok(value)

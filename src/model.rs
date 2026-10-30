@@ -95,7 +95,13 @@ impl State {
         if self.preferences.decimals > 10 || self.preferences.focus > 4 {
             return Err("Invalid preferences".into());
         }
-        if self.history.iter().any(|h| !h.result.is_finite()) {
+        if self.history.iter().any(|h| {
+            !h.result.is_finite()
+                || h.expression.len() > 4096
+                || h.expression
+                    .chars()
+                    .any(|c| c.is_control() && !c.is_ascii_whitespace())
+        }) {
             return Err("Invalid calculation history".into());
         }
         let ids: Vec<_> = self

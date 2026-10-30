@@ -1,3 +1,6 @@
 /target/
 jig.json
 jig.json.*
+/dist/
+/node_modules/
+/playwright-results/

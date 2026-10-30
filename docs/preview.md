@@ -15,7 +15,7 @@ The shared core has no DOM, filesystem or terminal API. Trunk builds the root
 
 ## Build and use locally
 
-From the development checkout on `jig-initial-milestone`:
+From a checkout of the repository:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -97,9 +97,8 @@ publishing. To activate the public preview:
 2. Merge the reviewed milestone PR into `main`.
 3. Check the **Browser preview** deploy job and use its reported Pages URL.
 
-The repository's default branch still contains the initial README until the
-milestone is merged. This document does not claim a completed deployment or a
-live preview URL.
+The expected repository URL is `https://biraz-dev.github.io/Jig/`; the deployment
+job is the authority for its publication status.
 
 Only `dist/` is uploaded as the Pages artifact. Trunk copies the intended static
 bootstrap assets and compiled application, not state files, home directories,

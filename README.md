@@ -12,15 +12,15 @@ all application data on your device.
 The image above renders the Ratatui dashboard with clearly labelled sample data.
 The browser preview uses the same five instruments and the approved visual
 direction.
-Development is on `jig-initial-milestone`; the default branch remains the initial
-README until the milestone PR is merged.
+The [browser preview](https://biraz-dev.github.io/Jig/) is deployed from `main`
+through GitHub Actions. Fresh visitors see clearly labelled sample data.
 
 ## Build and run on Linux
 
 Install the stable Rust toolchain with rustup, then:
 
 ```sh
-git clone --branch jig-initial-milestone https://github.com/biraz-dev/Jig.git
+git clone https://github.com/biraz-dev/Jig.git
 cd Jig
 cargo build --locked --release
 ./target/release/jig
@@ -61,7 +61,7 @@ browser and CLI. Importing a file never uploads it.
 The preview supports mouse interaction and normal text editing. Use the numbered
 tool buttons to focus an instrument, **F2** to expand it, and **Esc** to return to
 the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
-start-empty confirmation. Tab/Shift-Tab navigate controls. On narrow screens the
+start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate controls. On narrow screens the
 panels stack vertically; inline forms and individual panels can scroll.
 
 Browser imports and saves have a 2 MiB limit. Invalid saved data is preserved and
@@ -81,7 +81,7 @@ The **Browser preview** Actions workflow builds on pushes and pull requests,
 checks WASM with Clippy, exercises the browser app, and uploads static assets and
 browser test results. Deployment runs only on a push to `main`. To make the site
 public, set **Settings → Pages → Build and deployment → Source → GitHub Actions**
-and merge the milestone PR. A live Pages deployment is not claimed yet. See
+before the first deployment. The workflow reports the published URL. See
 [the browser preview notes](docs/preview.md) for implementation and deployment
 details.
 

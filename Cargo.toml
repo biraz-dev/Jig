@@ -3,7 +3,6 @@ name = "jig"
 version = "0.1.0"
 edition = "2021"
 description = "A local artist's utility workbench"
-license = "MIT"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }

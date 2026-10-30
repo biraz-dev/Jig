@@ -4,6 +4,11 @@ A tool for creative Small Giants. A small, local artist's workbench in Rust:
 calculator, length conversion, tasks, deadlines and calendar. No accounts,
 telemetry, network calls, database or background service.
 
+![Jig terminal dashboard — sample data](docs/sample-dashboard.svg)
+
+This is a rendering of the actual Ratatui dashboard using clearly labelled sample
+data, not a browser application.
+
 ## Build and run on Linux
 
 Install the stable Rust toolchain with rustup, then:
@@ -14,7 +19,7 @@ cd Jig
 cargo build --locked --release
 ./target/release/jig
 # Optional: install the binary in ~/.cargo/bin
-cargo install --path .
+cargo install --locked --path .
 ```
 
 A UTF-8 terminal is recommended. Set IBM Plex Mono in your terminal preferences

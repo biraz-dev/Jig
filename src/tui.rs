@@ -25,7 +25,13 @@ const CREAM: Color = Color::Rgb(246, 218, 174);
 const PINK: Color = Color::Rgb(234, 133, 173);
 const MUTED: Color = Color::Rgb(144, 161, 202);
 const ACCENT: Color = Color::Rgb(109, 185, 238);
-const NAMES: [&str; 5] = ["CALCULATOR", "LENGTH", "TASKS", "MAJOR DEADLINE", "CALENDAR"];
+const NAMES: [&str; 5] = [
+    "CALCULATOR",
+    "LENGTH",
+    "TASKS",
+    "MAJOR DEADLINE",
+    "CALENDAR",
+];
 const TOOL_ORDER: [usize; 5] = [3, 2, 4, 0, 1];
 
 #[derive(Clone)]
@@ -212,13 +218,19 @@ impl App {
         }
         match key.code {
             KeyCode::Tab => {
-                let position = TOOL_ORDER.iter().position(|i| *i == self.focus).unwrap_or(0);
+                let position = TOOL_ORDER
+                    .iter()
+                    .position(|i| *i == self.focus)
+                    .unwrap_or(0);
                 self.focus = TOOL_ORDER[(position + 1) % 5];
-            },
+            }
             KeyCode::BackTab => {
-                let position = TOOL_ORDER.iter().position(|i| *i == self.focus).unwrap_or(0);
+                let position = TOOL_ORDER
+                    .iter()
+                    .position(|i| *i == self.focus)
+                    .unwrap_or(0);
                 self.focus = TOOL_ORDER[(position + 4) % 5];
-            },
+            }
             KeyCode::Char(c @ '1'..='5') => self.focus = TOOL_ORDER[c as usize - '1' as usize],
             KeyCode::F(2) => self.expanded = !self.expanded,
             KeyCode::Esc => self.expanded = false,
@@ -417,8 +429,16 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
                 Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
             ),
             Span::styled(" / artist's workbench", Style::default().fg(MUTED)),
-            Span::raw(format!("   {}   • local", Local::now().format("%a %d %b %Y  %H:%M:%S"))),
-        ])).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(MUTED))),
+            Span::raw(format!(
+                "   {}   • local",
+                Local::now().format("%a %d %b %Y  %H:%M:%S")
+            )),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(MUTED)),
+        ),
         rows[0],
     );
     if app.help {
@@ -426,9 +446,16 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
     } else if app.expanded || area.width < 100 || area.height < 36 {
         tool(frame, rows[1], app.focus, state, app);
     } else {
-        let columns = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).split(rows[1]);
-        let left = Layout::vertical([Constraint::Min(11), Constraint::Length(10), Constraint::Length(9)]).split(columns[0]);
-        let right = Layout::vertical([Constraint::Min(10), Constraint::Length(12)]).split(columns[1]);
+        let columns = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)])
+            .split(rows[1]);
+        let left = Layout::vertical([
+            Constraint::Min(11),
+            Constraint::Length(10),
+            Constraint::Length(9),
+        ])
+        .split(columns[0]);
+        let right =
+            Layout::vertical([Constraint::Min(10), Constraint::Length(12)]).split(columns[1]);
         tool(frame, left[0], 3, state, app);
         tool(frame, left[1], 4, state, app);
         tool(frame, left[2], 0, state, app);
@@ -451,7 +478,11 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
 }
 fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
     let block = panel(
-        format!(" {:02} — {} ", TOOL_ORDER.iter().position(|i| *i == index).unwrap_or(0) + 1, NAMES[index]),
+        format!(
+            " {:02} — {} ",
+            TOOL_ORDER.iter().position(|i| *i == index).unwrap_or(0) + 1,
+            NAMES[index]
+        ),
         app.focus == index,
     );
     let inner = block.inner(area);
@@ -493,17 +524,40 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
         0 => {
             let mut history_area = body;
             if body.width >= 46 && body.height >= 3 {
-                let columns = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).split(body);
+                let columns =
+                    Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)])
+                        .split(body);
                 history_area = columns[1];
                 let selected = state.history.get(app.selected[0]);
                 let expression = selected.map_or("Enter to calculate", |h| h.expression.as_str());
                 let result = selected.map_or_else(|| "0.00".into(), |h| state.number(h.result));
-                frame.render_widget(Paragraph::new(expression).style(Style::default().fg(MUTED)), Rect { height: 1, ..columns[0] });
-                let result_area = Rect { y: columns[0].y + 1, height: columns[0].height.saturating_sub(1), ..columns[0] };
+                frame.render_widget(
+                    Paragraph::new(expression).style(Style::default().fg(MUTED)),
+                    Rect {
+                        height: 1,
+                        ..columns[0]
+                    },
+                );
+                let result_area = Rect {
+                    y: columns[0].y + 1,
+                    height: columns[0].height.saturating_sub(1),
+                    ..columns[0]
+                };
                 if result_area.height >= 5 && large_width(&result) <= result_area.width as usize {
-                    frame.render_widget(Paragraph::new(large_number(&result)).style(Style::default().fg(Color::Rgb(164, 223, 144))), result_area);
+                    frame.render_widget(
+                        Paragraph::new(large_number(&result))
+                            .style(Style::default().fg(Color::Rgb(164, 223, 144))),
+                        result_area,
+                    );
                 } else {
-                    frame.render_widget(Paragraph::new(format!("= {result}")).style(Style::default().fg(Color::Rgb(164, 223, 144)).add_modifier(Modifier::BOLD)), result_area);
+                    frame.render_widget(
+                        Paragraph::new(format!("= {result}")).style(
+                            Style::default()
+                                .fg(Color::Rgb(164, 223, 144))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        result_area,
+                    );
                 }
             }
             let items: Vec<_> = state
@@ -537,10 +591,20 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                 }
             }
             if body.width >= 44 {
-                let columns = Layout::horizontal([Constraint::Percentage(57), Constraint::Percentage(43)]).split(body);
+                let columns =
+                    Layout::horizontal([Constraint::Percentage(57), Constraint::Percentage(43)])
+                        .split(body);
                 frame.render_widget(Paragraph::new(lines), columns[0]);
-                frame.render_widget(Paragraph::new("Quick refs\n\n1 in = 25.40 mm\n1 ft = 30.48 cm\n1 m = 100.00 cm").style(Style::default().fg(MUTED)), columns[1]);
-            } else { frame.render_widget(Paragraph::new(lines), body); }
+                frame.render_widget(
+                    Paragraph::new(
+                        "Quick refs\n\n1 in = 25.40 mm\n1 ft = 30.48 cm\n1 m = 100.00 cm",
+                    )
+                    .style(Style::default().fg(MUTED)),
+                    columns[1],
+                );
+            } else {
+                frame.render_widget(Paragraph::new(lines), body);
+            }
         }
         2 => {
             let items = state
@@ -562,24 +626,60 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
             draw_list(frame, body, items, app.selected[2]);
         }
         3 => {
-            let featured = state.deadlines.iter().find(|d| Some(d.id) == state.featured);
-            let mut text = vec![Line::raw("No featured deadline"), Line::styled("a add · f feature", Style::default().fg(MUTED))];
+            let featured = state
+                .deadlines
+                .iter()
+                .find(|d| Some(d.id) == state.featured);
+            let mut text = vec![
+                Line::raw("No featured deadline"),
+                Line::styled("a add · f feature", Style::default().fg(MUTED)),
+            ];
             let mut height = 3;
             if let Some(d) = featured {
                 let remaining = (d.at - Utc::now()).num_seconds();
                 let n = remaining.unsigned_abs();
-                let clock = format!("{:02}:{:02}:{:02}:{:02}", n / 86400, n / 3600 % 24, n / 60 % 60, n % 60);
+                let clock = format!(
+                    "{:02}:{:02}:{:02}:{:02}",
+                    n / 86400,
+                    n / 3600 % 24,
+                    n / 60 % 60,
+                    n % 60
+                );
                 if body.height >= 12 && large_width(&clock) <= body.width as usize {
-                    text = vec![Line::styled(d.title.to_uppercase(), Style::default().fg(CREAM))];
+                    text = vec![Line::styled(
+                        d.title.to_uppercase(),
+                        Style::default().fg(CREAM),
+                    )];
                     text.extend(large_number(&clock));
-                    text.push(Line::styled(" DAYS     HOURS     MINUTES   SECONDS", Style::default().fg(ACCENT)));
-                    text.push(Line::styled(format!("{}{}", if remaining < 0 { "OVERDUE · " } else { "" }, d.at.with_timezone(&Local).format("%a %d %b %Y  %H:%M %:z")), Style::default().fg(MUTED)));
+                    text.push(Line::styled(
+                        " DAYS     HOURS     MINUTES   SECONDS",
+                        Style::default().fg(ACCENT),
+                    ));
+                    text.push(Line::styled(
+                        format!(
+                            "{}{}",
+                            if remaining < 0 { "OVERDUE · " } else { "" },
+                            d.at.with_timezone(&Local).format("%a %d %b %Y  %H:%M %:z")
+                        ),
+                        Style::default().fg(MUTED),
+                    ));
                     height = 9;
                 } else {
-                    text = vec![Line::styled(&d.title, Style::default().fg(ACCENT)), Line::from(countdown(d.at, Utc::now()))];
+                    text = vec![
+                        Line::styled(&d.title, Style::default().fg(ACCENT)),
+                        Line::from(countdown(d.at, Utc::now())),
+                    ];
                 }
             }
-            let rows = Layout::vertical([Constraint::Length(height.min(body.height)), Constraint::Min(0)]).split(body);
+            text.push(Line::styled(
+                "Upcoming deadlines",
+                Style::default().fg(ACCENT),
+            ));
+            let rows = Layout::vertical([
+                Constraint::Length(height.min(body.height)),
+                Constraint::Min(0),
+            ])
+            .split(body);
             frame.render_widget(Paragraph::new(text).alignment(Alignment::Center), rows[0]);
             let items = state
                 .deadlines
@@ -610,7 +710,8 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
             let rows = if body.width >= 48 {
                 Layout::horizontal([Constraint::Length(29), Constraint::Min(0)]).split(body)
             } else {
-                Layout::vertical([Constraint::Length(9.min(body.height)), Constraint::Min(0)]).split(body)
+                Layout::vertical([Constraint::Length(9.min(body.height)), Constraint::Min(0)])
+                    .split(body)
             };
             let today = Local::now().date_naive();
             let mut lines = vec![
@@ -701,10 +802,22 @@ fn glyph(c: char, row: usize) -> &'static str {
     rows[row]
 }
 fn large_width(text: &str) -> usize {
-    text.chars().map(|c| glyph(c, 0).chars().count() + 1).sum::<usize>().saturating_sub(1)
+    text.chars()
+        .map(|c| glyph(c, 0).chars().count() + 1)
+        .sum::<usize>()
+        .saturating_sub(1)
 }
 fn large_number(text: &str) -> Vec<Line<'static>> {
-    (0..5).map(|row| Line::from(text.chars().map(|c| glyph(c, row)).collect::<Vec<_>>().join(" "))).collect()
+    (0..5)
+        .map(|row| {
+            Line::from(
+                text.chars()
+                    .map(|c| glyph(c, row))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
+        })
+        .collect()
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, items: Vec<ListItem<'_>>, selected: usize) {
@@ -732,12 +845,29 @@ mod tests {
     #[test]
     fn dashboard_renders_tiles_and_degrades_without_panics() {
         let mut state = State::default();
-        for text in ["Sample: finish casting figures", "Sample: photograph sculptures", "Sample: prepare installation", "Sample: pack studio tools"] { state.add_task(text).unwrap(); }
+        for text in [
+            "Sample: finish casting figures",
+            "Sample: photograph sculptures",
+            "Sample: prepare installation",
+            "Sample: pack studio tools",
+        ] {
+            state.add_task(text).unwrap();
+        }
         state.calculate("125 * 1.15").unwrap();
         state.calculate("200 / 0.94").unwrap();
-        state.set_entry(None, "Sample: studio work", &Local::now().date_naive().to_string()).unwrap();
         state
-            .set_deadline(None, "Sample: exhibition installation", "2026-12-01T18:00:00Z")
+            .set_entry(
+                None,
+                "Sample: studio work",
+                &Local::now().date_naive().to_string(),
+            )
+            .unwrap();
+        state
+            .set_deadline(
+                None,
+                "Sample: exhibition installation",
+                "2026-12-01T18:00:00Z",
+            )
             .unwrap();
         let mut app = App::new(&state);
         for (width, height) in [(120, 40), (100, 36), (90, 24), (60, 18), (32, 10), (10, 4)] {
@@ -755,7 +885,6 @@ mod tests {
             if width == 120 {
                 let svg = sample_svg(terminal.backend().buffer(), width, height);
                 std::fs::write("target/sample-dashboard.svg", &svg).unwrap();
-                println!("JIG_SAMPLE_SVG_BEGIN\n{svg}\nJIG_SAMPLE_SVG_END");
             }
             app.begin(&state, false);
             terminal
@@ -780,16 +909,29 @@ mod tests {
                 let bg = row[x].bg;
                 let mut text = String::new();
                 while x < row.len() && row[x].fg == fg && row[x].bg == bg {
-                    text.push_str(row[x].symbol()); x += 1;
+                    text.push_str(row[x].symbol());
+                    x += 1;
                 }
                 if bg != BG && bg != Color::Reset {
-                    writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"20\" fill=\"{}\"/>", start * 10, y * 20, (x - start) * 10, color(bg, "#0c131b")).unwrap();
+                    writeln!(
+                        svg,
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"20\" fill=\"{}\"/>",
+                        start * 10,
+                        y * 20,
+                        (x - start) * 10,
+                        color(bg, "#0c131b")
+                    )
+                    .unwrap();
                 }
-                let text = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                let text = text
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;");
                 writeln!(svg, "<text x=\"{}\" y=\"{}\" fill=\"{}\" xml:space=\"preserve\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{text}</text>", start * 10, y * 20 + 16, color(fg, "#f6daae"), (x - start) * 10).unwrap();
             }
         }
-        svg.push_str("</g></svg>"); svg
+        svg.push_str("</g></svg>");
+        svg
     }
     #[test]
     fn keyboard_edits_tasks_and_reuses_history() {

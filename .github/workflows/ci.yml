@@ -10,13 +10,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Format source and report diff
-        run: |
-          cargo fmt
-          git diff --no-color
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked -- --nocapture
+      - run: cargo test --locked
       - run: cargo build --locked
       - run: python3 tests/terminal_smoke.py
       - run: cargo build --locked --release

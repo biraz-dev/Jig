@@ -143,7 +143,11 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
         }
         Command::History => {
             for h in &state.history {
-                println!("{} = {}", h.expression, h.formatted(state.preferences.decimals));
+                println!(
+                    "{} = {}",
+                    h.expression,
+                    h.formatted(state.preferences.decimals)
+                );
             }
             return Ok(false);
         }

@@ -534,8 +534,10 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                 history_area = columns[1];
                 let selected = state.history.get(app.selected[0]);
                 let expression = selected.map_or("Enter to calculate", |h| h.expression.as_str());
-                let result = selected
-                    .map_or_else(|| "0.00".into(), |h| h.formatted(state.preferences.decimals));
+                let result = selected.map_or_else(
+                    || "0.00".into(),
+                    |h| h.formatted(state.preferences.decimals),
+                );
                 frame.render_widget(
                     Paragraph::new(expression).style(Style::default().fg(MUTED)),
                     Rect {

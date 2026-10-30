@@ -378,9 +378,12 @@ impl BrowserApp {
         ui.horizontal_wrapped(|ui| {
             if let Some(last) = self.state.history.last() {
                 ui.label(
-                    RichText::new(format!("= {}", last.formatted(self.state.preferences.decimals)))
-                        .font(FontId::monospace(28.0))
-                        .color(GREEN),
+                    RichText::new(format!(
+                        "= {}",
+                        last.formatted(self.state.preferences.decimals)
+                    ))
+                    .font(FontId::monospace(28.0))
+                    .color(GREEN),
                 );
                 if ui
                     .small_button("Copy")

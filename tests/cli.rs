@@ -37,10 +37,17 @@ fn cli_shares_state_and_returns_predictable_errors() {
         String::from_utf8_lossy(&invoke(&["units", "1 1/2in", "mm"]).stdout).trim(),
         "38.10 mm"
     );
-    assert_eq!(fs::read(&path).unwrap(), before, "units must remain read-only");
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "units must remain read-only"
+    );
     let converted = invoke(&["calc", "72 in mm"]);
     assert!(converted.status.success());
-    assert_eq!(String::from_utf8_lossy(&converted.stdout).trim(), "1828.80 mm");
+    assert_eq!(
+        String::from_utf8_lossy(&converted.stdout).trim(),
+        "1828.80 mm"
+    );
     let restored = jig::model::State::from_json(&fs::read_to_string(&path).unwrap()).unwrap();
     let answer = restored.history.last().unwrap();
     assert_eq!(answer.expression, "72 in mm");

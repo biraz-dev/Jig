@@ -167,7 +167,9 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
                 }
                 return Ok(false);
             }
-            TaskAction::ClearCompleted => println!("Removed {} completed tasks", state.remove_completed_tasks()),
+            TaskAction::ClearCompleted => {
+                println!("Removed {} completed tasks", state.remove_completed_tasks())
+            }
             TaskAction::Add { text } => println!("{}", state.add_task(&text)?),
             TaskAction::Edit { id, text } => state.edit_task(id, &text)?,
             TaskAction::Done { id } => state.toggle_task(id)?,

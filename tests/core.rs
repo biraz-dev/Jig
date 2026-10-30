@@ -160,7 +160,10 @@ fn deleting_completed_tasks_keeps_unfinished_order_and_other_state() {
     state.toggle_task(completed).unwrap();
     state.calculate("1 / 3").unwrap();
     assert_eq!(state.remove_completed_tasks(), 1);
-    assert_eq!(state.tasks.iter().map(|task| task.id).collect::<Vec<_>>(), vec![first, last]);
+    assert_eq!(
+        state.tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+        vec![first, last]
+    );
     assert_eq!(state.history[0].result, 1.0 / 3.0);
     assert_eq!(state.remove_completed_tasks(), 0);
     state.toggle_task(first).unwrap();

@@ -26,6 +26,32 @@ const fixture = {
 const fixtureRaw = JSON.stringify(fixture);
 const issues = [];
 const pages = [];
+let phase = "launch Chromium";
+const suiteTimer = setTimeout(() => {
+  console.error(`Browser smoke exceeded 240 seconds during: ${phase}`);
+  process.exit(1);
+}, 240000);
+
+function progress(message) {
+  phase = message;
+  console.log(`Browser phase: ${message}`);
+}
+
+function bounded(promise, milliseconds, description) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${description} timed out after ${milliseconds}ms`)), milliseconds);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function release(context, label) {
+  progress(`close ${label}`);
+  await bounded(context.close(), 5000, `Closing ${label}`);
+}
+
 const browser = await chromium.launch({
   headless: true,
   args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"],
@@ -101,12 +127,16 @@ function observe(page, label, allowedExternal = []) {
 }
 
 async function boot(page, reload = false, address = base) {
+  const label = pages.find(item => item.page === page)?.label ?? address;
+  progress(`${reload ? "reload" : "boot"} ${label}`);
+  await page.bringToFront();
   if (reload) await page.reload({ waitUntil: "load" });
   else await page.goto(address, { waitUntil: "load" });
+  await page.bringToFront();
   await page.waitForFunction(
     () => window.jigReady === true || typeof window.jigBootError === "string",
     undefined,
-    { timeout: 60000 },
+    { timeout: 60000, polling: 100 },
   );
   assert.equal(await page.evaluate(() => window.jigBootError), undefined, "Rust/WASM startup failed");
   assert.equal(await page.locator("#jig_canvas").isVisible(), true);
@@ -120,6 +150,7 @@ async function saved(page) {
 }
 
 async function calculate(page, expression) {
+  progress(`calculate ${expression}`);
   await page.bringToFront();
   await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await page.keyboard.press("Control+Alt+4");
@@ -129,6 +160,7 @@ async function calculate(page, expression) {
 }
 
 async function expectTransferredInput(page, result, unit) {
+  progress(`transfer calculator result to ${unit}`);
   // Copy through the ordinary focused text field, not a test-only state hook.
   await page.evaluate(() => navigator.clipboard.writeText("Jig copy pending"));
   await page.keyboard.press("Control+Alt+u");
@@ -172,13 +204,14 @@ function mockForecast(config) {
 }
 
 async function expectWeatherCache(page, config) {
+  progress(`forecast cache for ${config.name} (${config.unit})`);
   await page.waitForFunction(({ key, config }) => {
     try {
       const cache = JSON.parse(localStorage.getItem(key));
       return cache.config.name === config.name && cache.config.unit === config.unit
         && cache.forecast.days.length === 2 && cache.forecast.current !== null;
     } catch { return false; }
-  }, { key: weatherCacheKey, config });
+  }, { key: weatherCacheKey, config }, { polling: 100 });
   return page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey);
 }
 
@@ -208,6 +241,7 @@ try {
   await calculate(demo.page, "1 / 3");
   await demo.page.waitForTimeout(1200);
   assert.equal(await saved(demo.page), null, "Editing sample data must not create personal browser state");
+  await release(demo.context, "sample-desktop");
 
   const personal = await newPage("personal-desktop", { raw: fixtureRaw });
   await boot(personal.page);
@@ -261,6 +295,8 @@ try {
     assert.equal(await saved(personal.page), exportRaw, `Invalid import ${name} changed saved data`);
   }
 
+  await release(personal.context, "personal-desktop");
+
   const malformedRaw = "{broken saved sample fixture";
   const malformed = await newPage("malformed-preserved", { raw: malformedRaw });
   await boot(malformed.page);
@@ -268,6 +304,7 @@ try {
   await malformed.page.waitForTimeout(1200);
   assert.equal(await saved(malformed.page), malformedRaw, "Malformed saved state must remain available for recovery");
   await malformed.page.screenshot({ path: resolve(results, "malformed-preserved.png") });
+  await release(malformed.context, "malformed-preserved");
 
   // A failed explicit reload in an already-personal session must not acknowledge
   // malformed raw data and then overwrite it on the next ordinary edit.
@@ -281,6 +318,7 @@ try {
   await calculate(laterCorrupt.page, "10 + 5");
   await laterCorrupt.page.waitForTimeout(1200);
   assert.equal(await saved(laterCorrupt.page), malformedRaw, "Failed reload allowed a later edit to overwrite corrupt data");
+  await release(laterCorrupt.context, "later-corrupt-preserved");
 
   // Two tabs share one storage area; stale public bridge writes must be rejected.
   const shared = await newPage("cross-tab-first");
@@ -306,6 +344,8 @@ try {
   const compact = await newPage("sample-mobile", { viewport: { width: 390, height: 844 } });
   await boot(compact.page);
   assert.equal(await saved(compact.page), null);
+  assert.equal(await saved(shared.page), fixtureRaw, "The other profile must still retain its separate dataset");
+  await release(shared.context, "cross-tab pair");
   assert.equal(await compact.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await compact.page.screenshot({ path: resolve(results, "sample-mobile.png") });
   // Reload explicit synthetic personal state so narrow-screen keyboard input
@@ -316,6 +356,7 @@ try {
   await expectCalculation(compact.page, "12 * 1.5", 18, 2);
   assert.deepEqual(JSON.parse(await saved(compact.page)).entries, fixture.entries);
   await compact.page.screenshot({ path: resolve(results, "calculator-units-mobile.png") });
+  await release(compact.context, "sample-mobile");
 
   // Weather is opt-in. Existing contexts reject provider requests, even when
   // a URL hash prefills a city; all enabled cases below intercept the provider.
@@ -340,6 +381,7 @@ try {
   await weather.page.waitForTimeout(500);
   assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await weather.page.screenshot({ path: resolve(results, "weather-compact.png") });
+  await release(weather.context, "weather-celsius");
 
   // A second city/unit configuration is independent and must request Fahrenheit.
   const fahrenheit = { name: "Sample Ridge", latitude: 35.68, longitude: 139.76, unit: "fahrenheit" };
@@ -351,6 +393,7 @@ try {
   await boot(alternate.page);
   checkWeather(await expectWeatherCache(alternate.page, fahrenheit), fahrenheit);
   assert.equal(fahrenheitMock.requests.length, 1);
+  await release(alternate.context, "weather-fahrenheit");
 
   // Stale readings remain available during an outage, and failed requests must
   // not be retried at the one-second dashboard repaint rate.
@@ -362,18 +405,22 @@ try {
     weatherCache: staleCache, weather: outageMock,
   });
   await boot(outage.page);
-  await outage.page.waitForFunction(key => localStorage.getItem(key) !== null, weatherCacheKey);
+  await outage.page.waitForFunction(key => localStorage.getItem(key) !== null, weatherCacheKey, { polling: 100 });
   await outage.page.waitForTimeout(3500);
   assert.equal(outageMock.requests.length, 1, "An outage must not create a request loop");
   assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache, "An outage must preserve the last usable forecast");
   await outage.page.screenshot({ path: resolve(results, "weather-stale.png") });
+  await release(outage.context, "weather-stale-outage");
 
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
   console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded calculator input, unrounded calculator-to-converter transfer, precise restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, compact layout, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
 } catch (error) {
-  for (const { page, label } of pages) {
+  console.error(`Browser smoke failed during: ${phase}`);
+  // Earlier completed cases already have screenshots; avoid multiplying failure
+  // delays or evaluating a page whose main thread is stuck indefinitely.
+  for (const { page, label } of pages.slice(-3)) {
     if (!page.isClosed()) {
-      const diagnostics = await page.evaluate(key => ({
+      const diagnostics = await bounded(page.evaluate(key => ({
         // These contexts contain only the explicit synthetic fixtures above.
         saved: localStorage.getItem(key),
         activeElement: document.activeElement ? {
@@ -382,13 +429,18 @@ try {
           value: document.activeElement.value ?? null,
         } : null,
         viewport: { width: innerWidth, height: innerHeight },
-      }), key).catch(error => ({ unavailable: String(error) }));
+        visibility: document.visibilityState,
+      }), key), 3000, `Diagnostics for ${label}`).catch(error => ({ unavailable: String(error) }));
       console.error(`Failure diagnostics (${label}):`, JSON.stringify(diagnostics));
-      await page.screenshot({ path: resolve(results, `failure-${label}.png`) }).catch(() => {});
+      await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});
     }
   }
   if (issues.length) console.error("Browser diagnostics:", issues.join("\n"));
   throw error;
 } finally {
-  await browser.close();
+  clearTimeout(suiteTimer);
+  await bounded(browser.close(), 5000, "Closing Chromium").catch(error => {
+    console.error(String(error));
+    process.exit(1);
+  });
 }

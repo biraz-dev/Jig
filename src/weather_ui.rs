@@ -168,7 +168,6 @@ impl WeatherPanel {
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             if let Some(config) = self.config.clone() {
-                ui.label(RichText::new("FORECAST").color(ACCENT).small());
                 ui.label(&config.name);
                 for (unit, label) in [
                     (TemperatureUnit::Fahrenheit, "°F"),

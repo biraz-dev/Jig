@@ -871,7 +871,9 @@ impl BrowserApp {
 
 impl eframe::App for BrowserApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_theme(egui::ThemePreference::Dark);
+        if !ctx.style().visuals.dark_mode {
+            ctx.set_theme(egui::ThemePreference::Dark);
+        }
         ctx.request_repaint_after(Duration::from_secs(1));
         self.weather.update();
         match browser_storage::take_import() {

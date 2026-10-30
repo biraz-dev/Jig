@@ -113,8 +113,33 @@ fn weather_code(code: Option<u8>) -> Result<()> {
     if code.is_some_and(|code| {
         !matches!(
             code,
-            0 | 1 | 2 | 3 | 45 | 48 | 51 | 53 | 55 | 56 | 57 | 61 | 63 | 65 | 66 | 67 | 71
-                | 73 | 75 | 77 | 80 | 81 | 82 | 85 | 86 | 95 | 96 | 99
+            0 | 1
+                | 2
+                | 3
+                | 45
+                | 48
+                | 51
+                | 53
+                | 55
+                | 56
+                | 57
+                | 61
+                | 63
+                | 65
+                | 66
+                | 67
+                | 71
+                | 73
+                | 75
+                | 77
+                | 80
+                | 81
+                | 82
+                | 85
+                | 86
+                | 95
+                | 96
+                | 99
         )
     }) {
         return Err("Invalid WMO weather code".into());
@@ -154,7 +179,9 @@ struct ApiHourly {
 
 fn series<T>(values: Option<Vec<Option<T>>>, length: usize, field: &str) -> Result<Vec<Option<T>>> {
     match values {
-        Some(values) if values.len() != length => Err(format!("Weather {field} length does not match its time array")),
+        Some(values) if values.len() != length => Err(format!(
+            "Weather {field} length does not match its time array"
+        )),
         Some(values) => Ok(values),
         None => Ok(std::iter::repeat_with(|| None).take(length).collect()),
     }
@@ -172,15 +199,24 @@ fn hourly_date(text: &str) -> Result<NaiveDate> {
 /// Hourly humidity is grouped by each timestamp's local calendar date, not by
 /// blocks of 24 values; short/long days and incomplete data remain correctly dated.
 pub fn parse_forecast(text: &str, fetched_at: DateTime<Utc>) -> Result<Forecast> {
-    let api: ApiForecast = serde_json::from_str(text).map_err(|error| format!("Invalid weather response: {error}"))?;
+    let api: ApiForecast =
+        serde_json::from_str(text).map_err(|error| format!("Invalid weather response: {error}"))?;
     let count = api.daily.time.len();
     let highs = series(api.daily.temperature_2m_max, count, "temperature_2m_max")?;
     let lows = series(api.daily.temperature_2m_min, count, "temperature_2m_min")?;
-    let rain = series(api.daily.precipitation_probability_max, count, "precipitation_probability_max")?;
+    let rain = series(
+        api.daily.precipitation_probability_max,
+        count,
+        "precipitation_probability_max",
+    )?;
     let codes = series(api.daily.weather_code, count, "weather_code")?;
     let mut humidities: BTreeMap<NaiveDate, (f64, usize)> = BTreeMap::new();
     if let Some(hourly) = api.hourly {
-        let values = series(hourly.relative_humidity_2m, hourly.time.len(), "relative_humidity_2m")?;
+        let values = series(
+            hourly.relative_humidity_2m,
+            hourly.time.len(),
+            "relative_humidity_2m",
+        )?;
         for (time, humidity) in hourly.time.iter().zip(values) {
             let date = hourly_date(time)?;
             percentage(humidity, "hourly humidity")?;
@@ -193,13 +229,16 @@ pub fn parse_forecast(text: &str, fetched_at: DateTime<Utc>) -> Result<Forecast>
     }
     let mut days = Vec::with_capacity(count);
     for (index, text) in api.daily.time.iter().enumerate() {
-        let date = NaiveDate::parse_from_str(text, "%Y-%m-%d").map_err(|_| "Invalid daily weather date")?;
+        let date = NaiveDate::parse_from_str(text, "%Y-%m-%d")
+            .map_err(|_| "Invalid daily weather date")?;
         days.push(DayWeather {
             date,
             high: highs[index],
             low: lows[index],
             rain_probability: rain[index],
-            humidity_mean: humidities.get(&date).map(|(sum, count)| sum / *count as f64),
+            humidity_mean: humidities
+                .get(&date)
+                .map(|(sum, count)| sum / *count as f64),
             code: codes[index],
         });
     }

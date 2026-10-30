@@ -126,7 +126,7 @@ artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
 
 Screenshots normally stay in the test artifact. A push whose commit message
-contains `[render]` also prints three allowlisted synthetic screenshots as
+contains `[render]` also prints allowlisted synthetic screenshots as
 bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
 locally to request named scenes; personal workbench data is never used.
 

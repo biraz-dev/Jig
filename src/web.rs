@@ -606,11 +606,8 @@ impl BrowserApp {
                         .add_enabled(
                             !row.complete,
                             egui::Button::new(
-                                RichText::new(if featured { "★" } else { "☆" }).color(if featured {
-                                    PINK
-                                } else {
-                                    BLUE
-                                }),
+                                RichText::new(if featured { "★" } else { "☆" })
+                                    .color(if featured { PINK } else { BLUE }),
                             )
                             .small(),
                         )
@@ -651,7 +648,8 @@ impl BrowserApp {
                                 .selected(self.task_color_edit == Some(deadline))
                                 .min_size(egui::vec2(30.0, 30.0)),
                         );
-                        let label = format!("Color: {}", row.color.map_or("None", TaskColor::label));
+                        let label =
+                            format!("Color: {}", row.color.map_or("None", TaskColor::label));
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::Button,
@@ -671,7 +669,8 @@ impl BrowserApp {
                             };
                         }
                     }
-                    let text = RichText::new(&row.title).color(if row.complete { BLUE } else { CREAM });
+                    let text =
+                        RichText::new(&row.title).color(if row.complete { BLUE } else { CREAM });
                     ui.label(if row.complete {
                         text.strikethrough()
                     } else {
@@ -1065,11 +1064,7 @@ impl BrowserApp {
                         if let Some(day) = day {
                             let mut tasks = self.state.tasks_on_date(*day, &Local);
                             tasks.sort_by_key(|task| task.complete);
-                            let color = if *day == today {
-                                ACCENT
-                            } else {
-                                CREAM
-                            };
+                            let color = if *day == today { ACCENT } else { CREAM };
                             let mut button = egui::Button::new(
                                 RichText::new(day.day().to_string()).size(14.0).color(color),
                             )
@@ -1091,7 +1086,7 @@ impl BrowserApp {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::Button,
                                     ui.is_enabled(),
-                                    label,
+                                    &label,
                                 )
                             });
                             // Show distinct colors before repeated marks on busy dates.
@@ -1230,10 +1225,8 @@ impl BrowserApp {
                 for task in tasks {
                     ui.push_id(("calendar-task", task.deadline_id), |ui| {
                         let row = ui.horizontal_top(|ui| {
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(10.0, 18.0),
-                                egui::Sense::hover(),
-                            );
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(10.0, 18.0), egui::Sense::hover());
                             task_mark(ui, rect.center(), task.color, task.complete, 3.0);
                             ui.label(
                                 RichText::new(if task.complete { "Done" } else { "Open" })

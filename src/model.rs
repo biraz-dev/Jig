@@ -330,7 +330,11 @@ impl State {
     }
     /// Only the due date is represented, including completed tasks and legacy deadlines.
     /// This projection never materializes tasks or changes the featured countdown.
-    pub fn tasks_on_date<Tz: TimeZone>(&self, date: NaiveDate, timezone: &Tz) -> Vec<CalendarTask<'_>> {
+    pub fn tasks_on_date<Tz: TimeZone>(
+        &self,
+        date: NaiveDate,
+        timezone: &Tz,
+    ) -> Vec<CalendarTask<'_>> {
         self.deadlines
             .iter()
             .filter(|deadline| deadline.at.with_timezone(timezone).date_naive() == date)

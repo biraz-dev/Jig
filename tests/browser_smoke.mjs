@@ -271,6 +271,22 @@ try {
   await personal.page.keyboard.press("F2");
   await calculate(personal.page, "ans * 8");
   await expectCalculation(personal.page, "ans * 8", 3, 5);
+  // Repeatedly rebuild the same input in expanded and dashboard layouts. Every
+  // keystroke must still reach it, without retries or duplicate calculations.
+  const repeated = [1, 2, 3, 4].map(value => ({ expression: `7 + ${value}`, result: 7 + value }));
+  for (const [index, calculation] of repeated.entries()) {
+    await personal.page.keyboard.press("F2");
+    await calculate(personal.page, calculation.expression);
+    await expectCalculation(personal.page, calculation.expression, calculation.result, 6 + index);
+  }
+  assert.deepEqual(JSON.parse(await saved(personal.page)).history, [
+    ...fixture.history,
+    { expression: "1 / 3", result: 1 / 3 },
+    { expression: "ans * 3", result: 1 },
+    { expression: "3 / 8", result: 0.375 },
+    { expression: "ans * 8", result: 3 },
+    ...repeated,
+  ], "Repeated expand/close must preserve the exact calculation order and results");
   assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Combined-tool interactions must preserve hidden calendar notes");
   await personal.page.screenshot({ path: resolve(results, "personal-desktop.png") });
 

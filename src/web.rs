@@ -345,9 +345,13 @@ impl BrowserApp {
 
     fn calculator(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            let id = egui::Id::new("calculator-input");
+            if self.focus_calculator {
+                ui.memory_mut(|memory| memory.request_focus(id));
+            }
             let response = ui.add(
                 TextEdit::singleline(&mut self.calculation)
-                    .id_salt("calculator-input")
+                    .id(id)
                     .font(egui::TextStyle::Monospace)
                     .hint_text("125 * 1.15 / ans / 50%")
                     .desired_width((ui.available_width() - 95.0).max(80.0)),
@@ -356,9 +360,9 @@ impl BrowserApp {
                 self.focus = 3;
             }
             if self.focus_calculator {
-                response.request_focus();
                 response.scroll_to_me(None);
-                self.focus_calculator = false;
+                self.focus_calculator = !response.has_focus();
+                ui.ctx().request_repaint();
             }
             let enter =
                 response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -385,6 +389,8 @@ impl BrowserApp {
                 if ui.link(&history.expression).clicked() {
                     self.calculation = history.expression.clone();
                     self.focus_calculator = true;
+                    self.focus_length = false;
+                    ui.ctx().request_repaint();
                 }
                 if ui
                     .button(format!("= {}", self.state.number(history.result)))
@@ -392,6 +398,8 @@ impl BrowserApp {
                 {
                     self.calculation = history.result.to_string();
                     self.focus_calculator = true;
+                    self.focus_length = false;
+                    ui.ctx().request_repaint();
                 }
             });
         }
@@ -441,9 +449,13 @@ impl BrowserApp {
     }
 
     fn length(&mut self, ui: &mut Ui) {
+        let id = egui::Id::new("length-input");
+        if self.focus_length {
+            ui.memory_mut(|memory| memory.request_focus(id));
+        }
         let response = ui.add(
             TextEdit::singleline(&mut self.length)
-                .id_salt("length-input")
+                .id(id)
                 .hint_text("12in / 1 1/2in")
                 .desired_width(ui.available_width()),
         );
@@ -451,9 +463,9 @@ impl BrowserApp {
             self.focus = 3;
         }
         if self.focus_length {
-            response.request_focus();
             response.scroll_to_me(None);
-            self.focus_length = false;
+            self.focus_length = !response.has_focus();
+            ui.ctx().request_repaint();
         }
         if ui
             .add_enabled(
@@ -464,6 +476,7 @@ impl BrowserApp {
             .clicked()
         {
             self.use_calculation_result();
+            ui.ctx().request_repaint();
         }
         if let Err(error) = units::convert(&self.length, "m") {
             ui.label(RichText::new(error).color(PINK));
@@ -876,6 +889,10 @@ impl eframe::App for BrowserApp {
         }
         ctx.request_repaint_after(Duration::from_secs(1));
         self.weather.update();
+        if ctx.input(|input| input.pointer.any_pressed()) {
+            self.focus_calculator = false;
+            self.focus_length = false;
+        }
         match browser_storage::take_import() {
             Ok(Some(state)) => self.pending_import = Some(state),
             Ok(None) => {}
@@ -896,6 +913,7 @@ impl eframe::App for BrowserApp {
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::U)) {
             self.use_calculation_result();
+            ctx.request_repaint();
             if ctx.screen_rect().width() < 1040.0 {
                 self.expanded = true;
             }
@@ -904,6 +922,7 @@ impl eframe::App for BrowserApp {
             self.focus = 3;
             self.focus_calculator = true;
             self.focus_length = false;
+            ctx.request_repaint();
             if ctx.screen_rect().width() < 1040.0 {
                 self.expanded = true;
             }

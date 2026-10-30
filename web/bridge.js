@@ -6,6 +6,11 @@
   let observed = null;
   let pending = null;
   let importError = null;
+  let unsaved = false;
+  window.jigSetUnsaved = value => { unsaved = value; };
+  window.addEventListener("beforeunload", event => {
+    if (unsaved) { event.preventDefault(); event.returnValue = ""; }
+  });
 
   function unchanged() {
     if (localStorage.getItem(key) !== observed) {

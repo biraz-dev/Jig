@@ -1,13 +1,19 @@
 # Jig
 
 A tool for creative Small Giants. A small, local artist's workbench in Rust:
-calculator, length conversion, tasks, deadlines and calendar. No accounts,
-telemetry, network calls, database or background service.
+calculator, length conversion, tasks, deadlines and calendar. The Rust CLI,
+terminal dashboard and egui browser preview share the same utility logic.
+No accounts, telemetry, database, backend or background service. The CLI and
+terminal run offline; the browser loads static application assets and processes
+all application data on your device.
 
 ![Jig terminal dashboard — sample data](docs/sample-dashboard.svg)
 
-This is a rendering of the actual Ratatui dashboard using clearly labelled sample
-data, not a browser application.
+The image above renders the Ratatui dashboard with clearly labelled sample data.
+The browser preview uses the same five instruments and the approved visual
+direction.
+Development is on `jig-initial-milestone`; the default branch remains the initial
+README until the milestone PR is merged.
 
 ## Build and run on Linux
 
@@ -26,6 +32,58 @@ A UTF-8 terminal is recommended. Set IBM Plex Mono in your terminal preferences
 if installed; terminal applications cannot select the font. The complete tiled
 dashboard needs at least 100 columns × 36 rows. Smaller terminals show the focused
 tool; below 32 × 10 Jig asks you to resize. F2 expands a tool at any size.
+
+## Run the browser preview locally
+
+Install stable Rust and the pinned Trunk build tool, then run from the repository:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install trunk --version 0.21.14 --locked
+trunk serve --public-url /
+```
+
+Open the local address printed by Trunk, normally `http://127.0.0.1:8080/`.
+The preview needs JavaScript, WebAssembly and WebGL enabled. Native terminal
+dependencies are excluded from the WASM build; `jig` still launches the TUI by
+default.
+
+A fresh browser opens **Development preview — sample data**. Demo edits are
+temporary and never replace saved personal data. **Start empty** creates your own
+workbench after confirmation; **Open local data** returns to saved personal data;
+**Sample mode** returns to the demo. Personal edits save in this browser profile
+under `jig.personal.v1`. **Import JSON** validates a complete Jig state file and
+asks before replacing personal data; **Export JSON** downloads the current
+workbench as `jig.json`. **Clear saved data** requires confirmation and returns to
+temporary samples. Use export for backups and to transfer data between the
+browser and CLI. Importing a file never uploads it.
+
+The preview supports mouse interaction and normal text editing. Use the numbered
+tool buttons to focus an instrument, **F2** to expand it, and **Esc** to return to
+the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
+start-empty confirmation. Tab/Shift-Tab navigate controls. On narrow screens the
+panels stack vertically; inline forms and individual panels can scroll.
+
+Browser imports and saves have a 2 MiB limit. Invalid saved data is preserved and
+reported. If a save fails, edits remain in memory and **Retry save** becomes
+available; export them before closing the page. If another tab changes the saved
+text, Jig rejects the stale write. Export your current work, then reload to open
+the newer saved copy. Browser storage belongs to this browser profile and origin;
+clearing site data or using another browser does not carry it over.
+
+For a production build under the repository's Pages path:
+
+```sh
+trunk build --release --public-url /Jig/
+```
+
+The **Browser preview** Actions workflow builds on pushes and pull requests,
+checks WASM with Clippy, exercises the browser app, and uploads static assets and
+browser test results. Deployment runs only on a push to `main`. To make the site
+public, set **Settings → Pages → Build and deployment → Source → GitHub Actions**
+and merge the milestone PR. A live Pages deployment is not claimed yet. See
+[the browser preview notes](docs/preview.md) for implementation and deployment
+details.
 
 ## CLI
 
@@ -74,7 +132,7 @@ Lengths accept decimal, fractional and mixed-fraction quantities with an explici
 source unit: `in`, `ft`, `mm`, `cm`, `m`. All directions work. Display defaults to
 two decimals; calculations and stored values retain f64 precision.
 
-## Dashboard keys
+## Terminal dashboard keys
 
 | Key | Action |
 | --- | --- |
@@ -107,29 +165,35 @@ Default: `$XDG_DATA_HOME/jig/jig.json`, or `~/.local/share/jig/jig.json`.
 `--state PATH` overrides it for every command. Copy that one file to another
 computer and open it with `--state`; no migration service or database is needed.
 State includes preferences, complete calculator history, task order, deadlines,
-calendar notes and featured deadline ID. New installations start empty; the
-converter initially displays 12 inches as an instrument example.
+calendar notes and featured deadline ID. New terminal installations start empty;
+the converter initially displays 12 inches as an instrument example. Browser demo
+samples are generated in code and kept separate from saved personal state.
 
 JSON is deliberately simpler than Markdown front matter: one established serde
 parser, an explicit format version, and no ambiguity between prose and structured
-data. It is human-readable and editable while Jig is stopped. No sample or
-personal state is committed. Save on each successful mutation uses a same-directory
-temporary file, file sync, atomic rename and directory sync on Linux. Invalid or
+data. It is human-readable and editable while Jig is stopped. No personal state
+is committed; the public preview contains only synthetic samples. A terminal or
+CLI save on each successful mutation uses a same-directory temporary file, file sync, atomic rename and directory sync on Linux. Invalid or
 unsupported state produces an error and is never silently reset. Files created
 on Unix use mode 0600.
 
 Only one Jig process can open a given file at once. After a crash, check that no
-Jig process is running, then remove the corresponding `.json.lock`. A leftover
-`.json.tmp` blocks saves rather than overwriting possibly recoverable data:
-inspect it, copy it aside or recover it, then remove it. Keep your own backups;
-there is no automatic backup retention. A save failure rolls a TUI mutation back
+Jig process is running, then remove the lock formed by appending `.lock` to the
+entire state filename, such as `jig.json.lock` or `portable.state.lock`. A leftover
+temporary file similarly appends `.tmp`, such as `portable.state.tmp`. It blocks
+saves rather than overwriting possibly recoverable data: inspect it, copy it
+aside or recover it, then remove it. Keep your own backups; there is no automatic
+backup retention. A save failure rolls a TUI mutation back
 and displays an error. Quit retries the save. Preferences are also saved on quit.
 
 ## Development
 
 Single crate: `src/lib.rs` exposes portable logic; `src/main.rs`, `storage.rs`
-and `tui.rs` adapt it for Linux files, commands and the terminal. No filesystem,
-terminal, CLI or network API is used by the core modules. Chrono supplies calendar
+and `tui.rs` adapt it for Linux files, commands and the terminal. `src/web.rs`
+implements the egui browser dashboard, and `src/browser_storage.rs` plus
+`web/bridge.js` adapt browser-local storage and file import/export. Terminal and
+web dependencies are optional and target-specific. No filesystem, DOM, terminal,
+CLI or network API is used by the core modules. Chrono supplies calendar
 and timezone arithmetic; serde supplies portable serialization. Arithmetic is a
 small bounded parser for the deliberately limited grammar.
 
@@ -139,24 +203,38 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
 python3 tests/terminal_smoke.py
+cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features web --bin jig-web -- -D warnings
+trunk build --release --public-url /Jig/
 ```
 
 Tests cover arithmetic errors and precedence, percentages, precise result reuse,
 conversion round trips and fractions, checklist changes, deadlines/timezones,
-leap years, state serialization, safe saves, locking and CLI restart persistence.
+leap years, labelled synthetic samples, state serialization, safe saves, locking,
+CLI restart persistence, rejected intermediate arithmetic overflow, and imported
+history containing terminal controls.
 GitHub Actions runs the same checks, a Linux PTY smoke check, and a release build.
 The PTY check verifies idle countdown redraws, keyboard input, resizing, restart
 persistence and terminal restoration. CI publishes the Linux binary as an artifact.
 
-## Limitations and next milestone
+## Limitations and next steps
 
-This is the initial terminal/CLI implementation. Keyboard support only; no mouse,
-undo, recurring deadlines, timezone database selection, external calendar sync,
-scientific calculator, rational/decimal exact arithmetic or automatic backups.
-History is intentionally unbounded. The terminal layout and palette follow the supplied concept image, with the
-five requested instruments and no weather, priorities or extra measurement modes.
-Terminal layout and input behavior still need testing on real terminal emulators.
+The native dashboard is keyboard-only. The browser supports mouse and keyboard,
+but the egui canvas currently has limited screen-reader accessibility. Browser
+background tabs may throttle the otherwise one-second countdown refresh. Browser
+storage can be cleared or unavailable; JSON export is the portable backup.
+Browser state is capped at 2 MiB; CLI history is intentionally unbounded.
 
-The browser preview is deliberately deferred. See [the preview plan](docs/preview.md).
-The [Actions page](https://github.com/biraz-dev/Jig/actions) shows public build
-progress. No graphical interface or browser application ships in this milestone.
+Arithmetic uses f64 rather than exact decimal/rational values. There is no undo,
+recurring deadline, timezone database selection, external calendar sync,
+scientific calculator or automatic backup retention. The native terminal editor
+uses append/backspace editing. No native graphical application is included.
+The preview bundles monospace fonts and makes no font or application-data network
+requests. It has no service worker: reopening it offline depends on the browser's
+asset cache; use the native binary for dependable offline launch.
+
+The layout follows the supplied concept with five instruments; weather,
+priorities and additional measurement modes are outside this milestone.
+Next, validate the browser preview on real devices, improve canvas accessibility
+and narrow layouts, and address concrete feedback before adding tools. The
+[Actions page](https://github.com/biraz-dev/Jig/actions) shows build progress;
+[preview notes](docs/preview.md) describe Pages deployment and follow-up work.

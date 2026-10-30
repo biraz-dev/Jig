@@ -10,14 +10,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Bootstrap format and lockfile
+      - name: Format new source and report diff
         run: |
           cargo fmt
           git diff --no-color
-          cargo generate-lockfile
-          echo JIG_LOCK_BEGIN
-          cat Cargo.lock
-          echo JIG_LOCK_END
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked

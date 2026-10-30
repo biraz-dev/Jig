@@ -10,16 +10,31 @@ fn main() {
     use wasm_bindgen::{JsCast, JsValue};
     wasm_bindgen_futures::spawn_local(async {
         let result = async {
-            let document = web_sys::window().ok_or("No browser window")?.document().ok_or("No document")?;
-            let canvas = document.get_element_by_id("jig_canvas").ok_or("Missing dashboard canvas")?.dyn_into::<web_sys::HtmlCanvasElement>()?;
+            let document = web_sys::window()
+                .ok_or("No browser window")?
+                .document()
+                .ok_or("No document")?;
+            let canvas = document
+                .get_element_by_id("jig_canvas")
+                .ok_or("Missing dashboard canvas")?
+                .dyn_into::<web_sys::HtmlCanvasElement>()?;
             let runner = eframe::WebRunner::new();
-            runner.start(canvas, eframe::WebOptions::default(), Box::new(|cc| Ok(Box::new(web::BrowserApp::new(cc))))).await?;
+            runner
+                .start(
+                    canvas,
+                    eframe::WebOptions::default(),
+                    Box::new(|cc| Ok(Box::new(web::BrowserApp::new(cc)))),
+                )
+                .await?;
             // Keep the runner alive for the lifetime of this browser page.
             std::mem::forget(runner);
             started();
             Ok::<(), JsValue>(())
-        }.await;
-        if let Err(error) = result { failed(&format!("{error:?}")); }
+        }
+        .await;
+        if let Err(error) = result {
+            failed(&format!("{error:?}"));
+        }
     });
 }
 #[cfg(target_arch = "wasm32")]

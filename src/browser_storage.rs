@@ -4,6 +4,8 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
+    #[wasm_bindgen(js_name = jigSetUnsaved)]
+    fn mark_unsaved(unsaved: bool);
     #[wasm_bindgen(catch, js_name = jigLoad)]
     fn load_json() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = jigSave)]
@@ -23,13 +25,7 @@ fn error(value: JsValue) -> String {
 fn decode(value: JsValue) -> Result<Option<State>, String> {
     if value.is_null() || value.is_undefined() { return Ok(None); }
     let text = value.as_string().ok_or("Expected JSON text")?;
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("Invalid state file: {e}"))?;
-    let fields = value.as_object().ok_or("Expected a Jig JSON object")?;
-    for key in ["version", "preferences", "history", "tasks", "deadlines", "entries", "featured"] {
-        if !fields.contains_key(key) { return Err(format!("Not a complete Jig state file: missing {key}")); }
-    }
-    let state: State = serde_json::from_value(value).map_err(|e| format!("Invalid state file: {e}"))?;
-    state.validate()?;
+    let state = State::from_json(&text)?;
     Ok(Some(state))
 }
 pub fn load() -> Result<Option<State>, String> { decode(load_json().map_err(error)?) }
@@ -44,3 +40,5 @@ pub fn download(state: &State) -> Result<(), String> {
 }
 pub fn request_import() -> Result<(), String> { import_json().map_err(error) }
 pub fn take_import() -> Result<Option<State>, String> { decode(take_json().map_err(error)?) }
+
+pub fn set_unsaved(unsaved: bool) { mark_unsaved(unsaved); }

@@ -45,7 +45,7 @@ impl Store {
     }
     pub fn load(&self) -> Result<State, Box<dyn std::error::Error>> {
         let state: State = match fs::read_to_string(&self.path) {
-            Ok(text) => serde_json::from_str(&text)?,
+            Ok(text) => State::from_json(&text)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
             Err(e) => return Err(e.into()),
         };

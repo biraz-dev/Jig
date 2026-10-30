@@ -70,7 +70,10 @@ mod tests {
             serde_json::to_value(state(now)).unwrap()
         );
         assert!(first.tasks.iter().all(|t| t.text.starts_with("Sample:")));
-        assert!(first.deadlines.iter().all(|d| d.title.starts_with("Sample:")));
+        assert!(first
+            .deadlines
+            .iter()
+            .all(|d| d.title.starts_with("Sample:")));
         assert!(first.entries.iter().all(|e| e.title.starts_with("Sample:")));
         assert!(first.tasks.iter().any(|t| t.complete));
         assert!(first.tasks.iter().any(|t| !t.complete));

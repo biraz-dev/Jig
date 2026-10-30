@@ -130,3 +130,17 @@ fn imported_history_rejects_terminal_controls_and_preserves_ascii_whitespace() {
     state.history[0].expression = "1".repeat(4097);
     assert!(state.validate().is_err());
 }
+
+#[test]
+fn portable_decoder_rejects_unrelated_or_partial_json() {
+    for bad in ["{}", "[]", "null", "{\"name\":\"some other application\",\"version\":1}", "{\"version\":1}"] {
+        assert!(State::from_json(bad).is_err());
+    }
+    let sample = jig::sample::state(Utc::now());
+    let text = serde_json::to_string(&sample).unwrap();
+    let restored = State::from_json(&text).unwrap();
+    assert_eq!(restored.tasks.len(), sample.tasks.len());
+    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    value["version"] = 2.into();
+    assert!(State::from_json(&value.to_string()).is_err());
+}

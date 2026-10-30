@@ -9,9 +9,9 @@ telemetry, network calls, database or background service.
 Install the stable Rust toolchain with rustup, then:
 
 ```sh
-git clone https://github.com/biraz-dev/Jig.git
+git clone --branch jig-initial-milestone https://github.com/biraz-dev/Jig.git
 cd Jig
-cargo build --release
+cargo build --locked --release
 ./target/release/jig
 # Optional: install the binary in ~/.cargo/bin
 cargo install --path .
@@ -19,7 +19,7 @@ cargo install --path .
 
 A UTF-8 terminal is recommended. Set IBM Plex Mono in your terminal preferences
 if installed; terminal applications cannot select the font. The complete tiled
-dashboard needs at least 90 columns × 24 rows. Smaller terminals show the focused
+dashboard needs at least 100 columns × 36 rows. Smaller terminals show the focused
 tool; below 32 × 10 Jig asks you to resize. F2 expands a tool at any size.
 
 ## CLI
@@ -73,7 +73,7 @@ two decimals; calculations and stored values retain f64 precision.
 
 | Key | Action |
 | --- | --- |
-| Tab / Shift-Tab, 1–5 | Focus a tool |
+| Tab / Shift-Tab, 1–5 | Focus: deadline, tasks, calendar, calculator, length |
 | F2 / Esc | Expand / return to tiles |
 | Enter, i, a | Input a calculation/length or add an item |
 | e | Edit selected task, deadline or calendar note |
@@ -130,22 +130,26 @@ small bounded parser for the deliberately limited grammar.
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --locked
+python3 tests/terminal_smoke.py
 ```
 
 Tests cover arithmetic errors and precedence, percentages, precise result reuse,
 conversion round trips and fractions, checklist changes, deadlines/timezones,
 leap years, state serialization, safe saves, locking and CLI restart persistence.
-GitHub Actions runs the same checks and a release build.
+GitHub Actions runs the same checks, a Linux PTY smoke check, and a release build.
+The PTY check verifies idle countdown redraws, keyboard input, resizing, restart
+persistence and terminal restoration. CI publishes the Linux binary as an artifact.
 
 ## Limitations and next milestone
 
 This is the initial terminal/CLI implementation. Keyboard support only; no mouse,
 undo, recurring deadlines, timezone database selection, external calendar sync,
 scientific calculator, rational/decimal exact arithmetic or automatic backups.
-History is intentionally unbounded. The terminal palette follows the supplied
-written direction; no reference screenshot was attached to this session.
+History is intentionally unbounded. The terminal layout and palette follow the supplied concept image, with the
+five requested instruments and no weather, priorities or extra measurement modes.
 Terminal layout and input behavior still need testing on real terminal emulators.
 
 The browser preview is deliberately deferred. See [the preview plan](docs/preview.md).

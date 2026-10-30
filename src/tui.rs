@@ -12,7 +12,7 @@ use jig::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -20,12 +20,13 @@ use ratatui::{
 };
 use std::{io, time::Duration};
 
-const BG: Color = Color::Rgb(22, 26, 35);
-const CREAM: Color = Color::Rgb(237, 223, 195);
-const PINK: Color = Color::Rgb(201, 145, 164);
-const MUTED: Color = Color::Rgb(131, 143, 157);
-const ACCENT: Color = Color::Rgb(142, 185, 176);
-const NAMES: [&str; 5] = ["CALCULATOR", "LENGTH", "TASKS", "DEADLINES", "CALENDAR"];
+const BG: Color = Color::Rgb(12, 19, 27);
+const CREAM: Color = Color::Rgb(246, 218, 174);
+const PINK: Color = Color::Rgb(234, 133, 173);
+const MUTED: Color = Color::Rgb(144, 161, 202);
+const ACCENT: Color = Color::Rgb(109, 185, 238);
+const NAMES: [&str; 5] = ["CALCULATOR", "LENGTH", "TASKS", "MAJOR DEADLINE", "CALENDAR"];
+const TOOL_ORDER: [usize; 5] = [3, 2, 4, 0, 1];
 
 #[derive(Clone)]
 enum FormKind {
@@ -210,9 +211,15 @@ impl App {
             return Ok(false);
         }
         match key.code {
-            KeyCode::Tab => self.focus = (self.focus + 1) % 5,
-            KeyCode::BackTab => self.focus = (self.focus + 4) % 5,
-            KeyCode::Char(c @ '1'..='5') => self.focus = c as usize - '1' as usize,
+            KeyCode::Tab => {
+                let position = TOOL_ORDER.iter().position(|i| *i == self.focus).unwrap_or(0);
+                self.focus = TOOL_ORDER[(position + 1) % 5];
+            },
+            KeyCode::BackTab => {
+                let position = TOOL_ORDER.iter().position(|i| *i == self.focus).unwrap_or(0);
+                self.focus = TOOL_ORDER[(position + 4) % 5];
+            },
+            KeyCode::Char(c @ '1'..='5') => self.focus = TOOL_ORDER[c as usize - '1' as usize],
             KeyCode::F(2) => self.expanded = !self.expanded,
             KeyCode::Esc => self.expanded = false,
             KeyCode::Char('?') => self.help = true,
@@ -398,7 +405,7 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
         return;
     }
     let rows = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(3),
         Constraint::Min(1),
         Constraint::Length(3),
     ])
@@ -407,33 +414,26 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 " JIG ",
-                Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+                Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
             ),
             Span::styled(" / artist's workbench", Style::default().fg(MUTED)),
-            Span::raw(format!("   {}", Local::now().format("%a %d %b %Y"))),
-        ])),
+            Span::raw(format!("   {}   • local", Local::now().format("%a %d %b %Y  %H:%M:%S"))),
+        ])).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(MUTED))),
         rows[0],
     );
     if app.help {
         frame.render_widget(Paragraph::new("Tab / Shift-Tab or 1–5: focus tool\nF2: expand focused tool · Esc: return\nEnter / i / a: input or add · e: edit selected item\n↑↓ / j k: select and scroll · d / Delete: delete\nCalculator: r reuse selected result · ans uses latest result\nTasks: Space toggle · J / K reorder\nDeadlines: f feature selected · time requires explicit timezone\nCalendar: ← → month · t today · a/e/d manage dated notes\nInput: Tab next field · Ctrl-U clear · Backspace · Enter submit · Esc cancel\nq quit · Ctrl-C save and quit · any key closes help\nDates and calendar markers display in your computer's local timezone.").block(panel(" KEYBOARD ".into(), true)).wrap(Wrap { trim: true }), rows[1]);
-    } else if app.expanded || area.width < 90 || area.height < 24 {
+    } else if app.expanded || area.width < 100 || area.height < 36 {
         tool(frame, rows[1], app.focus, state, app);
     } else {
-        let columns = Layout::horizontal([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
-        .split(rows[1]);
-        let left = Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(columns[0]);
-        let middle = Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)])
-            .split(columns[1]);
-        tool(frame, left[0], 0, state, app);
-        tool(frame, left[1], 1, state, app);
-        tool(frame, middle[0], 3, state, app);
-        tool(frame, middle[1], 2, state, app);
-        tool(frame, columns[2], 4, state, app);
+        let columns = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).split(rows[1]);
+        let left = Layout::vertical([Constraint::Min(11), Constraint::Length(10), Constraint::Length(9)]).split(columns[0]);
+        let right = Layout::vertical([Constraint::Min(10), Constraint::Length(12)]).split(columns[1]);
+        tool(frame, left[0], 3, state, app);
+        tool(frame, left[1], 4, state, app);
+        tool(frame, left[2], 0, state, app);
+        tool(frame, right[0], 2, state, app);
+        tool(frame, right[1], 1, state, app);
     }
     let hint = if app.form.is_some() {
         "Tab field · Ctrl-U clear · Enter accept · Esc cancel"
@@ -451,7 +451,7 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
 }
 fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
     let block = panel(
-        format!(" {} {} ", index + 1, NAMES[index]),
+        format!(" {:02} — {} ", TOOL_ORDER.iter().position(|i| *i == index).unwrap_or(0) + 1, NAMES[index]),
         app.focus == index,
     );
     let inner = block.inner(area);
@@ -491,6 +491,21 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
     }
     match index {
         0 => {
+            let mut history_area = body;
+            if body.width >= 46 && body.height >= 3 {
+                let columns = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).split(body);
+                history_area = columns[1];
+                let selected = state.history.get(app.selected[0]);
+                let expression = selected.map_or("Enter to calculate", |h| h.expression.as_str());
+                let result = selected.map_or_else(|| "0.00".into(), |h| state.number(h.result));
+                frame.render_widget(Paragraph::new(expression).style(Style::default().fg(MUTED)), Rect { height: 1, ..columns[0] });
+                let result_area = Rect { y: columns[0].y + 1, height: columns[0].height.saturating_sub(1), ..columns[0] };
+                if result_area.height >= 5 && large_width(&result) <= result_area.width as usize {
+                    frame.render_widget(Paragraph::new(large_number(&result)).style(Style::default().fg(Color::Rgb(164, 223, 144))), result_area);
+                } else {
+                    frame.render_widget(Paragraph::new(format!("= {result}")).style(Style::default().fg(Color::Rgb(164, 223, 144)).add_modifier(Modifier::BOLD)), result_area);
+                }
+            }
             let items: Vec<_> = state
                 .history
                 .iter()
@@ -505,10 +520,10 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                 frame.render_widget(
                     Paragraph::new("Enter to calculate\n125 * 1.15\n(12 + 8) * 50%\nans / 2")
                         .style(Style::default().fg(MUTED)),
-                    body,
+                    history_area,
                 );
             } else {
-                draw_list(frame, body, items, app.selected[0]);
+                draw_list(frame, history_area, items, app.selected[0]);
             }
         }
         1 => {
@@ -521,7 +536,11 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                     lines.push(Line::from(format!("{:>14} {unit}", state.number(n))));
                 }
             }
-            frame.render_widget(Paragraph::new(lines), body);
+            if body.width >= 44 {
+                let columns = Layout::horizontal([Constraint::Percentage(57), Constraint::Percentage(43)]).split(body);
+                frame.render_widget(Paragraph::new(lines), columns[0]);
+                frame.render_widget(Paragraph::new("Quick refs\n\n1 in = 25.40 mm\n1 ft = 30.48 cm\n1 m = 100.00 cm").style(Style::default().fg(MUTED)), columns[1]);
+            } else { frame.render_widget(Paragraph::new(lines), body); }
         }
         2 => {
             let items = state
@@ -543,25 +562,25 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
             draw_list(frame, body, items, app.selected[2]);
         }
         3 => {
-            let rows =
-                Layout::vertical([Constraint::Length(3.min(body.height)), Constraint::Min(0)])
-                    .split(body);
-            let featured = state
-                .deadlines
-                .iter()
-                .find(|d| Some(d.id) == state.featured);
-            let text = if let Some(d) = featured {
-                vec![
-                    Line::styled(&d.title, Style::default().fg(ACCENT)),
-                    Line::from(countdown(d.at, Utc::now())),
-                ]
-            } else {
-                vec![
-                    Line::raw("No featured deadline"),
-                    Line::styled("a add · f feature", Style::default().fg(MUTED)),
-                ]
-            };
-            frame.render_widget(Paragraph::new(text), rows[0]);
+            let featured = state.deadlines.iter().find(|d| Some(d.id) == state.featured);
+            let mut text = vec![Line::raw("No featured deadline"), Line::styled("a add · f feature", Style::default().fg(MUTED))];
+            let mut height = 3;
+            if let Some(d) = featured {
+                let remaining = (d.at - Utc::now()).num_seconds();
+                let n = remaining.unsigned_abs();
+                let clock = format!("{:02}:{:02}:{:02}:{:02}", n / 86400, n / 3600 % 24, n / 60 % 60, n % 60);
+                if body.height >= 12 && large_width(&clock) <= body.width as usize {
+                    text = vec![Line::styled(d.title.to_uppercase(), Style::default().fg(CREAM))];
+                    text.extend(large_number(&clock));
+                    text.push(Line::styled(" DAYS     HOURS     MINUTES   SECONDS", Style::default().fg(ACCENT)));
+                    text.push(Line::styled(format!("{}{}", if remaining < 0 { "OVERDUE · " } else { "" }, d.at.with_timezone(&Local).format("%a %d %b %Y  %H:%M %:z")), Style::default().fg(MUTED)));
+                    height = 9;
+                } else {
+                    text = vec![Line::styled(&d.title, Style::default().fg(ACCENT)), Line::from(countdown(d.at, Utc::now()))];
+                }
+            }
+            let rows = Layout::vertical([Constraint::Length(height.min(body.height)), Constraint::Min(0)]).split(body);
+            frame.render_widget(Paragraph::new(text).alignment(Alignment::Center), rows[0]);
             let items = state
                 .deadlines
                 .iter()
@@ -588,9 +607,11 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
             draw_list(frame, rows[1], items, app.selected[3]);
         }
         _ => {
-            let rows =
-                Layout::vertical([Constraint::Length(11.min(body.height)), Constraint::Min(0)])
-                    .split(body);
+            let rows = if body.width >= 48 {
+                Layout::horizontal([Constraint::Length(29), Constraint::Min(0)]).split(body)
+            } else {
+                Layout::vertical([Constraint::Length(9.min(body.height)), Constraint::Min(0)]).split(body)
+            };
             let today = Local::now().date_naive();
             let mut lines = vec![
                 Line::styled(
@@ -660,6 +681,32 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
         }
     }
 }
+fn glyph(c: char, row: usize) -> &'static str {
+    let rows = match c {
+        '0' => ["███", "█ █", "█ █", "█ █", "███"],
+        '1' => [" ██", "  █", "  █", "  █", "  █"],
+        '2' => ["███", "  █", "███", "█  ", "███"],
+        '3' => ["███", "  █", "███", "  █", "███"],
+        '4' => ["█ █", "█ █", "███", "  █", "  █"],
+        '5' => ["███", "█  ", "███", "  █", "███"],
+        '6' => ["███", "█  ", "███", "█ █", "███"],
+        '7' => ["███", "  █", "  █", "  █", "  █"],
+        '8' => ["███", "█ █", "███", "█ █", "███"],
+        '9' => ["███", "█ █", "███", "  █", "███"],
+        ':' => [" ", "█", " ", "█", " "],
+        '.' => [" ", " ", " ", " ", "█"],
+        '-' => ["   ", "   ", "███", "   ", "   "],
+        _ => [" ", " ", " ", " ", " "],
+    };
+    rows[row]
+}
+fn large_width(text: &str) -> usize {
+    text.chars().map(|c| glyph(c, 0).chars().count() + 1).sum::<usize>().saturating_sub(1)
+}
+fn large_number(text: &str) -> Vec<Line<'static>> {
+    (0..5).map(|row| Line::from(text.chars().map(|c| glyph(c, row)).collect::<Vec<_>>().join(" "))).collect()
+}
+
 fn draw_list(frame: &mut Frame, area: Rect, items: Vec<ListItem<'_>>, selected: usize) {
     if items.is_empty() {
         frame.render_widget(
@@ -685,36 +732,90 @@ mod tests {
     #[test]
     fn dashboard_renders_tiles_and_degrades_without_panics() {
         let mut state = State::default();
-        state.add_task("Sample: photograph studies").unwrap();
-        state.set_deadline(None, "Sample: exhibition", "2026-12-01T18:00:00Z").unwrap();
+        for text in ["Sample: finish casting figures", "Sample: photograph sculptures", "Sample: prepare installation", "Sample: pack studio tools"] { state.add_task(text).unwrap(); }
+        state.calculate("125 * 1.15").unwrap();
+        state.calculate("200 / 0.94").unwrap();
+        state.set_entry(None, "Sample: studio work", &Local::now().date_naive().to_string()).unwrap();
+        state
+            .set_deadline(None, "Sample: exhibition installation", "2026-12-01T18:00:00Z")
+            .unwrap();
         let mut app = App::new(&state);
-        for (width, height) in [(120, 36), (90, 24), (60, 18), (32, 10), (10, 4)] {
+        for (width, height) in [(120, 40), (100, 36), (90, 24), (60, 18), (32, 10), (10, 4)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal.draw(|frame| draw(frame, &state, &mut app)).unwrap();
-            if width >= 90 {
+            terminal
+                .draw(|frame| draw(frame, &state, &mut app))
+                .unwrap();
+            if width >= 100 && height >= 36 {
                 let buffer = terminal.backend().buffer();
                 let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-                for name in NAMES { assert!(text.contains(name), "Missing {name}"); }
+                for name in NAMES {
+                    assert!(text.contains(name), "Missing {name}");
+                }
+            }
+            if width == 120 {
+                let svg = sample_svg(terminal.backend().buffer(), width, height);
+                std::fs::write("target/sample-dashboard.svg", &svg).unwrap();
+                println!("JIG_SAMPLE_SVG_BEGIN\n{svg}\nJIG_SAMPLE_SVG_END");
             }
             app.begin(&state, false);
-            terminal.draw(|frame| draw(frame, &state, &mut app)).unwrap();
+            terminal
+                .draw(|frame| draw(frame, &state, &mut app))
+                .unwrap();
             app.form = None;
         }
     }
+    // Render the real Ratatui buffer as an inspectable, explicitly synthetic preview.
+    fn sample_svg(buffer: &ratatui::buffer::Buffer, width: u16, height: u16) -> String {
+        use std::fmt::Write;
+        let color = |c: Color, fallback: &str| match c {
+            Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+            _ => fallback.to_owned(),
+        };
+        let mut svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\"><title>Jig dashboard — sample data</title><rect width=\"100%\" height=\"100%\" fill=\"#0c131b\"/><g font-family=\"IBM Plex Mono,DejaVu Sans Mono,monospace\" font-size=\"16\">\n", width * 10, height * 20, width * 10, height * 20);
+        for (y, row) in buffer.content.chunks(width as usize).enumerate() {
+            let mut x = 0;
+            while x < row.len() {
+                let start = x;
+                let fg = row[x].fg;
+                let bg = row[x].bg;
+                let mut text = String::new();
+                while x < row.len() && row[x].fg == fg && row[x].bg == bg {
+                    text.push_str(row[x].symbol()); x += 1;
+                }
+                if bg != BG && bg != Color::Reset {
+                    writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"20\" fill=\"{}\"/>", start * 10, y * 20, (x - start) * 10, color(bg, "#0c131b")).unwrap();
+                }
+                let text = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                writeln!(svg, "<text x=\"{}\" y=\"{}\" fill=\"{}\" xml:space=\"preserve\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{text}</text>", start * 10, y * 20 + 16, color(fg, "#f6daae"), (x - start) * 10).unwrap();
+            }
+        }
+        svg.push_str("</g></svg>"); svg
+    }
     #[test]
     fn keyboard_edits_tasks_and_reuses_history() {
-        let mut state = State::default(); let mut app = App::new(&state);
+        let mut state = State::default();
+        let mut app = App::new(&state);
         let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
-        app.key(press(KeyCode::Char('3')), &mut state).unwrap();
+        app.key(press(KeyCode::Char('2')), &mut state).unwrap();
         app.key(press(KeyCode::Char('a')), &mut state).unwrap();
-        for c in "Sample task".chars() { app.key(press(KeyCode::Char(c)), &mut state).unwrap(); }
-        assert!(app.key(press(KeyCode::Enter), &mut state).unwrap()); app.form = None;
-        app.key(press(KeyCode::Char(' ')), &mut state).unwrap(); assert!(state.tasks[0].complete);
+        for c in "Sample task".chars() {
+            app.key(press(KeyCode::Char(c)), &mut state).unwrap();
+        }
+        assert!(app.key(press(KeyCode::Enter), &mut state).unwrap());
+        app.form = None;
+        app.key(press(KeyCode::Char(' ')), &mut state).unwrap();
+        assert!(state.tasks[0].complete);
         app.key(press(KeyCode::Char('e')), &mut state).unwrap();
-        app.key(press(KeyCode::Char('!')), &mut state).unwrap(); app.key(press(KeyCode::Enter), &mut state).unwrap(); app.form = None;
+        app.key(press(KeyCode::Char('!')), &mut state).unwrap();
+        app.key(press(KeyCode::Enter), &mut state).unwrap();
+        app.form = None;
         assert_eq!(state.tasks[0].text, "Sample task!");
-        state.calculate("1 / 3").unwrap(); app.focus = 0;
+        state.calculate("1 / 3").unwrap();
+        app.focus = 0;
         app.key(press(KeyCode::Char('r')), &mut state).unwrap();
-        assert_eq!(app.form.as_ref().unwrap().values[0].parse::<f64>().unwrap(), 1.0 / 3.0);
+        assert_eq!(
+            app.form.as_ref().unwrap().values[0].parse::<f64>().unwrap(),
+            1.0 / 3.0
+        );
     }
 }

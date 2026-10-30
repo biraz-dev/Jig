@@ -35,7 +35,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             decimals: 2,
-            focus: 0,
+            focus: 3,
         }
     }
 }

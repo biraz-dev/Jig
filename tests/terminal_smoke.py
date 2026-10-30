@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="jig-pty-") as directory:
     subprocess.run([binary, "--state", state, "deadline", "add", "Sample opening", at], check=True)
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     process = subprocess.Popen([binary, "--state", state], stdin=slave, stdout=slave, stderr=slave, env={**os.environ, "TERM": "xterm-256color"})
 
     def read_for(seconds):
@@ -31,10 +31,10 @@ with tempfile.TemporaryDirectory(prefix="jig-pty-") as directory:
 
     try:
         first = read_for(0.5)
-        assert b"CALCULATOR" in first and b"DEADLINES" in first and b"Sample opening" in first, first
+        assert b"CALCULATOR" in first and b"MAJOR DEADLINE" in first and b"Sample opening" in first, first
         tick = read_for(1.5)
         assert tick, "Countdown did not redraw while idle"
-        os.write(master, b"3aSample PTY task\r")
+        os.write(master, b"2aSample PTY task\r")
         read_for(0.3)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 14, 60, 0, 0))
         import signal

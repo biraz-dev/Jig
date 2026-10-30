@@ -404,10 +404,12 @@ impl BrowserApp {
             }
         });
         ui.separator();
+        let mut reused_history = false;
         for history in self.state.history.iter().rev() {
             ui.horizontal_wrapped(|ui| {
                 if ui.link(&history.expression).clicked() {
                     self.calculation = history.expression.clone();
+                    reused_history = true;
                     self.focus_calculator = true;
                     ui.ctx().request_repaint();
                 }
@@ -419,10 +421,19 @@ impl BrowserApp {
                     .clicked()
                 {
                     self.calculation = history.reusable_input();
+                    reused_history = true;
                     self.focus_calculator = true;
                     ui.ctx().request_repaint();
                 }
             });
+        }
+        if reused_history {
+            let id = egui::Id::new("calculator-input");
+            if let Some(mut state) = TextEdit::load_state(ui.ctx(), id) {
+                // Start typing after the reused value rather than at an old cursor.
+                state.cursor.set_char_range(None);
+                TextEdit::store_state(ui.ctx(), id, state);
+            }
         }
     }
 

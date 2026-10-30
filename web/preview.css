@@ -1,0 +1,9 @@
+:root { color-scheme: dark; font: 16px "IBM Plex Mono", "DejaVu Sans Mono", monospace; background: #0c131b; color: #f6daae; }
+body { margin: 0; }
+#jig_canvas { display: block; width: 100vw; height: 100dvh; touch-action: none; }
+#loading { position: fixed; z-index: 2; inset: 0; padding: 10vh 7vw; background: #0c131b; }
+h1 { color: #f6daae; letter-spacing: .08em; }
+h1 span { font-size: 1rem; color: #90a1ca; letter-spacing: 0; }
+p { max-width: 65ch; line-height: 1.6; }
+a { color: #6db9ee; }
+#load-message { color: #ea85ad; }

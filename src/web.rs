@@ -232,14 +232,17 @@ impl BrowserApp {
                 }
                 ui.label(RichText::new("• local").color(GREEN).small());
                 ui.label(
-                    RichText::new(if self.demo { "sample data" } else { "your data" })
-                        .color(if self.demo { PINK } else { BLUE })
-                        .small(),
+                    RichText::new(if self.demo {
+                        "sample data"
+                    } else {
+                        "your data"
+                    })
+                    .color(if self.demo { PINK } else { BLUE })
+                    .small(),
                 );
                 if wide {
                     ui.label(
-                        RichText::new(Local::now().format("%a %d %b %Y").to_string())
-                            .color(BLUE),
+                        RichText::new(Local::now().format("%a %d %b %Y").to_string()).color(BLUE),
                     );
                 }
             });
@@ -325,7 +328,11 @@ impl BrowserApp {
     fn tool(&mut self, ui: &mut Ui, index: usize, height: f32) {
         let selected = self.focus == index;
         let frame = egui::Frame::default()
-            .fill(if selected { Color32::from_rgb(15, 24, 35) } else { BG })
+            .fill(if selected {
+                Color32::from_rgb(15, 24, 35)
+            } else {
+                BG
+            })
             .inner_margin(egui::Margin::same(9))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -503,20 +510,22 @@ impl BrowserApp {
     fn row_task(&mut self, row: &ChecklistRow) -> Result<u64, String> {
         match row.task {
             Some(id) => Ok(id),
-            None => self.state.ensure_task_for_deadline(row.deadline.ok_or("Missing task")?),
+            None => self
+                .state
+                .ensure_task_for_deadline(row.deadline.ok_or("Missing task")?),
         }
     }
 
     fn begin_task_date(&mut self, id: u64, feature_after: bool) {
-        self.task_date = self
-            .state
-            .task_deadline(id)
-            .map_or_else(
-                || self.selected_date.and_hms_opt(9, 0, 0)
+        self.task_date = self.state.task_deadline(id).map_or_else(
+            || {
+                self.selected_date
+                    .and_hms_opt(9, 0, 0)
                     .and_then(|date| Local.from_local_datetime(&date).single())
-                    .map_or_else(String::new, |date| date.to_rfc3339()),
-                |deadline| deadline.at.to_rfc3339(),
-            );
+                    .map_or_else(String::new, |date| date.to_rfc3339())
+            },
+            |deadline| deadline.at.to_rfc3339(),
+        );
         self.task_date_edit = Some(id);
         self.feature_after_date = feature_after;
         self.focus_task_date = true;
@@ -538,7 +547,12 @@ impl BrowserApp {
             .collect();
         // Older files keep their independent deadlines until a row is acted on.
         for deadline in &self.state.deadlines {
-            if !self.state.tasks.iter().any(|task| task.deadline == Some(deadline.id)) {
+            if !self
+                .state
+                .tasks
+                .iter()
+                .any(|task| task.deadline == Some(deadline.id))
+            {
                 rows.push(ChecklistRow {
                     task: None,
                     deadline: Some(deadline.id),
@@ -554,9 +568,14 @@ impl BrowserApp {
                 if ui
                     .add_enabled(
                         !row.complete,
-                        egui::Button::new(RichText::new(if featured { "★" } else { "☆" })
-                            .color(if featured { PINK } else { BLUE }))
-                            .small(),
+                        egui::Button::new(
+                            RichText::new(if featured { "★" } else { "☆" }).color(if featured {
+                                PINK
+                            } else {
+                                BLUE
+                            }),
+                        )
+                        .small(),
                     )
                     .on_hover_text("Star a dated task for the countdown")
                     .clicked()
@@ -568,7 +587,9 @@ impl BrowserApp {
                         match self.row_task(&row) {
                             Ok(id) if self.state.task_deadline(id).is_some() => {
                                 let result = self.state.feature_task(id);
-                                if result.is_ok() { self.reveal_task_date(id); }
+                                if result.is_ok() {
+                                    self.reveal_task_date(id);
+                                }
                                 self.apply(result);
                             }
                             Ok(id) => self.begin_task_date(id, true),
@@ -588,11 +609,26 @@ impl BrowserApp {
                     self.apply(result);
                 }
                 let text = RichText::new(&row.title).color(if row.complete { BLUE } else { CREAM });
-                ui.label(if row.complete { text.strikethrough() } else { text });
+                ui.label(if row.complete {
+                    text.strikethrough()
+                } else {
+                    text
+                });
                 let date = row
                     .deadline
-                    .and_then(|id| self.state.deadlines.iter().find(|deadline| deadline.id == id))
-                    .map(|deadline| deadline.at.with_timezone(&Local).format("%d %b · %H:%M").to_string());
+                    .and_then(|id| {
+                        self.state
+                            .deadlines
+                            .iter()
+                            .find(|deadline| deadline.id == id)
+                    })
+                    .map(|deadline| {
+                        deadline
+                            .at
+                            .with_timezone(&Local)
+                            .format("%d %b · %H:%M")
+                            .to_string()
+                    });
                 if ui.small_button(date.as_deref().unwrap_or("date")).clicked() {
                     match self.row_task(&row) {
                         Ok(id) => {
@@ -617,7 +653,10 @@ impl BrowserApp {
                     }
                 }
                 if ui
-                    .add_enabled(row.position.is_some_and(|position| position > 0), egui::Button::new("↑").small())
+                    .add_enabled(
+                        row.position.is_some_and(|position| position > 0),
+                        egui::Button::new("↑").small(),
+                    )
                     .clicked()
                 {
                     if let (Some(id), Some(position)) = (row.task, row.position) {
@@ -627,7 +666,8 @@ impl BrowserApp {
                 }
                 if ui
                     .add_enabled(
-                        row.position.is_some_and(|position| position + 1 < self.state.tasks.len()),
+                        row.position
+                            .is_some_and(|position| position + 1 < self.state.tasks.len()),
                         egui::Button::new("↓").small(),
                     )
                     .clicked()
@@ -653,7 +693,11 @@ impl BrowserApp {
                 }
             });
             let row_id = row.task.or_else(|| {
-                self.state.tasks.iter().find(|task| task.deadline == row.deadline).map(|task| task.id)
+                self.state
+                    .tasks
+                    .iter()
+                    .find(|task| task.deadline == row.deadline)
+                    .map(|task| task.id)
             });
             if let Some(id) = row_id.filter(|id| self.task_date_edit == Some(*id)) {
                 self.task_date_editor(ui, id);
@@ -674,7 +718,15 @@ impl BrowserApp {
             }
             let enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            if ui.button(if self.task_edit.is_some() { "Save" } else { "+" }).clicked() || enter {
+            if ui
+                .button(if self.task_edit.is_some() {
+                    "Save"
+                } else {
+                    "+"
+                })
+                .clicked()
+                || enter
+            {
                 let result = if let Some(id) = self.task_edit {
                     self.state.edit_task(id, &self.task_text)
                 } else {
@@ -699,11 +751,17 @@ impl BrowserApp {
                     ui.label(format!("Delete {completed} completed tasks?"));
                     if ui.small_button("Confirm").clicked() {
                         self.state.remove_completed_tasks();
-                        if self.task_edit.is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id)) {
+                        if self
+                            .task_edit
+                            .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
+                        {
                             self.task_edit = None;
                             self.task_text.clear();
                         }
-                        if self.task_date_edit.is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id)) {
+                        if self
+                            .task_date_edit
+                            .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
+                        {
                             self.task_date_edit = None;
                         }
                         self.confirm_clear_completed = false;
@@ -734,7 +792,9 @@ impl BrowserApp {
                     .hint_text("2026-12-01T18:00:00-05:00")
                     .desired_width(ui.available_width()),
             );
-            if response.has_focus() { self.focus = 1; }
+            if response.has_focus() {
+                self.focus = 1;
+            }
             if self.focus_task_date {
                 response.scroll_to_me(None);
                 self.focus_task_date = !response.has_focus();
@@ -743,20 +803,36 @@ impl BrowserApp {
             let enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             ui.horizontal_wrapped(|ui| {
-                if ui.button(if self.feature_after_date { "Set date & star" } else { "Save date" }).clicked() || enter {
+                if ui
+                    .button(if self.feature_after_date {
+                        "Set date & star"
+                    } else {
+                        "Save date"
+                    })
+                    .clicked()
+                    || enter
+                {
                     let result = self.state.set_task_deadline(id, Some(&self.task_date));
                     let result = result.and_then(|()| {
-                        if self.feature_after_date { self.state.feature_task(id) } else { Ok(()) }
+                        if self.feature_after_date {
+                            self.state.feature_task(id)
+                        } else {
+                            Ok(())
+                        }
                     });
                     if result.is_ok() {
-                        if self.feature_after_date { self.reveal_task_date(id); }
+                        if self.feature_after_date {
+                            self.reveal_task_date(id);
+                        }
                         self.task_date_edit = None;
                         self.feature_after_date = false;
                         self.focus = 1;
                     }
                     self.apply(result);
                 }
-                if self.state.task_deadline(id).is_some() && ui.small_button("Remove date").clicked() {
+                if self.state.task_deadline(id).is_some()
+                    && ui.small_button("Remove date").clicked()
+                {
                     let result = self.state.set_task_deadline(id, None);
                     if result.is_ok() {
                         self.task_date_edit = None;
@@ -781,7 +857,11 @@ impl BrowserApp {
             return;
         };
         let title = deadline.title.clone();
-        let date = deadline.at.with_timezone(&Local).format("%a %d %b · %H:%M %:z").to_string();
+        let date = deadline
+            .at
+            .with_timezone(&Local)
+            .format("%a %d %b · %H:%M %:z")
+            .to_string();
         let seconds = (deadline.at - Utc::now()).num_seconds();
         let n = seconds.unsigned_abs();
         let values = [n / 86400, n / 3600 % 24, n / 60 % 60, n % 60];
@@ -826,7 +906,8 @@ impl BrowserApp {
                     draw_countdown,
                 );
                 ui.small_button("unstar").clicked()
-            }).inner
+            })
+            .inner
         } else {
             draw_title(ui);
             draw_countdown(ui);
@@ -853,8 +934,10 @@ impl BrowserApp {
             if ui.button("‹").clicked() {
                 self.shift_month(-1);
             }
-            let month = NaiveDate::from_ymd_opt(self.year, self.month, 1)
-                .map_or_else(|| format!("{} / {}", self.year, self.month), |date| date.format("%B %Y").to_string());
+            let month = NaiveDate::from_ymd_opt(self.year, self.month, 1).map_or_else(
+                || format!("{} / {}", self.year, self.month),
+                |date| date.format("%B %Y").to_string(),
+            );
             ui.label(RichText::new(month).color(CREAM));
             if ui.button("›").clicked() {
                 self.shift_month(1);
@@ -877,24 +960,41 @@ impl BrowserApp {
                         ui.allocate_ui_with_layout(
                             egui::vec2(size, 18.0),
                             egui::Layout::top_down(egui::Align::Center),
-                            |ui| { ui.label(RichText::new(day).small().color(BLUE)); },
+                            |ui| {
+                                ui.label(RichText::new(day).small().color(BLUE));
+                            },
                         );
                     }
                     ui.end_row();
-                    let count = cells.iter().rposition(Option::is_some)
+                    let count = cells
+                        .iter()
+                        .rposition(Option::is_some)
                         .map_or(0, |index| (index / 7 + 1) * 7);
                     for (index, day) in cells[..count].iter().enumerate() {
                         if let Some(day) = day {
-                            let mut deadlines: Vec<_> = self.state.deadlines.iter()
-                                .filter(|deadline| self.state.is_deadline_active(deadline.id)
-                                    && deadline.at.with_timezone(&Local).date_naive() == *day)
+                            let mut deadlines: Vec<_> = self
+                                .state
+                                .deadlines
+                                .iter()
+                                .filter(|deadline| {
+                                    self.state.is_deadline_active(deadline.id)
+                                        && deadline.at.with_timezone(&Local).date_naive() == *day
+                                })
                                 .map(|deadline| (deadline.at, deadline.id, deadline.title.clone()))
                                 .collect();
                             deadlines.sort_by_key(|deadline| deadline.0);
-                            let color = if *day == today { BG } else if deadlines.is_empty() { CREAM } else { PINK };
+                            let color = if *day == today {
+                                BG
+                            } else if deadlines.is_empty() {
+                                CREAM
+                            } else {
+                                PINK
+                            };
                             let mut button = egui::Button::new(
                                 RichText::new(day.day().to_string()).size(14.0).color(color),
-                            ).fill(BG).stroke(Stroke::NONE);
+                            )
+                            .fill(BG)
+                            .stroke(Stroke::NONE);
                             if *day == today {
                                 button = button.fill(ACCENT);
                             }
@@ -903,34 +1003,53 @@ impl BrowserApp {
                             }
                             let response = ui.add_sized([size, 29.0], button);
                             if !deadlines.is_empty() {
-                                let dot = egui::pos2(response.rect.center().x, response.rect.bottom() - 3.0);
+                                let dot = egui::pos2(
+                                    response.rect.center().x,
+                                    response.rect.bottom() - 3.0,
+                                );
                                 ui.painter().circle_filled(dot, 1.5, PINK);
                             }
-                            let mut tooltip = deadlines.iter().map(|deadline| deadline.2.as_str()).collect::<Vec<_>>().join("\n");
+                            let mut tooltip = deadlines
+                                .iter()
+                                .map(|deadline| deadline.2.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n");
                             if let Some(forecast) = self.weather.day_tooltip(*day) {
-                                if !tooltip.is_empty() { tooltip.push('\n'); }
+                                if !tooltip.is_empty() {
+                                    tooltip.push('\n');
+                                }
                                 tooltip.push_str(&forecast);
                             }
                             if response.has_focus() {
                                 self.focus = 2;
-                                ui.painter().hline(response.rect.x_range(), response.rect.bottom(), Stroke::new(1.0, ACCENT));
+                                ui.painter().hline(
+                                    response.rect.x_range(),
+                                    response.rect.bottom(),
+                                    Stroke::new(1.0_f32, ACCENT),
+                                );
                             }
                             let clicked = response.clicked();
-                            if !tooltip.is_empty() { response.on_hover_text(tooltip); }
+                            if !tooltip.is_empty() {
+                                response.on_hover_text(tooltip);
+                            }
                             if clicked {
                                 self.selected_date = *day;
                             }
                         } else {
                             ui.allocate_space(egui::vec2(size, 29.0));
                         }
-                        if index % 7 == 6 { ui.end_row(); }
+                        if index % 7 == 6 {
+                            ui.end_row();
+                        }
                     }
                 });
         }
         ui.add_space(6.0);
         if self.weather.controls(ui) {
             self.state.preferences.weather = self.weather.config().cloned();
-            if !self.demo { self.changed(); }
+            if !self.demo {
+                self.changed();
+            }
         }
         self.weather.selected_day(ui, self.selected_date);
     }
@@ -997,10 +1116,13 @@ impl eframe::App for BrowserApp {
             self.focus_calculator = false;
             self.focus_task_date = false;
             ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() { memory.surrender_focus(id); }
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
             });
         }
-        let editing_text = ctx.memory(|memory| memory.focused())
+        let editing_text = ctx
+            .memory(|memory| memory.focused())
             .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
         if !editing_text {
             let previous = ctx.input_mut(|input| {
@@ -1013,13 +1135,18 @@ impl eframe::App for BrowserApp {
             });
             if previous || next {
                 let order = [0, 2, 1, 3];
-                let current = order.iter().position(|index| *index == self.focus).unwrap_or(0);
+                let current = order
+                    .iter()
+                    .position(|index| *index == self.focus)
+                    .unwrap_or(0);
                 self.focus = order[(current + if previous { 3 } else { 1 }) % 4];
                 self.focus_calculator = false;
                 self.focus_task_date = false;
                 self.scroll_selected = true;
                 ctx.memory_mut(|memory| {
-                    if let Some(id) = memory.focused() { memory.surrender_focus(id); }
+                    if let Some(id) = memory.focused() {
+                        memory.surrender_focus(id);
+                    }
                 });
                 ctx.request_repaint();
             }
@@ -1027,14 +1154,20 @@ impl eframe::App for BrowserApp {
         egui::TopBottomPanel::top("jig-header").show(ctx, |ui| self.toolbar(ui));
         egui::TopBottomPanel::bottom("jig-status").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(&self.status)
-                        .small()
-                        .color(if self.storage_error || self.dirty { PINK } else { BLUE }),
-                );
+                ui.label(RichText::new(&self.status).small().color(
+                    if self.storage_error || self.dirty {
+                        PINK
+                    } else {
+                        BLUE
+                    },
+                ));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
-                    ui.label(RichText::new("↑↓←→ select · Ctrl+M maximize · Esc return").small().color(BLUE));
+                    ui.label(
+                        RichText::new("↑↓←→ select · Ctrl+M maximize · Esc return")
+                            .small()
+                            .color(BLUE),
+                    );
                 });
             });
         });
@@ -1046,7 +1179,10 @@ impl eframe::App for BrowserApp {
                     if self.expanded {
                         self.tool(ui, self.focus, height - 8.0);
                     } else if ui.available_width() >= 760.0 {
-                        let featured = self.state.featured.is_some_and(|id| self.state.is_deadline_active(id));
+                        let featured = self
+                            .state
+                            .featured
+                            .is_some_and(|id| self.state.is_deadline_active(id));
                         self.tool(ui, 0, if featured { 104.0 } else { 48.0 });
                         ui.add_space(8.0);
                         let calendar_width = 330.0;
@@ -1068,7 +1204,10 @@ impl eframe::App for BrowserApp {
                         ui.add_space(8.0);
                         self.tool(ui, 3, 180.0);
                     } else {
-                        let featured = self.state.featured.is_some_and(|id| self.state.is_deadline_active(id));
+                        let featured = self
+                            .state
+                            .featured
+                            .is_some_and(|id| self.state.is_deadline_active(id));
                         self.tool(ui, 0, if featured { 165.0 } else { 48.0 });
                         ui.add_space(8.0);
                         ui.scope(|ui| {

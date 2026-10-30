@@ -285,8 +285,7 @@ fn dated_task_lifecycle_keeps_one_checklist_item_and_explicit_star() {
     assert_eq!(state.tasks.len(), 1);
     assert_eq!(state.deadlines.len(), 1);
     assert_eq!(
-        state.featured,
-        None,
+        state.featured, None,
         "A date alone must not select the countdown"
     );
     assert!(state.is_deadline_active(deadline));
@@ -314,8 +313,7 @@ fn dated_task_lifecycle_keeps_one_checklist_item_and_explicit_star() {
     state.toggle_task(task).unwrap();
     assert!(state.is_deadline_active(deadline));
     assert_eq!(
-        state.featured,
-        None,
+        state.featured, None,
         "Reopening must not silently restore a star"
     );
     state.feature_task(task).unwrap();

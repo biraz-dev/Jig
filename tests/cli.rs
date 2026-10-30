@@ -117,7 +117,9 @@ fn cli_dated_tasks_share_the_countdown_and_calendar() {
     assert!(String::from_utf8_lossy(&invoke(&calendar).stdout).contains('*'));
 
     let before_invalid = fs::read(&path).unwrap();
-    assert!(!invoke(&["tasks", "due", "1", "not a date"]).status.success());
+    assert!(!invoke(&["tasks", "due", "1", "not a date"])
+        .status
+        .success());
     assert_eq!(fs::read(&path).unwrap(), before_invalid);
     assert!(invoke(&["tasks", "done", "1"]).status.success());
     assert_eq!(load().featured, None);
@@ -130,7 +132,9 @@ fn cli_dated_tasks_share_the_countdown_and_calendar() {
     assert!(invoke(&["tasks", "done", "1"]).status.success());
     assert_eq!(load().featured, None);
     assert!(invoke(&["tasks", "star", "1"]).status.success());
-    assert!(invoke(&["tasks", "edit", "1", "Install new work"]).status.success());
+    assert!(invoke(&["tasks", "edit", "1", "Install new work"])
+        .status
+        .success());
     let countdown = invoke(&["deadline", "countdown"]);
     assert!(String::from_utf8_lossy(&countdown.stdout).contains("Install new work"));
     assert!(invoke(&["tasks", "due", "1"]).status.success());

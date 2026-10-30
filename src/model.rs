@@ -321,7 +321,9 @@ impl State {
         if task.complete {
             return Err("Completed tasks cannot be featured".into());
         }
-        let deadline = task.deadline.ok_or("Add a date before featuring this task")?;
+        let deadline = task
+            .deadline
+            .ok_or("Add a date before featuring this task")?;
         self.feature(deadline)
     }
     /// Keep old deadline-only files intact until the user acts on that row.

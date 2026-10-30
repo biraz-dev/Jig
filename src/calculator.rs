@@ -7,7 +7,11 @@ pub fn evaluate(input: &str, ans: f64) -> Result<f64> {
         return Err("Expression is too long (maximum 4096 bytes)".into());
     }
     let expanded = input.replace("ans", &format!("({ans})"));
-    let mut parser = Parser { text: expanded.as_bytes(), pos: 0, depth: 0 };
+    let mut parser = Parser {
+        text: expanded.as_bytes(),
+        pos: 0,
+        depth: 0,
+    };
     let value = parser.expr(0)?;
     parser.space();
     if parser.pos != parser.text.len() {
@@ -32,27 +36,44 @@ impl Parser<'_> {
     }
     fn expr(&mut self, minimum: u8) -> Result<f64> {
         self.depth += 1;
-        if self.depth > 64 { return Err("Expression is nested too deeply".into()); }
+        if self.depth > 64 {
+            return Err("Expression is nested too deeply".into());
+        }
         self.space();
         let mut value = match self.text.get(self.pos).copied() {
             Some(b'+' | b'-') => {
                 let negative = self.text[self.pos] == b'-';
                 self.pos += 1;
                 let n = self.expr(3)?;
-                if negative { -n } else { n }
+                if negative {
+                    -n
+                } else {
+                    n
+                }
             }
             Some(b'(') => {
                 self.pos += 1;
                 let n = self.expr(0)?;
                 self.space();
-                if self.text.get(self.pos) != Some(&b')') { return Err("Missing closing parenthesis".into()); }
+                if self.text.get(self.pos) != Some(&b')') {
+                    return Err("Missing closing parenthesis".into());
+                }
                 self.pos += 1;
                 n
             }
             _ => {
                 let start = self.pos;
-                while self.text.get(self.pos).is_some_and(|c| c.is_ascii_digit() || *c == b'.') { self.pos += 1; }
-                std::str::from_utf8(&self.text[start..self.pos]).unwrap_or("").parse::<f64>().map_err(|_| "Expected a number".to_string())?
+                while self
+                    .text
+                    .get(self.pos)
+                    .is_some_and(|c| c.is_ascii_digit() || *c == b'.')
+                {
+                    self.pos += 1;
+                }
+                std::str::from_utf8(&self.text[start..self.pos])
+                    .unwrap_or("")
+                    .parse::<f64>()
+                    .map_err(|_| "Expected a number".to_string())?
             }
         };
         loop {
@@ -62,12 +83,25 @@ impl Parser<'_> {
                 value /= 100.0;
                 continue;
             }
-            let Some(op) = self.text.get(self.pos).copied() else { break };
-            let precedence = match op { b'+' | b'-' => 1, b'*' | b'/' => 2, _ => break };
-            if precedence < minimum { break; }
+            let Some(op) = self.text.get(self.pos).copied() else {
+                break;
+            };
+            let precedence = match op {
+                b'+' | b'-' => 1,
+                b'*' | b'/' => 2,
+                _ => break,
+            };
+            if precedence < minimum {
+                break;
+            }
             self.pos += 1;
             let right = self.expr(precedence + 1)?;
-            value = match op { b'+' => value + right, b'-' => value - right, b'*' => value * right, _ => value / right };
+            value = match op {
+                b'+' => value + right,
+                b'-' => value - right,
+                b'*' => value * right,
+                _ => value / right,
+            };
         }
         self.depth -= 1;
         Ok(value)

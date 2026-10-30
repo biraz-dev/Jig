@@ -5,4 +5,5 @@ pub mod model;
 pub mod sample;
 pub mod units;
 pub mod weather;
+pub mod workbench;
 pub type Result<T> = std::result::Result<T, String>;

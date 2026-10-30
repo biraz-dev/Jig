@@ -1,4 +1,4 @@
-use crate::{calculator, weather::WeatherConfig, Result};
+use crate::{units, weather::WeatherConfig, workbench, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +6,25 @@ use serde::{Deserialize, Serialize};
 pub struct Calculation {
     pub expression: String,
     pub result: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+impl Calculation {
+    pub fn formatted(&self, decimals: usize) -> String {
+        let number = format!("{:.*}", decimals, self.result);
+        match &self.unit {
+            Some(unit) => format!("{number} {unit}"),
+            None => number,
+        }
+    }
+
+    /// Preserve the stored precision and, for lengths, the source unit.
+    pub fn reusable_input(&self) -> String {
+        match &self.unit {
+            Some(unit) => format!("{} {unit}", self.result),
+            None => self.result.to_string(),
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
@@ -126,6 +145,9 @@ impl State {
         if self.history.iter().any(|h| {
             !h.result.is_finite()
                 || h.expression.len() > 4096
+                || h.unit
+                    .as_deref()
+                    .is_some_and(|unit| !units::UNITS.contains(&unit))
                 || h.expression
                     .chars()
                     .any(|c| c.is_control() && !c.is_ascii_whitespace())
@@ -175,10 +197,12 @@ impl State {
         format!("{:.*}", self.preferences.decimals, n)
     }
     pub fn calculate(&mut self, input: &str) -> Result<f64> {
-        let result = calculator::evaluate(input, self.history.last().map_or(0.0, |h| h.result))?;
+        let evaluated = workbench::evaluate(input, self.history.last().map_or(0.0, |h| h.result))?;
+        let result = evaluated.value;
         self.history.push(Calculation {
             expression: input.to_owned(),
             result,
+            unit: evaluated.unit,
         });
         Ok(result)
     }

@@ -48,6 +48,96 @@ fn conversions_are_bidirectional_and_fractional() {
         assert!((convert(&format!("{m}m"), source).unwrap() - 3.125).abs() < 1e-10);
     }
 }
+
+#[test]
+fn hybrid_input_recognizes_math_and_length_conversion_syntax() {
+    use jig::workbench;
+
+    for input in [
+        "72 in mm",
+        "72in mm",
+        "72 in to mm",
+        "72in->mm",
+        "72 in → mm",
+        "72 IN MILLIMETERS",
+        "72 inches millimetres",
+    ] {
+        let result = workbench::evaluate(input, 0.0).unwrap();
+        assert!((result.value - 1828.8).abs() < 1e-10, "{input}");
+        assert_eq!(result.unit.as_deref(), Some("mm"));
+    }
+    for (input, expected) in [
+        ("1 1/2 in cm", 3.81),
+        ("-1 1/2 in cm", -3.81),
+        ("3/4 in mm", 19.05),
+        ("2 feet inches", 24.0),
+        ("1828.8 mm in", 72.0),
+        ("ans in mm", 50.8),
+    ] {
+        assert!(
+            (workbench::evaluate(input, 2.0).unwrap().value - expected).abs() < 1e-10,
+            "{input}"
+        );
+    }
+    let arithmetic = workbench::evaluate("(125 * 1.15) + ans", 2.0).unwrap();
+    assert_eq!(arithmetic.value, 145.75);
+    assert_eq!(arithmetic.unit, None);
+}
+
+#[test]
+fn hybrid_errors_do_not_change_history_or_last_answer() {
+    let mut state = State::default();
+    state.calculate("72 in mm").unwrap();
+    for bad in [
+        "",
+        "72in",
+        "72 yd mm",
+        "72 in yards",
+        "in mm",
+        "1/0 in mm",
+        "72 in mm extra",
+        "12 + 2 in mm",
+        "72 in to to mm",
+        "1 / 0",
+        "72\u{001b} in mm",
+    ] {
+        assert!(state.calculate(bad).is_err(), "{bad}");
+        assert_eq!(state.history.len(), 1, "{bad}");
+        assert_eq!(state.history[0].unit.as_deref(), Some("mm"));
+    }
+    assert!(state.calculate(&"1".repeat(4097)).is_err());
+    let answer = state.calculate("ans / 2").unwrap();
+    assert!((answer - 914.4).abs() < 1e-10);
+    assert_eq!(state.history.last().unwrap().unit, None);
+}
+
+#[test]
+fn hybrid_history_preserves_units_precision_and_old_state_files() {
+    let mut state = State::default();
+    state.calculate("1 / 3").unwrap();
+    let old_text = serde_json::to_string(&state).unwrap();
+    assert!(!old_text.contains("\"unit\""));
+    let mut restored = State::from_json(&old_text).unwrap();
+    assert_eq!(restored.history[0].unit, None);
+    restored.calculate("ans in mm").unwrap();
+    let converted = restored.history.last().unwrap();
+    let precise = converted.result;
+    assert_eq!(converted.formatted(2), "8.47 mm");
+    assert_eq!(restored.history[0].formatted(2), "0.33");
+    let reuse = format!("{} in", converted.reusable_input());
+    let again = jig::workbench::evaluate(&reuse, 0.0).unwrap();
+    assert!((again.value - 1.0 / 3.0).abs() < 1e-15);
+    let text = serde_json::to_string(&restored).unwrap();
+    let decoded = State::from_json(&text).unwrap();
+    assert_eq!(decoded.history[1].result, precise);
+    assert_eq!(decoded.history[1].unit.as_deref(), Some("mm"));
+    for bad_unit in ["inches", "yd", "mm\u{001b}[31m", ""] {
+        let mut invalid = decoded.clone();
+        invalid.history[1].unit = Some(bad_unit.into());
+        assert!(invalid.validate().is_err(), "{bad_unit}");
+        assert!(State::from_json(&serde_json::to_string(&invalid).unwrap()).is_err());
+    }
+}
 #[test]
 fn task_lifecycle_and_reordering() {
     let mut s = State::default();

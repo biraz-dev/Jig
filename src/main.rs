@@ -21,7 +21,7 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Evaluate arithmetic; percent is postfix division by 100; ans reuses the last result
+    /// Evaluate arithmetic or a length conversion, e.g. calc '72 in mm'; ans reuses the last number
     Calc { expression: String },
     /// List saved calculations (oldest first)
     History,
@@ -137,12 +137,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn execute(command: Command, state: &mut State) -> Result<bool, String> {
     match command {
         Command::Calc { expression } => {
-            let n = state.calculate(&expression)?;
-            println!("{}", state.number(n));
+            state.calculate(&expression)?;
+            let answer = state.history.last().ok_or("No calculation result")?;
+            println!("{}", answer.formatted(state.preferences.decimals));
         }
         Command::History => {
             for h in &state.history {
-                println!("{} = {}", h.expression, state.number(h.result));
+                println!("{} = {}", h.expression, h.formatted(state.preferences.decimals));
             }
             return Ok(false);
         }

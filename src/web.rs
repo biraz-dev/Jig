@@ -2,7 +2,7 @@
 use crate::{browser_storage, weather_ui::WeatherPanel};
 use chrono::{Datelike, Local, NaiveDate, Utc};
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
-use jig::{calendar, model::State, units};
+use jig::{calendar, model::State};
 use std::time::Duration;
 
 const BG: Color32 = Color32::from_rgb(12, 19, 27);
@@ -30,9 +30,7 @@ pub struct BrowserApp {
     focus: usize,
     expanded: bool,
     focus_calculator: bool,
-    focus_length: bool,
     calculation: String,
-    length: String,
     task_text: String,
     task_edit: Option<u64>,
     confirm_clear_completed: bool,
@@ -104,9 +102,7 @@ impl BrowserApp {
             focus: 0,
             expanded: false,
             focus_calculator: false,
-            focus_length: false,
             calculation: String::new(),
-            length: "12in".into(),
             task_text: String::new(),
             task_edit: None,
             confirm_clear_completed: false,
@@ -322,7 +318,7 @@ impl BrowserApp {
                         .show(ui, |ui| match index {
                             0 => self.deadlines(ui),
                             1 => self.tasks(ui),
-                            _ => self.calculator_length(ui),
+                            _ => self.workbench(ui),
                         });
                 }
             });
@@ -343,7 +339,7 @@ impl BrowserApp {
         }
     }
 
-    fn calculator(&mut self, ui: &mut Ui) {
+    fn workbench(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let id = egui::Id::new("calculator-input");
             if self.focus_calculator {
@@ -354,8 +350,8 @@ impl BrowserApp {
                     .id(id)
                     .return_key(None)
                     .font(egui::TextStyle::Monospace)
-                    .hint_text("125 * 1.15 / ans / 50%")
-                    .desired_width((ui.available_width() - 95.0).max(80.0)),
+                    .hint_text("125 * 1.15   or   72 in mm")
+                    .desired_width((ui.available_width() - 65.0).max(80.0)),
             );
             if response.has_focus() {
                 self.focus = 3;
@@ -369,7 +365,7 @@ impl BrowserApp {
             // focus plus typing; TextEdit's lost_focus only compares prior frames.
             let enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            if ui.button("Calculate").clicked() || enter {
+            if ui.button("Enter").clicked() || enter {
                 match self.state.calculate(&self.calculation) {
                     Ok(_) => {
                         self.calculation.clear();
@@ -379,37 +375,21 @@ impl BrowserApp {
                 }
             }
         });
-        if let Some(last) = self.state.history.last() {
-            ui.label(
-                RichText::new(format!("= {}", self.state.number(last.result)))
-                    .font(FontId::monospace(28.0))
-                    .color(GREEN),
-            );
-        }
-        ui.separator();
-        for history in self.state.history.iter().rev() {
-            ui.horizontal_wrapped(|ui| {
-                if ui.link(&history.expression).clicked() {
-                    self.calculation = history.expression.clone();
-                    self.focus_calculator = true;
-                    self.focus_length = false;
-                    ui.ctx().request_repaint();
-                }
+        ui.horizontal_wrapped(|ui| {
+            if let Some(last) = self.state.history.last() {
+                ui.label(
+                    RichText::new(format!("= {}", last.formatted(self.state.preferences.decimals)))
+                        .font(FontId::monospace(28.0))
+                        .color(GREEN),
+                );
                 if ui
-                    .button(format!("= {}", self.state.number(history.result)))
+                    .small_button("Copy")
+                    .on_hover_text("Copy the full-precision result")
                     .clicked()
                 {
-                    self.calculation = history.result.to_string();
-                    self.focus_calculator = true;
-                    self.focus_length = false;
-                    ui.ctx().request_repaint();
+                    ui.ctx().copy_text(last.reusable_input());
                 }
-            });
-        }
-    }
-
-    fn calculator_length(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
+            }
             ui.label("Decimals");
             let response =
                 ui.add(egui::DragValue::new(&mut self.state.preferences.decimals).range(0..=10));
@@ -420,85 +400,27 @@ impl BrowserApp {
                 self.changed();
             }
         });
-        if ui.available_width() >= 480.0 {
-            ui.columns(2, |columns| {
-                self.calculator(&mut columns[0]);
-                self.length(&mut columns[1]);
-            });
-        } else {
-            self.calculator(ui);
-            ui.add_space(8.0);
-            ui.separator();
-            ui.scope(|ui| {
-                ui.set_max_width(ui.available_width().min(240.0));
-                self.length(ui);
-            });
-        }
-    }
-
-    fn use_calculation_result(&mut self) {
-        if let Some(last) = self.state.history.last() {
-            let input = self.length.trim();
-            let source = input
-                .find(|c: char| c.is_ascii_alphabetic())
-                .map(|index| input[index..].trim())
-                .filter(|unit| units::convert(&format!("1{unit}"), "m").is_ok())
-                .unwrap_or("in");
-            self.length = format!("{}{source}", last.result);
-            self.focus = 3;
-            self.focus_calculator = false;
-            self.focus_length = true;
-        }
-    }
-
-    fn length(&mut self, ui: &mut Ui) {
-        let id = egui::Id::new("length-input");
-        if self.focus_length {
-            ui.memory_mut(|memory| memory.request_focus(id));
-        }
-        let response = ui.add(
-            TextEdit::singleline(&mut self.length)
-                .id(id)
-                .hint_text("12in / 1 1/2in")
-                .desired_width(ui.available_width()),
-        );
-        if response.has_focus() {
-            self.focus = 3;
-        }
-        if self.focus_length {
-            response.scroll_to_me(None);
-            self.focus_length = !response.has_focus();
-            ui.ctx().request_repaint();
-        }
-        if ui
-            .add_enabled(
-                !self.state.history.is_empty(),
-                egui::Button::new("Use result").small(),
-            )
-            .on_hover_text("Use the calculator result without rounding · Ctrl+Alt+U")
-            .clicked()
-        {
-            self.use_calculation_result();
-            ui.ctx().request_repaint();
-        }
-        if let Err(error) = units::convert(&self.length, "m") {
-            ui.label(RichText::new(error).color(PINK));
-            return;
-        }
-        egui::Grid::new("length-results")
-            .num_columns(2)
-            .spacing([14.0, 5.0])
-            .show(ui, |ui| {
-                for unit in units::UNITS {
-                    ui.label(RichText::new(unit).color(ACCENT));
-                    if let Ok(result) = units::convert(&self.length, unit) {
-                        ui.label(
-                            RichText::new(self.state.number(result)).font(FontId::monospace(18.0)),
-                        );
-                    }
-                    ui.end_row();
+        ui.separator();
+        for history in self.state.history.iter().rev() {
+            ui.horizontal_wrapped(|ui| {
+                if ui.link(&history.expression).clicked() {
+                    self.calculation = history.expression.clone();
+                    self.focus_calculator = true;
+                    ui.ctx().request_repaint();
+                }
+                if ui
+                    .button(format!(
+                        "= {}",
+                        history.formatted(self.state.preferences.decimals)
+                    ))
+                    .clicked()
+                {
+                    self.calculation = history.reusable_input();
+                    self.focus_calculator = true;
+                    ui.ctx().request_repaint();
                 }
             });
+        }
     }
 
     fn tasks(&mut self, ui: &mut Ui) {
@@ -894,7 +816,6 @@ impl eframe::App for BrowserApp {
         self.weather.update();
         if ctx.input(|input| input.pointer.any_pressed()) {
             self.focus_calculator = false;
-            self.focus_length = false;
         }
         match browser_storage::take_import() {
             Ok(Some(state)) => self.pending_import = Some(state),
@@ -914,17 +835,9 @@ impl eframe::App for BrowserApp {
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
             self.open_local();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::U)) {
-            self.use_calculation_result();
-            ctx.request_repaint();
-            if ctx.screen_rect().width() < 1040.0 {
-                self.expanded = true;
-            }
-        }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
             self.focus = 3;
             self.focus_calculator = true;
-            self.focus_length = false;
             ctx.request_repaint();
             if ctx.screen_rect().width() < 1040.0 {
                 self.expanded = true;
@@ -976,9 +889,9 @@ impl eframe::App for BrowserApp {
                             );
                             columns[0].add_space(8.0);
                             self.tool(&mut columns[0], 2, calendar_height);
-                            self.tool(&mut columns[1], 1, height - 308.0);
+                            self.tool(&mut columns[1], 1, height - 248.0);
                             columns[1].add_space(8.0);
-                            self.tool(&mut columns[1], 3, 300.0);
+                            self.tool(&mut columns[1], 3, 240.0);
                         });
                     } else {
                         for index in [0, 1, 2, 3] {
@@ -990,7 +903,7 @@ impl eframe::App for BrowserApp {
                                         300.0
                                     }
                                 }
-                                3 => 430.0,
+                                3 => 300.0,
                                 _ => 300.0,
                             };
                             self.tool(ui, index, tool_height);

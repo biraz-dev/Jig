@@ -180,17 +180,6 @@ async function calculate(page, expression) {
   await page.keyboard.press("Enter");
 }
 
-async function expectTransferredInput(page, result, unit) {
-  progress(`transfer calculator result to ${unit}`);
-  // Copy through the ordinary focused text field, not a test-only state hook.
-  await page.evaluate(() => navigator.clipboard.writeText("Jig copy pending"));
-  await page.keyboard.press("Control+Alt+u");
-  await page.waitForTimeout(300);
-  await page.keyboard.press("Control+a");
-  await page.keyboard.press("Control+c");
-  await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, `${result}${unit}`);
-}
-
 async function failedCalculatorReadback(page) {
   // Inspect the ordinary editor through copy only: never type or press Enter.
   const sentinel = "Jig failure copy pending";
@@ -208,16 +197,17 @@ async function failedCalculatorReadback(page) {
   }));
 }
 
-async function expectCalculation(page, expression, result, length) {
-  await page.waitForFunction(({ key, expression, result, length }) => {
+async function expectCalculation(page, expression, result, length, unit) {
+  await page.waitForFunction(({ key, expression, result, length, unit }) => {
     try {
       const state = JSON.parse(localStorage.getItem(key));
       const last = state.history.at(-1);
-      return state.history.length === length && last.expression === expression && last.result === result;
+      return state.history.length === length && last.expression === expression
+        && last.result === result && last.unit === unit;
     } catch {
       return false;
     }
-  }, { key, expression, result, length }, { timeout: 15000 });
+  }, { key, expression, result, length, unit }, { timeout: 15000 });
 }
 
 function mockForecast(config) {
@@ -284,43 +274,62 @@ try {
   const personal = await newPage("personal-desktop", { raw: fixtureRaw });
   await boot(personal.page);
   assert.equal(await saved(personal.page), fixtureRaw, "Opening personal state must not rewrite it");
-  await calculate(personal.page, "1 / 3");
-  await expectCalculation(personal.page, "1 / 3", 1 / 3, 2);
   await personal.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-  await expectTransferredInput(personal.page, 1 / 3, "in");
-  // A calculator result becomes a length in the current source unit without
-  // rounding to its two-decimal display or resetting the user's chosen unit.
-  await personal.page.keyboard.type("2cm", { delay: 15 });
-  await expectTransferredInput(personal.page, 1 / 3, "cm");
-  assert.equal(JSON.parse(await saved(personal.page)).history.length, 2, "Transferring a result must not create a calculation");
+  // Arithmetic and lengths use the same ordinary input and saved history. Old
+  // arithmetic entries have no unit field; conversions retain canonical units.
+  await calculate(personal.page, "72 in mm");
+  await expectCalculation(personal.page, "72 in mm", 1828.8, 2, "mm");
+  await personal.page.screenshot({ path: resolve(results, "hybrid-conversion-desktop.png") });
+  const fractionalLength = 1.5 * 0.0254 / 0.01;
+  await calculate(personal.page, "1 1/2 in cm");
+  await expectCalculation(personal.page, "1 1/2 in cm", fractionalLength, 3, "cm");
+  await calculate(personal.page, "1 / 3");
+  await expectCalculation(personal.page, "1 / 3", 1 / 3, 4);
+  // ans uses the unrounded number even when only two decimals are displayed.
+  const preciseMillimeters = (1 / 3) * 0.0254 / 0.001;
+  await calculate(personal.page, "ans in mm");
+  await expectCalculation(personal.page, "ans in mm", preciseMillimeters, 5, "mm");
   assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Hiding calendar entries must not delete saved notes");
   await boot(personal.page, true);
-  assert.equal(JSON.parse(await saved(personal.page)).history.at(-1).result, 1 / 3);
+  assert.deepEqual(JSON.parse(await saved(personal.page)).history.at(-1), {
+    expression: "ans in mm", result: preciseMillimeters, unit: "mm",
+  }, "A conversion must keep its unit and full precision across restart");
   assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Calendar notes must survive restart while hidden");
   await calculate(personal.page, "ans * 3");
-  await expectCalculation(personal.page, "ans * 3", 1, 3);
+  await expectCalculation(personal.page, "ans * 3", preciseMillimeters * 3, 6);
+
+  const beforeInvalid = await saved(personal.page);
+  await calculate(personal.page, "72 in parsecs");
+  await personal.page.waitForTimeout(500);
+  assert.equal(await saved(personal.page), beforeInvalid, "An invalid conversion must not change saved history or the previous answer");
+  // The rejected expression remains editable; clear it through the same field.
+  await personal.page.keyboard.press("Control+a");
+  await personal.page.keyboard.press("Backspace");
 
   // The merged calculator/converter must work in both its expanded and closed
   // dashboard forms, with no extra history records caused by switching views.
   await personal.page.keyboard.press("F2");
   await calculate(personal.page, "3 / 8");
-  await expectCalculation(personal.page, "3 / 8", 0.375, 4);
+  await expectCalculation(personal.page, "3 / 8", 0.375, 7);
   await personal.page.screenshot({ path: resolve(results, "calculator-units-expanded.png") });
   await personal.page.keyboard.press("F2");
   await calculate(personal.page, "ans * 8");
-  await expectCalculation(personal.page, "ans * 8", 3, 5);
+  await expectCalculation(personal.page, "ans * 8", 3, 8);
   // Repeatedly rebuild the same input in expanded and dashboard layouts. Every
   // keystroke must still reach it, without retries or duplicate calculations.
   const repeated = [1, 2, 3, 4].map(value => ({ expression: `7 + ${value}`, result: 7 + value }));
   for (const [index, calculation] of repeated.entries()) {
     await personal.page.keyboard.press("F2");
     await calculate(personal.page, calculation.expression);
-    await expectCalculation(personal.page, calculation.expression, calculation.result, 6 + index);
+    await expectCalculation(personal.page, calculation.expression, calculation.result, 9 + index);
   }
   assert.deepEqual(JSON.parse(await saved(personal.page)).history, [
     ...fixture.history,
+    { expression: "72 in mm", result: 1828.8, unit: "mm" },
+    { expression: "1 1/2 in cm", result: fractionalLength, unit: "cm" },
     { expression: "1 / 3", result: 1 / 3 },
-    { expression: "ans * 3", result: 1 },
+    { expression: "ans in mm", result: preciseMillimeters, unit: "mm" },
+    { expression: "ans * 3", result: preciseMillimeters * 3 },
     { expression: "3 / 8", result: 0.375 },
     { expression: "ans * 8", result: 3 },
     ...repeated,
@@ -408,6 +417,8 @@ try {
   await boot(compact.page, true);
   await calculate(compact.page, "12 * 1.5");
   await expectCalculation(compact.page, "12 * 1.5", 18, 2);
+  await calculate(compact.page, "72 in mm");
+  await expectCalculation(compact.page, "72 in mm", 1828.8, 3, "mm");
   assert.deepEqual(JSON.parse(await saved(compact.page)).entries, fixture.entries);
   await compact.page.screenshot({ path: resolve(results, "calculator-units-mobile.png") });
   await release(compact.context, "sample-mobile");
@@ -467,7 +478,7 @@ try {
   await release(outage.context, "weather-stale-outage");
 
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded calculator input, unrounded calculator-to-converter transfer, precise restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, compact layout, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
+  console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded hybrid math and conversion input, fractions, unrounded ans reuse, unit-aware restart persistence, invalid conversion preservation, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, compact layout, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`);
   // Earlier completed cases already have screenshots; avoid multiplying failure

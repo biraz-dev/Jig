@@ -1,10 +1,23 @@
 use crate::Result;
 
 pub const UNITS: [&str; 5] = ["in", "ft", "mm", "cm", "m"];
+
+/// Normalize a supported length unit for display and portable history.
+pub fn canonical(unit: &str) -> Result<&'static str> {
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "in" | "inch" | "inches" => Ok("in"),
+        "ft" | "foot" | "feet" => Ok("ft"),
+        "mm" | "millimeter" | "millimeters" | "millimetre" | "millimetres" => Ok("mm"),
+        "cm" | "centimeter" | "centimeters" | "centimetre" | "centimetres" => Ok("cm"),
+        "m" | "meter" | "meters" | "metre" | "metres" => Ok("m"),
+        _ => Err("Unit must be in, ft, mm, cm or m".into()),
+    }
+}
+
 fn scale(unit: &str) -> Result<f64> {
-    match unit.trim() {
-        "in" | "inch" | "inches" => Ok(0.0254),
-        "ft" | "foot" | "feet" => Ok(0.3048),
+    match canonical(unit)? {
+        "in" => Ok(0.0254),
+        "ft" => Ok(0.3048),
         "mm" => Ok(0.001),
         "cm" => Ok(0.01),
         "m" => Ok(1.0),

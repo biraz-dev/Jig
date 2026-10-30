@@ -78,7 +78,7 @@ impl App {
         let form = match self.focus {
             0 => Form {
                 kind: FormKind::Calc,
-                labels: vec!["Expression (ans = last result)"],
+                labels: vec!["Expression or conversion (72 in mm)"],
                 values: vec![String::new()],
                 field: 0,
             },
@@ -142,8 +142,9 @@ impl App {
         let form = self.form.as_ref().ok_or("No input")?;
         let dirty = match form.kind {
             FormKind::Calc => {
-                let n = state.calculate(&form.values[0])?;
-                self.status = format!("= {}", state.number(n));
+                state.calculate(&form.values[0])?;
+                let answer = state.history.last().ok_or("No calculation result")?;
+                self.status = format!("= {}", answer.formatted(state.preferences.decimals));
                 self.selected[0] = state.history.len() - 1;
                 true
             }
@@ -241,7 +242,7 @@ impl App {
                 if let Some(h) = state.history.get(self.selected[0]) {
                     self.begin(state, false);
                     if let Some(form) = &mut self.form {
-                        form.values[0] = h.result.to_string();
+                        form.values[0] = h.reusable_input();
                     }
                 }
             }
@@ -533,7 +534,8 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                 history_area = columns[1];
                 let selected = state.history.get(app.selected[0]);
                 let expression = selected.map_or("Enter to calculate", |h| h.expression.as_str());
-                let result = selected.map_or_else(|| "0.00".into(), |h| state.number(h.result));
+                let result = selected
+                    .map_or_else(|| "0.00".into(), |h| h.formatted(state.preferences.decimals));
                 frame.render_widget(
                     Paragraph::new(expression).style(Style::default().fg(MUTED)),
                     Rect {
@@ -546,7 +548,10 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                     height: columns[0].height.saturating_sub(1),
                     ..columns[0]
                 };
-                if result_area.height >= 5 && large_width(&result) <= result_area.width as usize {
+                if selected.is_none_or(|h| h.unit.is_none())
+                    && result_area.height >= 5
+                    && large_width(&result) <= result_area.width as usize
+                {
                     frame.render_widget(
                         Paragraph::new(large_number(&result))
                             .style(Style::default().fg(Color::Rgb(164, 223, 144))),
@@ -569,14 +574,16 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                 .map(|h| {
                     ListItem::new(vec![
                         Line::styled(h.expression.clone(), Style::default().fg(MUTED)),
-                        Line::from(format!("= {}", state.number(h.result))),
+                        Line::from(format!("= {}", h.formatted(state.preferences.decimals))),
                     ])
                 })
                 .collect();
             if items.is_empty() {
                 frame.render_widget(
-                    Paragraph::new("Enter to calculate\n125 * 1.15\n(12 + 8) * 50%\nans / 2")
-                        .style(Style::default().fg(MUTED)),
+                    Paragraph::new(
+                        "Enter to calculate\n125 * 1.15\n72 in mm\n(12 + 8) * 50%\nans / 2",
+                    )
+                    .style(Style::default().fg(MUTED)),
                     history_area,
                 );
             } else {
@@ -966,5 +973,16 @@ mod tests {
             app.form.as_ref().unwrap().values[0].parse::<f64>().unwrap(),
             1.0 / 3.0
         );
+        app.form = None;
+        app.begin(&state, false);
+        for c in "1/3 in cm".chars() {
+            app.key(press(KeyCode::Char(c)), &mut state).unwrap();
+        }
+        assert!(app.key(press(KeyCode::Enter), &mut state).unwrap());
+        assert_eq!(app.status, "= 0.85 cm");
+        app.form = None;
+        app.key(press(KeyCode::Char('r')), &mut state).unwrap();
+        let reused = &app.form.as_ref().unwrap().values[0];
+        assert!((units::convert(reused, "in").unwrap() - 1.0 / 3.0).abs() < 1e-12);
     }
 }

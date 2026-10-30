@@ -66,11 +66,13 @@ and **Esc** to return to the dashboard. **Ctrl-Alt-4** focuses the calculator in
 start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate controls. On narrow screens the
 panels stack vertically; inline forms and individual panels can scroll.
 
-The calculator and converter share one panel. The converter occupies half the
-former column width; **Use result** or **Ctrl-Alt-U** copies the latest calculator
-result into its current source unit without rounding. Its decimal control is
-inside the combined panel. **Open** expands a tool and
-**close** returns to the dashboard.
+The calculator and converter use one input, result display and history. Type
+`125 * 1.15` for arithmetic or `72 in mm` for a conversion (`1828.80 mm`).
+`72in to mm`, `72in -> mm`, `72in → mm` and `1 1/2 in cm` also work.
+Decimal places and **Copy** stay inside this instrument. Click a history result
+to reuse its full precision; a converted result includes its source unit, ready
+for another target, such as `1828.8 mm in`. **Open** expands a tool and **close**
+returns to the dashboard.
 
 The browser calendar is a month grid with today and deadline dates highlighted.
 Click a deadline date to feature its earliest deadline; choosing a deadline star
@@ -137,6 +139,8 @@ is shown. Weather requires a connection for fresh data; other tools work locally
 jig calc '125 * 1.15'
 jig calc '(12 + 8) * 50%'
 jig calc 'ans / 2'
+jig calc '72 in mm'
+jig calc '1 1/2 in cm'
 jig history
 jig units 12in mm
 jig units '1 1/2in' cm
@@ -171,13 +175,23 @@ across tasks, deadlines and calendar notes; use the actual returned IDs.
 with a nonzero exit status. `deadline countdown` prints one snapshot; the TUI
 refreshes the countdown every second.
 
-Calculator syntax: `+ - * /`, decimals, unary signs, parentheses, postfix `%`,
+Arithmetic syntax: `+ - * /`, decimals, unary signs, parentheses, postfix `%`,
 and `ans` (the last result). Percent always divides its operand by 100:
 `100 + 10%` is `100.10`; use `100 * (1 + 10%)` for a 10% increase. No implicit
 multiplication, functions, exponent notation, variables or executable code.
 Lengths accept decimal, fractional and mixed-fraction quantities with an explicit
 source unit: `in`, `ft`, `mm`, `cm`, `m`. All directions work. Display defaults to
 two decimals; calculations and stored values retain f64 precision.
+
+The browser input, terminal calculator and `jig calc` recognize both arithmetic
+and simple conversions. A conversion needs a quantity, source unit and target
+unit, with optional `to` or an arrow before the target. Inch/foot aliases are
+accepted. `ans` always means the numeric value of the last answer: use `ans / 2`
+for arithmetic or `ans in mm` to supply an explicit source unit. This is not
+dimensional algebra; expressions combining measurements are outside this syntax.
+History stores the target unit with conversion results. Existing state files
+without unit metadata continue to work. The separate `jig units` command remains
+a read-only conversion shortcut.
 
 ## Terminal dashboard keys
 

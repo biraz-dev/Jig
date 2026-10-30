@@ -61,6 +61,27 @@ async function newPage(label, {
   raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache,
 } = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true });
+  await context.addInitScript(() => {
+    // Browser event diagnostics only; this does not expose or change Rust state.
+    window.jigSmokeEvents = [];
+    for (const type of ["keydown", "input"]) {
+      document.addEventListener(type, event => {
+        const sample = {
+          type, time: Math.round(performance.now()),
+          key: event.key ?? null, code: event.code ?? null,
+          data: event.data ?? null,
+          ctrl: event.ctrlKey ?? false, alt: event.altKey ?? false,
+          target: event.target?.tagName ?? null, id: event.target?.id ?? null,
+        };
+        // Record prevention after the app has handled the event.
+        queueMicrotask(() => {
+          sample.prevented = event.defaultPrevented;
+          window.jigSmokeEvents.push(sample);
+          if (window.jigSmokeEvents.length > 40) window.jigSmokeEvents.shift();
+        });
+      }, true);
+    }
+  });
   const initial = {};
   if (raw !== undefined) initial[key] = raw;
   if (weatherSettings !== undefined) initial[weatherSettingsKey] = JSON.stringify(weatherSettings);
@@ -168,6 +189,23 @@ async function expectTransferredInput(page, result, unit) {
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Control+c");
   await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, `${result}${unit}`);
+}
+
+async function failedCalculatorReadback(page) {
+  // Inspect the ordinary editor through copy only: never type or press Enter.
+  const sentinel = "Jig failure copy pending";
+  await page.bringToFront();
+  await page.evaluate(text => navigator.clipboard.writeText(text), sentinel);
+  await page.keyboard.press("Control+Alt+4");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+c");
+  await page.waitForFunction(async sentinel => (await navigator.clipboard.readText()) !== sentinel, sentinel, { timeout: 1500, polling: 100 });
+  return page.evaluate(async () => ({
+    copied: (await navigator.clipboard.readText()).slice(0, 256),
+    domSelection: window.getSelection()?.toString().slice(0, 256) ?? "",
+    activeTag: document.activeElement?.tagName ?? null,
+  }));
 }
 
 async function expectCalculation(page, expression, result, length) {
@@ -436,6 +474,8 @@ try {
   // delays or evaluating a page whose main thread is stuck indefinitely.
   for (const { page, label } of pages.slice(-3)) {
     if (!page.isClosed()) {
+      // Preserve the failed scene before diagnostic keyboard focus changes it.
+      await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});
       const diagnostics = await bounded(page.evaluate(key => ({
         // These contexts contain only the explicit synthetic fixtures above.
         saved: localStorage.getItem(key),
@@ -446,9 +486,13 @@ try {
         } : null,
         viewport: { width: innerWidth, height: innerHeight },
         visibility: document.visibilityState,
+        events: window.jigSmokeEvents ?? [],
       }), key), 3000, `Diagnostics for ${label}`).catch(error => ({ unavailable: String(error) }));
       console.error(`Failure diagnostics (${label}):`, JSON.stringify(diagnostics));
-      await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});
+      if (label === "personal-desktop" && phase.startsWith("calculate ")) {
+        const readback = await bounded(failedCalculatorReadback(page), 3000, "Failed calculator copy readback").catch(error => ({ unavailable: String(error) }));
+        console.error("Failed calculator editor readback:", JSON.stringify(readback));
+      }
     }
   }
   if (issues.length) console.error("Browser diagnostics:", issues.join("\n"));

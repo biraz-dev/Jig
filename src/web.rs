@@ -352,6 +352,7 @@ impl BrowserApp {
             let response = ui.add(
                 TextEdit::singleline(&mut self.calculation)
                     .id(id)
+                    .return_key(None)
                     .font(egui::TextStyle::Monospace)
                     .hint_text("125 * 1.15 / ans / 50%")
                     .desired_width((ui.available_width() - 95.0).max(80.0)),
@@ -364,8 +365,10 @@ impl BrowserApp {
                 self.focus_calculator = !response.has_focus();
                 ui.ctx().request_repaint();
             }
-            let enter =
-                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            // Handle Enter while this field owns focus, including first-frame
+            // focus plus typing; TextEdit's lost_focus only compares prior frames.
+            let enter = response.has_focus()
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             if ui.button("Calculate").clicked() || enter {
                 match self.state.calculate(&self.calculation) {
                     Ok(_) => {

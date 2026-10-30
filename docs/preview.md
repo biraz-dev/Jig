@@ -74,8 +74,8 @@ backup service.
 
 ## Browser controls
 
-Use the numbered tool buttons to focus an instrument. F2 toggles the expanded
-view; Esc returns to all tools. Ctrl-Alt-4 focuses calculator input, and
+Use each panel's **open** / **close** buttons. F2 toggles the focused instrument
+between expanded and dashboard views; Esc returns to all tools. Ctrl-Alt-4 focuses calculator input, and
 Ctrl-Alt-N opens the start-empty confirmation. Tab/Shift-Tab navigate controls;
 normal mouse and text editing work. Calculator history results can be clicked
 to reuse their full precision. Task arrows reorder the checklist, deadline stars
@@ -87,7 +87,8 @@ remain intact in stored state and JSON exports. Times display in the device's
 timezone; deadline input requires a qualified RFC3339 time.
 
 The **Use result** button or Ctrl-Alt-U transfers the last calculator result into
-the converter's current source unit without rounding. It does not add a history
+the converter's current source unit without rounding. Decimal places are adjusted
+inside that combined tool. It does not add a history
 record. The **open** / **close** buttons expand an instrument and return to the
 four-panel dashboard.
 

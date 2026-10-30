@@ -275,40 +275,13 @@ impl BrowserApp {
                 }
             });
         }
-        ui.horizontal_wrapped(|ui| {
-            for (index, title) in TITLES.iter().enumerate() {
-                if ui
-                    .selectable_label(self.focus == index, format!("{} {}", index + 1, title))
-                    .clicked()
-                {
-                    self.focus = index;
-                }
-            }
-            if ui
-                .button(if self.expanded {
-                    "Close [F2]"
-                } else {
-                    "Expand focused [F2]"
-                })
-                .clicked()
-            {
-                self.expanded = !self.expanded;
-            }
-            ui.label("Decimals");
-            if ui
-                .add(egui::DragValue::new(&mut self.state.preferences.decimals).range(0..=10))
-                .changed()
-            {
-                self.changed();
-            }
-        });
     }
 
     fn tool(&mut self, ui: &mut Ui, index: usize, height: f32) {
         let focused = self.focus == index;
         let expanded = self.expanded;
         let mut expand = false;
-        egui::Frame::default()
+        let frame = egui::Frame::default()
             .fill(BG)
             .stroke(Stroke::new(1.0_f32, if focused { PINK } else { BLUE }))
             .inner_margin(egui::Margin::same(11))
@@ -336,6 +309,16 @@ impl BrowserApp {
                         _ => self.calculator_length(ui),
                     });
             });
+        let visible = ui.clip_rect();
+        if ui.input(|input| {
+            input.pointer.any_pressed()
+                && input.pointer.interact_pos().is_some_and(|position| {
+                    frame.response.rect.contains(position) && visible.contains(position)
+                })
+        }) && self.focus != index {
+            self.focus = index;
+            ui.ctx().request_repaint();
+        }
         if expand {
             self.focus = index;
             self.expanded = !self.expanded;
@@ -351,6 +334,9 @@ impl BrowserApp {
                     .hint_text("125 * 1.15 / ans / 50%")
                     .desired_width((ui.available_width() - 95.0).max(80.0)),
             );
+            if response.has_focus() {
+                self.focus = 3;
+            }
             if self.focus_calculator {
                 response.request_focus();
                 response.scroll_to_me(None);
@@ -394,6 +380,18 @@ impl BrowserApp {
     }
 
     fn calculator_length(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Decimals");
+            let response = ui.add(
+                egui::DragValue::new(&mut self.state.preferences.decimals).range(0..=10),
+            );
+            if response.has_focus() {
+                self.focus = 3;
+            }
+            if response.changed() {
+                self.changed();
+            }
+        });
         if ui.available_width() >= 480.0 {
             ui.columns(2, |columns| {
                 self.calculator(&mut columns[0]);
@@ -432,6 +430,9 @@ impl BrowserApp {
                 .hint_text("12in / 1 1/2in")
                 .desired_width(ui.available_width()),
         );
+        if response.has_focus() {
+            self.focus = 3;
+        }
         if self.focus_length {
             response.request_focus();
             response.scroll_to_me(None);
@@ -516,6 +517,9 @@ impl BrowserApp {
                     .hint_text("Task")
                     .desired_width((ui.available_width() - 80.0).max(80.0)),
             );
+            if response.has_focus() {
+                self.focus = 1;
+            }
             if ui
                 .button(if self.task_edit.is_some() {
                     "Save task"
@@ -633,16 +637,19 @@ impl BrowserApp {
             });
         }
         ui.add_space(5.0);
-        ui.add(
+        let title_response = ui.add(
             TextEdit::singleline(&mut self.deadline_title)
                 .hint_text("Deadline title")
                 .desired_width(f32::INFINITY),
         );
-        ui.add(
+        let time_response = ui.add(
             TextEdit::singleline(&mut self.deadline_at)
                 .hint_text("2026-12-01T18:00:00+01:00")
                 .desired_width(f32::INFINITY),
         );
+        if title_response.has_focus() || time_response.has_focus() {
+            self.focus = 0;
+        }
         ui.horizontal(|ui| {
             if ui
                 .button(if self.deadline_edit.is_some() {
@@ -761,6 +768,9 @@ impl BrowserApp {
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 response = response.on_hover_text(tooltip);
+                            }
+                            if response.has_focus() {
+                                self.focus = 2;
                             }
                             if response.clicked() {
                                 self.selected_date = *day;

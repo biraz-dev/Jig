@@ -58,15 +58,15 @@ workbench as `jig.json`. **Clear saved data** requires confirmation and returns 
 temporary samples. Use export for backups and to transfer data between the
 browser and CLI. Importing a file never uploads it.
 
-The preview supports mouse interaction and normal text editing. Use the numbered
-tool buttons to focus an instrument, **F2** to expand it, and **Esc** to return to
-the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
+The preview supports mouse interaction and normal text editing. Use each panel's **open** / **close** buttons, **F2** to expand the focused tool,
+and **Esc** to return to the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
 start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate controls. On narrow screens the
 panels stack vertically; inline forms and individual panels can scroll.
 
 The calculator and converter share one panel. The converter occupies half the
 former column width; **Use result** or **Ctrl-Alt-U** copies the latest calculator
-result into its current source unit without rounding. **Open** expands a tool and
+result into its current source unit without rounding. Its decimal control is
+inside the combined panel. **Open** expands a tool and
 **close** returns to the dashboard.
 
 The browser calendar is a month grid with today and deadline dates highlighted.

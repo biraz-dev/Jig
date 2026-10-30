@@ -9,12 +9,14 @@
   const equal = (a, b) => a && b && a.name === b.name && a.latitude === b.latitude && a.longitude === b.longitude && a.unit === b.unit;
   window.jigWeatherLoadConfig = () => localStorage.getItem(settingsKey);
   window.jigWeatherSaveConfig = raw => {
-    if (raw === null) localStorage.removeItem(settingsKey);
-    else localStorage.setItem(settingsKey, raw);
+    // Stop requests even when storage is unavailable; disabling must act now.
     forecastToken++; forecastAbort?.abort(); forecast = null; forecastError = null;
     if (raw === null) {
       searchToken++; searchAbort?.abort(); places = null; placesError = null;
+      localStorage.removeItem(settingsKey);
       localStorage.removeItem(cacheKey);
+    } else {
+      localStorage.setItem(settingsKey, raw);
     }
   };
   window.jigWeatherLoadCache = () => localStorage.getItem(cacheKey);

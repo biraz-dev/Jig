@@ -104,7 +104,7 @@ details.
 
 ## Weather calendar
 
-Weather starts disabled. Choose **Set weather location**, search for a town or
+Weather starts disabled. Choose **Set location**, search for a town or
 postcode, and select a result. You can change location, switch °F/°C, refresh or
 disable it at any time. Settings stay in this browser; personal JSON exports
 also carry the chosen weather preference. Changing weather in sample mode does
@@ -279,7 +279,7 @@ The preview bundles monospace fonts and makes no remote font requests.
 Optional weather sends the selected location to Open-Meteo as described above. It has no service worker: reopening it offline depends on the browser's
 asset cache; use the native binary for dependable offline launch.
 
-The layout follows the supplied concept with five instruments; weather,
+The layout follows the supplied concept with compact instruments and optional weather;
 priorities and additional measurement modes are outside this milestone.
 Next, validate the browser preview on real devices, improve canvas accessibility
 and narrow layouts, and address concrete feedback before adding tools. The

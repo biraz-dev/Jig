@@ -313,15 +313,18 @@ impl BrowserApp {
                     });
                 });
                 ui.add_space(3.0);
-                egui::ScrollArea::vertical()
-                    .id_salt(("instrument", index))
-                    .max_height((height - 62.0).max(100.0))
-                    .show(ui, |ui| match index {
-                        0 => self.deadlines(ui),
-                        1 => self.tasks(ui),
-                        2 => self.calendar(ui),
-                        _ => self.calculator_length(ui),
-                    });
+                if index == 2 {
+                    self.calendar(ui);
+                } else {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("instrument", index))
+                        .max_height((height - 62.0).max(100.0))
+                        .show(ui, |ui| match index {
+                            0 => self.deadlines(ui),
+                            1 => self.tasks(ui),
+                            _ => self.calculator_length(ui),
+                        });
+                }
             });
         let visible = ui.clip_rect();
         if ui.input(|input| {
@@ -329,7 +332,8 @@ impl BrowserApp {
                 && input.pointer.interact_pos().is_some_and(|position| {
                     frame.response.rect.contains(position) && visible.contains(position)
                 })
-        }) && self.focus != index {
+        }) && self.focus != index
+        {
             self.focus = index;
             ui.ctx().request_repaint();
         }
@@ -396,9 +400,8 @@ impl BrowserApp {
     fn calculator_length(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label("Decimals");
-            let response = ui.add(
-                egui::DragValue::new(&mut self.state.preferences.decimals).range(0..=10),
-            );
+            let response =
+                ui.add(egui::DragValue::new(&mut self.state.preferences.decimals).range(0..=10));
             if response.has_focus() {
                 self.focus = 3;
             }
@@ -453,7 +456,10 @@ impl BrowserApp {
             self.focus_length = false;
         }
         if ui
-            .add_enabled(!self.state.history.is_empty(), egui::Button::new("Use result").small())
+            .add_enabled(
+                !self.state.history.is_empty(),
+                egui::Button::new("Use result").small(),
+            )
             .on_hover_text("Use the calculator result without rounding · Ctrl+Alt+U")
             .clicked()
         {
@@ -471,8 +477,7 @@ impl BrowserApp {
                     ui.label(RichText::new(unit).color(ACCENT));
                     if let Ok(result) = units::convert(&self.length, unit) {
                         ui.label(
-                            RichText::new(self.state.number(result))
-                                .font(FontId::monospace(18.0)),
+                            RichText::new(self.state.number(result)).font(FontId::monospace(18.0)),
                         );
                     }
                     ui.end_row();
@@ -531,14 +536,19 @@ impl BrowserApp {
                     ui.label(format!("Delete {completed} completed tasks?"));
                     if ui.small_button("Confirm").clicked() {
                         self.state.remove_completed_tasks();
-                        if self.task_edit.is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id)) {
+                        if self
+                            .task_edit
+                            .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
+                        {
                             self.task_edit = None;
                             self.task_text.clear();
                         }
                         self.confirm_clear_completed = false;
                         self.changed();
                     }
-                    if ui.small_button("Cancel").clicked() { self.confirm_clear_completed = false; }
+                    if ui.small_button("Cancel").clicked() {
+                        self.confirm_clear_completed = false;
+                    }
                 });
             } else if ui.small_button("Delete all completed tasks").clicked() {
                 self.confirm_clear_completed = true;
@@ -631,9 +641,7 @@ impl BrowserApp {
                 );
             });
         } else {
-            ui.label(
-                RichText::new("No featured deadline").color(BLUE),
-            );
+            ui.label(RichText::new("No featured deadline").color(BLUE));
         }
         ui.separator();
         ui.label(RichText::new("Upcoming deadlines").color(ACCENT));
@@ -733,9 +741,12 @@ impl BrowserApp {
     }
 
     fn calendar(&mut self, ui: &mut Ui) {
+        ui.spacing_mut().button_padding.x = 3.0;
         if self.weather.controls(ui) {
             self.state.preferences.weather = self.weather.config().cloned();
-            if !self.demo { self.changed(); }
+            if !self.demo {
+                self.changed();
+            }
         }
         ui.horizontal(|ui| {
             if ui.button("‹").clicked() {
@@ -769,8 +780,15 @@ impl BrowserApp {
                         ui.label(RichText::new(day).color(BLUE));
                     }
                     ui.end_row();
-                    let count = cells.iter().rposition(Option::is_some).map_or(0, |index| (index / 7 + 1) * 7);
-                    let weather_height = if self.weather.is_enabled() { 53.0 } else { 27.0 };
+                    let count = cells
+                        .iter()
+                        .rposition(Option::is_some)
+                        .map_or(0, |index| (index / 7 + 1) * 7);
+                    let weather_height = if self.weather.is_enabled() {
+                        53.0
+                    } else {
+                        27.0
+                    };
                     for (index, day) in cells[..count].iter().enumerate() {
                         if let Some(day) = day {
                             let mut deadlines: Vec<_> = self
@@ -791,7 +809,9 @@ impl BrowserApp {
                                 CREAM
                             };
                             let mut button = egui::Button::new(
-                                RichText::new(self.weather.cell_text(*day)).size(12.0).color(color),
+                                RichText::new(self.weather.cell_text(*day))
+                                    .size(12.0)
+                                    .color(color),
                             )
                             .min_size(egui::vec2(size, weather_height));
                             if *day == today {
@@ -809,10 +829,14 @@ impl BrowserApp {
                                 .collect::<Vec<_>>()
                                 .join("\n");
                             if let Some(forecast) = self.weather.day_tooltip(*day) {
-                                if !tooltip.is_empty() { tooltip.push('\n'); }
+                                if !tooltip.is_empty() {
+                                    tooltip.push('\n');
+                                }
                                 tooltip.push_str(&forecast);
                             }
-                            if !tooltip.is_empty() { response = response.on_hover_text(tooltip); }
+                            if !tooltip.is_empty() {
+                                response = response.on_hover_text(tooltip);
+                            }
                             if response.has_focus() {
                                 self.focus = 2;
                             }
@@ -870,13 +894,17 @@ impl eframe::App for BrowserApp {
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::U)) {
             self.use_calculation_result();
-            if ctx.screen_rect().width() < 1040.0 { self.expanded = true; }
+            if ctx.screen_rect().width() < 1040.0 {
+                self.expanded = true;
+            }
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
             self.focus = 3;
             self.focus_calculator = true;
             self.focus_length = false;
-            if ctx.screen_rect().width() < 1040.0 { self.expanded = true; }
+            if ctx.screen_rect().width() < 1040.0 {
+                self.expanded = true;
+            }
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
             self.expanded = !self.expanded;
@@ -912,8 +940,16 @@ impl eframe::App for BrowserApp {
                         self.tool(ui, self.focus, height - 10.0);
                     } else if ui.available_width() >= 1040.0 {
                         ui.columns(2, |columns| {
-                            let calendar_height = if self.weather.is_enabled() { 500.0 } else { 300.0 };
-                            self.tool(&mut columns[0], 0, (height - calendar_height - 8.0).max(300.0));
+                            let calendar_height = if self.weather.is_enabled() {
+                                500.0
+                            } else {
+                                300.0
+                            };
+                            self.tool(
+                                &mut columns[0],
+                                0,
+                                (height - calendar_height - 8.0).max(300.0),
+                            );
                             columns[0].add_space(8.0);
                             self.tool(&mut columns[0], 2, calendar_height);
                             self.tool(&mut columns[1], 1, height - 308.0);
@@ -923,7 +959,13 @@ impl eframe::App for BrowserApp {
                     } else {
                         for index in [0, 1, 2, 3] {
                             let tool_height = match index {
-                                2 => if self.weather.is_enabled() { 500.0 } else { 300.0 },
+                                2 => {
+                                    if self.weather.is_enabled() {
+                                        500.0
+                                    } else {
+                                        300.0
+                                    }
+                                }
                                 3 => 430.0,
                                 _ => 300.0,
                             };

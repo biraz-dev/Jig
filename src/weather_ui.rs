@@ -168,7 +168,7 @@ impl WeatherPanel {
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             if let Some(config) = self.config.clone() {
-                ui.label(RichText::new("LIVE WEATHER").color(ACCENT).small());
+                ui.label(RichText::new("FORECAST").color(ACCENT).small());
                 ui.label(&config.name);
                 for (unit, label) in [
                     (TemperatureUnit::Fahrenheit, "°F"),
@@ -254,7 +254,8 @@ impl WeatherPanel {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(format!(
-                            "Now {} · RH {}",
+                            "{} {} · humidity {}",
+                            if self.fresh() && self.error.is_none() { "Now" } else { "Cached" },
                             temperature(current.temperature, unit),
                             percentage(current.humidity)
                         ))
@@ -321,6 +322,9 @@ impl WeatherPanel {
     }
 
     pub fn day(&self, date: NaiveDate) -> Option<&DayWeather> {
+        if date < Local::now().date_naive() {
+            return None;
+        }
         self.cache
             .as_ref()?
             .forecast
@@ -345,7 +349,7 @@ impl WeatherPanel {
         let day = self.day(date)?;
         let name = &self.config.as_ref()?.name;
         Some(format!(
-            "{name} · {date}\nHigh {} · Low {}\nRain {} · Mean RH {}\n{}",
+            "{name} · {date}\nHigh {} · Low {}\nRain {} · Mean humidity {}\n{}",
             temperature(day.high, self.unit()),
             temperature(day.low, self.unit()),
             percentage(day.rain_probability),
@@ -359,7 +363,7 @@ impl WeatherPanel {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(format!(
-                        "{} · {} / {} · Rain {} · Mean RH {}",
+                        "{} · {} / {} · Rain {} · Mean humidity {}",
                         date.format("%d %b"),
                         temperature(day.high, self.unit()),
                         temperature(day.low, self.unit()),

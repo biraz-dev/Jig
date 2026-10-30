@@ -312,7 +312,7 @@ impl WeatherPanel {
                 detail.push_str(" · ");
                 detail.push_str(condition);
             }
-            ui.label(RichText::new(detail).small().color(MUTED));
+            ui.label(RichText::new(detail).size(12.0).color(MUTED));
         } else if self.config.is_some() {
             let message = if self.cache.is_none() && self.pending {
                 "Loading weather…".to_owned()

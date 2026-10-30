@@ -240,11 +240,12 @@ impl BrowserApp {
                     .color(if self.demo { PINK } else { BLUE })
                     .small(),
                 );
-                if wide {
-                    ui.label(
-                        RichText::new(Local::now().format("%a %d %b %Y").to_string()).color(BLUE),
-                    );
-                }
+                let date_format = if wide { "%a %d %b %Y" } else { "%d %b %Y" };
+                ui.label(
+                    RichText::new(Local::now().format(date_format).to_string())
+                        .size(if wide { 14.0 } else { 11.0 })
+                        .color(BLUE),
+                );
             });
         });
         if !wide {
@@ -1154,21 +1155,19 @@ impl eframe::App for BrowserApp {
         egui::TopBottomPanel::top("jig-header").show(ctx, |ui| self.toolbar(ui));
         egui::TopBottomPanel::bottom("jig-status").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(&self.status).small().color(
+                ui.label(RichText::new(&self.status).size(11.0).color(
                     if self.storage_error || self.dirty {
                         PINK
                     } else {
                         BLUE
                     },
                 ));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
-                    ui.label(
-                        RichText::new("↑↓←→ select · Ctrl+M maximize · Esc return")
-                            .small()
-                            .color(BLUE),
-                    );
-                });
+                ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
+                ui.label(
+                    RichText::new("Arrows select | Ctrl+M maximize | Esc return")
+                        .size(11.0)
+                        .color(BLUE),
+                );
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1190,9 +1189,9 @@ impl eframe::App for BrowserApp {
                         let main_height = 350.0;
                         ui.horizontal_top(|ui| {
                             ui.allocate_ui_with_layout(
-                                egui::vec2(calendar_width, main_height),
+                                egui::vec2(calendar_width, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
-                                |ui| self.tool(ui, 2, main_height),
+                                |ui| self.tool(ui, 2, 0.0),
                             );
                             ui.add_space(12.0);
                             ui.allocate_ui_with_layout(
@@ -1212,7 +1211,7 @@ impl eframe::App for BrowserApp {
                         ui.add_space(8.0);
                         ui.scope(|ui| {
                             ui.set_max_width(ui.available_width().min(330.0));
-                            self.tool(ui, 2, 320.0);
+                            self.tool(ui, 2, 0.0);
                         });
                         ui.add_space(8.0);
                         self.tool(ui, 1, 300.0);

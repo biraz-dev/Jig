@@ -4,4 +4,5 @@ pub mod calendar;
 pub mod model;
 pub mod sample;
 pub mod units;
+pub mod weather;
 pub type Result<T> = std::result::Result<T, String>;

@@ -28,6 +28,7 @@ jobs:
         run: |
           test -f dist/index.html
           test -f dist/bridge.js
+          test -f dist/weather.js
           test -f dist/preview.css
           test -n "$(find dist -name '*.wasm' -print -quit)"
           if find dist -type f \( -name 'jig.json' -o -name '*.md' -o -name '*.lock' -o -name '.env*' \) | grep .; then exit 1; fi

@@ -5,16 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Jig development preview. Five small artist's tools, running locally in your browser with sample data. No account or backend.">
   <meta name="referrer" content="no-referrer">
-  <title>Jig — local artist's workbench</title>
+  <title>Jig — You are a small Small Giant Psionicist.</title>
   <link data-trunk rel="rust" data-bin="jig-web" data-cargo-no-default-features data-cargo-features="web">
   <link data-trunk rel="copy-file" href="web/bridge.js">
+  <link data-trunk rel="copy-file" href="web/weather.js">
   <link data-trunk rel="copy-file" href="web/preview.css">
   <link rel="stylesheet" href="preview.css">
   <script src="bridge.js"></script>
+  <script src="weather.js"></script>
 </head>
 <body>
   <main id="loading" role="status">
-    <h1>JIG <span>/ artist's workbench</span></h1>
+    <h1>JIG <span>You are a small Small Giant Psionicist.</span></h1>
     <p>Development preview — sample data</p>
     <p id="load-message">Starting the local Rust dashboard…</p>
     <p>Everything runs in this browser. No account, backend or telemetry.</p>

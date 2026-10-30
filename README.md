@@ -1,17 +1,20 @@
 # Jig
 
-A tool for creative Small Giants. A small, local artist's workbench in Rust:
+You are a small Small Giant Psionicist.
+
+A small, local artist's workbench in Rust:
 calculator, length conversion, tasks, deadlines and calendar. The Rust CLI,
 terminal dashboard and egui browser preview share the same utility logic.
 No accounts, telemetry, database, backend or background service. The CLI and
 terminal run offline; the browser loads static application assets and processes
-all application data on your device.
+task and calculation data on your device. Weather is optional and contacts
+Open-Meteo for the location you select.
 
 ![Jig terminal dashboard — sample data](docs/sample-dashboard.svg)
 
 The image above renders the Ratatui dashboard with clearly labelled sample data.
-The browser preview uses the same five instruments and the approved visual
-direction.
+The browser preview puts the same five utilities into four compact panels,
+combining the calculator and length converter; the calendar can also show optional weather.
 The [browser preview](https://biraz-dev.github.io/Jig/) is deployed from `main`
 through GitHub Actions. Fresh visitors see clearly labelled sample data.
 
@@ -58,11 +61,22 @@ workbench as `jig.json`. **Clear saved data** requires confirmation and returns 
 temporary samples. Use export for backups and to transfer data between the
 browser and CLI. Importing a file never uploads it.
 
-The preview supports mouse interaction and normal text editing. Use the numbered
-tool buttons to focus an instrument, **F2** to expand it, and **Esc** to return to
-the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
+The preview supports mouse interaction and normal text editing. Use each panel's **open** / **close** buttons, **F2** to expand the focused tool,
+and **Esc** to return to the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
 start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate controls. On narrow screens the
 panels stack vertically; inline forms and individual panels can scroll.
+
+The calculator and converter share one panel. The converter occupies half the
+former column width; **Use result** or **Ctrl-Alt-U** copies the latest calculator
+result into its current source unit without rounding. Its decimal control is
+inside the combined panel. **Open** expands a tool and
+**close** returns to the dashboard.
+
+The browser calendar is a month grid with today and deadline dates highlighted.
+Click a deadline date to feature its earliest deadline; choosing a deadline star
+shows that date in the calendar. Calendar note controls and markers are hidden
+in this view. Existing notes remain in saved/imported/exported data and are still
+available through the native CLI and terminal dashboard.
 
 Browser imports and saves have a 2 MiB limit. Invalid saved data is preserved and
 reported. If a save fails, edits remain in memory and **Retry save** becomes
@@ -70,6 +84,9 @@ available; export them before closing the page. If another tab changes the saved
 text, Jig rejects the stale write. Export your current work, then reload to open
 the newer saved copy. Browser storage belongs to this browser profile and origin;
 clearing site data or using another browser does not carry it over.
+
+Completed tasks can be removed together with **Delete all completed tasks** and
+an inline confirmation. Individual removal buttons use **del**.
 
 For a production build under the repository's Pages path:
 
@@ -84,6 +101,35 @@ public, set **Settings → Pages → Build and deployment → Source → GitHub 
 before the first deployment. The workflow reports the published URL. See
 [the browser preview notes](docs/preview.md) for implementation and deployment
 details.
+
+## Weather calendar
+
+Weather starts disabled. Choose **Set location**, search for a town or
+postcode, and select a result. You can change location, switch °F/°C, refresh or
+disable it at any time. Settings stay in this browser; personal JSON exports
+also carry the chosen weather preference. Changing weather in sample mode does
+not save the sample checklist as personal data.
+
+Forecast days show the daily high and rain probability; select a date for the
+high/low and mean relative humidity. The current row includes current temperature
+and humidity. Days outside the returned forecast range remain plain. Calendar
+entry controls remain hidden and existing entries are preserved.
+
+Weather data comes from [Open-Meteo](https://open-meteo.com/) without a key or
+account, using national forecast models. It is a forecast, not a guarantee for
+an individual property. The free endpoint is for non-commercial use; see its
+[terms](https://open-meteo.com/en/terms) and [CC BY 4.0 licence](https://open-meteo.com/en/licence).
+Only the selected location and weather variables are sent to the provider,
+which also receives normal request information such as IP address. Tasks,
+calculations and deadlines are not uploaded. No provider request is made until
+weather is configured or you search for a location.
+
+Forecasts are cached locally with a fetched timestamp. Automatic attempts occur
+at most hourly, including after failures; refresh is also available. Cached data
+is labelled stale when old or offline. Relative humidity means are calculated
+from available hourly values grouped by the forecast's local date. Forecasts
+cover up to 16 days; longer-range values are less certain. The forecast timezone
+is shown. Weather requires a connection for fresh data; other tools work locally.
 
 ## CLI
 
@@ -101,6 +147,7 @@ jig tasks edit 1 'Photograph new sculptures'
 jig tasks done 1
 jig tasks move 1 2
 jig tasks delete 1
+jig tasks clear-completed
 jig deadline add 'Exhibition opening' '2026-12-01T18:00:00+01:00'
 jig deadline list
 jig deadline feature 2
@@ -228,11 +275,11 @@ Arithmetic uses f64 rather than exact decimal/rational values. There is no undo,
 recurring deadline, timezone database selection, external calendar sync,
 scientific calculator or automatic backup retention. The native terminal editor
 uses append/backspace editing. No native graphical application is included.
-The preview bundles monospace fonts and makes no font or application-data network
-requests. It has no service worker: reopening it offline depends on the browser's
+The preview bundles monospace fonts and makes no remote font requests.
+Optional weather sends the selected location to Open-Meteo as described above. It has no service worker: reopening it offline depends on the browser's
 asset cache; use the native binary for dependable offline launch.
 
-The layout follows the supplied concept with five instruments; weather,
+The layout follows the supplied concept with compact instruments and optional weather;
 priorities and additional measurement modes are outside this milestone.
 Next, validate the browser preview on real devices, improve canvas accessibility
 and narrow layouts, and address concrete feedback before adding tools. The

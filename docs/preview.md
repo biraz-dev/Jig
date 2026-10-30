@@ -3,8 +3,11 @@
 The egui/eframe browser dashboard now uses the same Rust calculator, length,
 task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows
 the approved two-column composition on wide screens, stacks panels on narrow
-screens, and can expand one instrument. CRUD forms stay inline. There is no
-backend, account, telemetry or data upload.
+screens, and can expand one instrument. Calculator and length conversion share
+one panel, with the converter taking half its former width. Task and deadline
+forms stay inline. There is no
+application backend, account or telemetry. Optional weather uses Open-Meteo;
+only the chosen location and weather query are sent, never workbench records.
 
 A single crate remains sufficient. Default Cargo features build the native
 `jig` binary. The `web` feature builds `jig-web`; terminal dependencies are
@@ -72,14 +75,24 @@ backup service.
 
 ## Browser controls
 
-Use the numbered tool buttons to focus an instrument. F2 toggles the expanded
-view; Esc returns to all tools. Ctrl-Alt-4 focuses calculator input, and
+Use each panel's **open** / **close** buttons. F2 toggles the focused instrument
+between expanded and dashboard views; Esc returns to all tools. Ctrl-Alt-4 focuses calculator input, and
 Ctrl-Alt-N opens the start-empty confirmation. Tab/Shift-Tab navigate controls;
-normal mouse and text editing work. Calculator history results can be clicked
+normal mouse and text editing work. Ctrl-Alt-U transfers the last calculator
+result into the converter without rounding. Calculator history results can be clicked
 to reuse their full precision. Task arrows reorder the checklist, deadline stars
-choose the featured countdown, and calendar date buttons show local notes and
-deadlines. Times display in the device's timezone; deadline input requires a
-qualified RFC3339 time.
+choose the featured countdown and reveal its date in the calendar. The calendar
+is a month grid only: today is highlighted, deadline dates are accented, and
+clicking a deadline date features its earliest deadline. Hover shows matching
+deadline titles. Entry forms and markers are hidden, while existing entries
+remain intact in stored state and JSON exports. Times display in the device's
+timezone; deadline input requires a qualified RFC3339 time.
+
+The **Use result** button or Ctrl-Alt-U transfers the last calculator result into
+the converter's current source unit without rounding. Decimal places are adjusted
+inside that combined tool. It does not add a history
+record. The **open** / **close** buttons expand an instrument and return to the
+four-panel dashboard.
 
 ## GitHub Actions and Pages
 
@@ -105,6 +118,7 @@ bootstrap assets and compiled application, not state files, home directories,
 local uploads or private files. The workflow grants `pages: write` and
 `id-token: write` only to the deployment job using the `github-pages` environment.
 The public sample dataset is assembled in code and contains no personal state.
+Weather is disabled by default; no personal location is embedded in the bundle.
 
 ## Follow-up work
 
@@ -120,3 +134,28 @@ this preview.
 `Ctrl+Alt+O` reopens the saved local dataset. If it cannot be decoded, normal edits
 remain in memory and do not overwrite the saved raw data; export your work before
 an explicitly confirmed replacement.
+
+## Optional weather
+
+The calendar uses the shared `weather` model and browser-only `weather_client`
+and `weather_ui` adapters. Open-Meteo forecasts and city/postcode search require
+no account or key for non-commercial use. Both Open-Meteo and GeoNames attribution
+are shown beside the controls. See the README for provider terms and limits.
+
+Location and °F/°C can be changed in the inline location control. Browser settings
+use `jig.weather.settings.v1`; normalized forecasts use `jig.weather.cache.v1`.
+The chosen preference also travels in personal workbench JSON. Fresh matching
+city/unit caches are reused for an hour. Failed refreshes keep matching cached
+forecasts with a stale/error label and do not retry on each dashboard repaint.
+Changing or disabling weather invalidates pending requests, so a late response
+cannot restore a cleared city. Clearing saved app data clears weather too.
+
+No outgoing weather request contains tasks, history or deadlines. API fetches
+omit credentials and referrer information, use a bounded timeout, and are never
+started for a plain unconfigured dashboard. A city search is a deliberate network
+action. Offline viewing can use cached forecasts; the timestamps make their age
+visible. Monthly dates beyond the provider's forecast horizon have no weather.
+
+Browser tests intercept the provider with synthetic data to check Fahrenheit,
+Celsius, rain probability, humidity normalization, cache reuse, stale data and
+bounded failure retries without depending on provider availability in CI.

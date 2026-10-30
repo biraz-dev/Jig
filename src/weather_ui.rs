@@ -254,7 +254,11 @@ impl WeatherPanel {
                     ui.label(
                         RichText::new(format!(
                             "{} {} · humidity {}",
-                            if self.fresh() && self.error.is_none() { "Now" } else { "Cached" },
+                            if self.fresh() && self.error.is_none() {
+                                "Now"
+                            } else {
+                                "Cached"
+                            },
                             temperature(current.temperature, unit),
                             percentage(current.humidity)
                         ))

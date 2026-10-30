@@ -42,16 +42,6 @@ jobs:
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"
           python3 -m http.server 4173 --directory "$RUNNER_TEMP/jig-site" > "$RUNNER_TEMP/jig-http.log" 2>&1 &
           node tests/browser_smoke.mjs
-      - name: Inspect sample rendering
-        if: always()
-        run: |
-          for rendering in sample-desktop weather-desktop weather-stale; do
-            if test -f "playwright-results/$rendering.png"; then
-              echo "JIG_RENDER_BEGIN_$rendering"
-              base64 -w 76 "playwright-results/$rendering.png"
-              echo "JIG_RENDER_END_$rendering"
-            fi
-          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,4 +1,4 @@
-use crate::{calculator, Result};
+use crate::{calculator, weather::WeatherConfig, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -30,12 +30,14 @@ pub struct Entry {
 pub struct Preferences {
     pub decimals: usize,
     pub focus: usize,
+    pub weather: Option<WeatherConfig>,
 }
 impl Default for Preferences {
     fn default() -> Self {
         Self {
             decimals: 2,
             focus: 3,
+            weather: None,
         }
     }
 }
@@ -117,6 +119,9 @@ impl State {
         }
         if self.preferences.decimals > 10 || self.preferences.focus > 4 {
             return Err("Invalid preferences".into());
+        }
+        if let Some(config) = &self.preferences.weather {
+            config.validate()?;
         }
         if self.history.iter().any(|h| {
             !h.result.is_finite()
@@ -212,6 +217,11 @@ impl State {
             .ok_or("Task not found")?;
         self.tasks.remove(index);
         Ok(())
+    }
+    pub fn remove_completed_tasks(&mut self) -> usize {
+        let before = self.tasks.len();
+        self.tasks.retain(|task| !task.complete);
+        before - self.tasks.len()
     }
     pub fn move_task(&mut self, id: u64, position: usize) -> Result<()> {
         if position == 0 || position > self.tasks.len() {

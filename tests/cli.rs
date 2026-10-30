@@ -37,5 +37,10 @@ fn cli_shares_state_and_returns_predictable_errors() {
         String::from_utf8_lossy(&invoke(&["units", "1 1/2in", "mm"]).stdout).trim(),
         "38.10 mm"
     );
+    assert!(invoke(&["tasks", "done", "1"]).status.success());
+    let cleared = invoke(&["tasks", "clear-completed"]);
+    assert!(cleared.status.success());
+    assert!(String::from_utf8_lossy(&cleared.stdout).contains("Removed 1 completed tasks"));
+    assert!(invoke(&["tasks"]).stdout.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }

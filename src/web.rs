@@ -1,5 +1,5 @@
 //! egui adapter for the same local utility model used by the CLI and terminal.
-use crate::browser_storage;
+use crate::{browser_storage, weather_ui::WeatherPanel};
 use chrono::{Datelike, Local, NaiveDate, Utc};
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{calendar, model::State, units};
@@ -11,7 +11,6 @@ const PINK: Color32 = Color32::from_rgb(234, 133, 173);
 const BLUE: Color32 = Color32::from_rgb(144, 161, 202);
 const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
 const GREEN: Color32 = Color32::from_rgb(164, 223, 144);
-const TITLES: [&str; 4] = ["MAJOR DEADLINE", "TASKS", "CALENDAR", "CALCULATOR / LENGTH"];
 
 #[derive(Clone, Copy)]
 enum Confirm {
@@ -21,6 +20,7 @@ enum Confirm {
 
 pub struct BrowserApp {
     state: State,
+    weather: WeatherPanel,
     demo: bool,
     dirty: bool,
     storage_error: bool,
@@ -35,6 +35,7 @@ pub struct BrowserApp {
     length: String,
     task_text: String,
     task_edit: Option<u64>,
+    confirm_clear_completed: bool,
     deadline_title: String,
     deadline_at: String,
     deadline_edit: Option<u64>,
@@ -45,6 +46,7 @@ pub struct BrowserApp {
 
 impl BrowserApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         let mut style = (*cc.egui_ctx.style()).clone();
         style.visuals = egui::Visuals::dark();
         style.visuals.panel_fill = BG;
@@ -66,7 +68,7 @@ impl BrowserApp {
             .text_styles
             .insert(egui::TextStyle::Monospace, FontId::monospace(14.0));
         cc.egui_ctx.set_style(style);
-        let (state, demo, status, storage_error) = match browser_storage::load() {
+        let (mut state, demo, status, storage_error) = match browser_storage::load() {
             Ok(Some(state)) => (
                 state,
                 false,
@@ -88,8 +90,11 @@ impl BrowserApp {
             ),
         };
         let today = Local::now().date_naive();
+        let weather = WeatherPanel::new(state.preferences.weather.clone());
+        state.preferences.weather = weather.config().cloned();
         Self {
             state,
+            weather,
             demo,
             dirty: false,
             storage_error,
@@ -104,6 +109,7 @@ impl BrowserApp {
             length: "12in".into(),
             task_text: String::new(),
             task_edit: None,
+            confirm_clear_completed: false,
             deadline_title: String::new(),
             deadline_at: String::new(),
             deadline_edit: None,
@@ -149,14 +155,23 @@ impl BrowserApp {
     fn reset_editors(&mut self) {
         self.task_edit = None;
         self.task_text.clear();
+        self.confirm_clear_completed = false;
         self.deadline_edit = None;
         self.deadline_title.clear();
         self.deadline_at.clear();
         self.calculation.clear();
     }
 
+    fn restore_weather(&mut self) {
+        if let Some(config) = self.state.preferences.weather.clone() {
+            self.weather.replace_config(Some(config));
+        }
+        self.state.preferences.weather = self.weather.config().cloned();
+    }
+
     fn replace_personal(&mut self, state: State) {
         self.state = state;
+        self.restore_weather();
         self.demo = false;
         // This path is reached only after explicit replacement confirmation.
         self.storage_error = false;
@@ -173,6 +188,7 @@ impl BrowserApp {
             match browser_storage::load() {
                 Ok(state) => {
                     self.state = state.unwrap_or_default();
+                    self.restore_weather();
                     self.demo = false;
                     self.storage_error = false;
                     self.reset_editors();
@@ -194,7 +210,7 @@ impl BrowserApp {
                     .color(CREAM)
                     .strong(),
             );
-            ui.label(RichText::new("/ artist's workbench").color(BLUE));
+            ui.label(RichText::new("You are a small Small Giant Psionicist.").color(BLUE));
             ui.label(
                 RichText::new(Local::now().format("%a %d %b %Y  %H:%M:%S").to_string()).color(BLUE),
             );
@@ -222,6 +238,7 @@ impl BrowserApp {
                         "Save your changes before switching to sample mode. If saving is unavailable, export JSON, then reload before switching.".into();
                 } else {
                     self.state = jig::sample::state(Utc::now());
+                    self.restore_weather();
                     self.demo = true;
                     self.reset_editors();
                     self.status = "Sample mode. Your saved personal data has not changed.".into();
@@ -253,7 +270,7 @@ impl BrowserApp {
                     match confirm {
                         Confirm::Empty => self.replace_personal(State::default()),
                         Confirm::Clear => match browser_storage::clear() {
-                            Ok(()) => { self.state = jig::sample::state(Utc::now()); self.demo = true; self.dirty = false; self.storage_error = false; self.reset_editors(); self.status = "Browser-local data cleared. Displaying temporary sample data.".into(); }
+                            Ok(()) => { self.weather.disable(); self.state = jig::sample::state(Utc::now()); self.demo = true; self.dirty = false; self.storage_error = false; self.reset_editors(); self.status = "Browser-local data cleared. Displaying temporary sample data.".into(); }
                             Err(error) => self.status = error,
                         },
                     }
@@ -289,9 +306,6 @@ impl BrowserApp {
                 ui.set_min_width(ui.available_width());
                 ui.set_min_height(height.max(150.0) - 24.0);
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{:02} — {}", index + 1, TITLES[index])).color(PINK),
-                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         expand = ui
                             .small_button(if expanded { "close" } else { "open" })
@@ -500,7 +514,7 @@ impl BrowserApp {
                     let result = self.state.move_task(task.id, index + 2);
                     self.apply(result);
                 }
-                if ui.small_button("delete").clicked() {
+                if ui.small_button("del").clicked() {
                     let result = self.state.remove_task(task.id);
                     self.apply(result);
                     if self.task_edit == Some(task.id) {
@@ -510,11 +524,33 @@ impl BrowserApp {
                 }
             });
         }
+        let completed = self.state.tasks.iter().filter(|task| task.complete).count();
+        if completed > 0 {
+            if self.confirm_clear_completed {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("Delete {completed} completed tasks?"));
+                    if ui.small_button("Confirm").clicked() {
+                        self.state.remove_completed_tasks();
+                        if self.task_edit.is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id)) {
+                            self.task_edit = None;
+                            self.task_text.clear();
+                        }
+                        self.confirm_clear_completed = false;
+                        self.changed();
+                    }
+                    if ui.small_button("Cancel").clicked() { self.confirm_clear_completed = false; }
+                });
+            } else if ui.small_button("Delete all completed tasks").clicked() {
+                self.confirm_clear_completed = true;
+            }
+        } else {
+            self.confirm_clear_completed = false;
+        }
         ui.separator();
         ui.horizontal(|ui| {
             let response = ui.add(
                 TextEdit::singleline(&mut self.task_text)
-                    .hint_text("Task")
+                    .hint_text("Add new task")
                     .desired_width((ui.available_width() - 80.0).max(80.0)),
             );
             if response.has_focus() {
@@ -625,7 +661,7 @@ impl BrowserApp {
                     self.deadline_title = deadline.title.clone();
                     self.deadline_at = deadline.at.to_rfc3339();
                 }
-                if ui.small_button("delete").clicked() {
+                if ui.small_button("del").clicked() {
                     let result = self.state.remove_deadline(deadline.id);
                     self.apply(result);
                     if self.deadline_edit == Some(deadline.id) {
@@ -639,7 +675,7 @@ impl BrowserApp {
         ui.add_space(5.0);
         let title_response = ui.add(
             TextEdit::singleline(&mut self.deadline_title)
-                .hint_text("Deadline title")
+                .hint_text("Add new deadline")
                 .desired_width(f32::INFINITY),
         );
         let time_response = ui.add(
@@ -697,6 +733,10 @@ impl BrowserApp {
     }
 
     fn calendar(&mut self, ui: &mut Ui) {
+        if self.weather.controls(ui) {
+            self.state.preferences.weather = self.weather.config().cloned();
+            if !self.demo { self.changed(); }
+        }
         ui.horizontal(|ui| {
             if ui.button("‹").clicked() {
                 self.shift_month(-1);
@@ -729,7 +769,9 @@ impl BrowserApp {
                         ui.label(RichText::new(day).color(BLUE));
                     }
                     ui.end_row();
-                    for (index, day) in cells.iter().enumerate() {
+                    let count = cells.iter().rposition(Option::is_some).map_or(0, |index| (index / 7 + 1) * 7);
+                    let weather_height = if self.weather.is_enabled() { 53.0 } else { 27.0 };
+                    for (index, day) in cells[..count].iter().enumerate() {
                         if let Some(day) = day {
                             let mut deadlines: Vec<_> = self
                                 .state
@@ -749,9 +791,9 @@ impl BrowserApp {
                                 CREAM
                             };
                             let mut button = egui::Button::new(
-                                RichText::new(day.day().to_string()).color(color),
+                                RichText::new(self.weather.cell_text(*day)).size(12.0).color(color),
                             )
-                            .min_size(egui::vec2(size, 27.0));
+                            .min_size(egui::vec2(size, weather_height));
                             if *day == today {
                                 button = button.fill(ACCENT);
                             }
@@ -761,14 +803,16 @@ impl BrowserApp {
                                 button = button.stroke(Stroke::new(1.0_f32, BLUE));
                             }
                             let mut response = ui.add(button);
-                            if !deadlines.is_empty() {
-                                let tooltip = deadlines
-                                    .iter()
-                                    .map(|deadline| deadline.2.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                response = response.on_hover_text(tooltip);
+                            let mut tooltip = deadlines
+                                .iter()
+                                .map(|deadline| deadline.2.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if let Some(forecast) = self.weather.day_tooltip(*day) {
+                                if !tooltip.is_empty() { tooltip.push('\n'); }
+                                tooltip.push_str(&forecast);
                             }
+                            if !tooltip.is_empty() { response = response.on_hover_text(tooltip); }
                             if response.has_focus() {
                                 self.focus = 2;
                             }
@@ -779,7 +823,7 @@ impl BrowserApp {
                                 }
                             }
                         } else {
-                            ui.allocate_space(egui::vec2(size, 27.0));
+                            ui.allocate_space(egui::vec2(size, weather_height));
                         }
                         if index % 7 == 6 {
                             ui.end_row();
@@ -787,6 +831,7 @@ impl BrowserApp {
                     }
                 });
         }
+        self.weather.selected_day(ui, self.selected_date);
     }
 
     fn shift_month(&mut self, delta: i32) {
@@ -802,7 +847,9 @@ impl BrowserApp {
 
 impl eframe::App for BrowserApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_theme(egui::ThemePreference::Dark);
         ctx.request_repaint_after(Duration::from_secs(1));
+        self.weather.update();
         match browser_storage::take_import() {
             Ok(Some(state)) => self.pending_import = Some(state),
             Ok(None) => {}
@@ -823,11 +870,13 @@ impl eframe::App for BrowserApp {
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::U)) {
             self.use_calculation_result();
+            if ctx.screen_rect().width() < 1040.0 { self.expanded = true; }
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
             self.focus = 3;
             self.focus_calculator = true;
             self.focus_length = false;
+            if ctx.screen_rect().width() < 1040.0 { self.expanded = true; }
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
             self.expanded = !self.expanded;
@@ -863,19 +912,18 @@ impl eframe::App for BrowserApp {
                         self.tool(ui, self.focus, height - 10.0);
                     } else if ui.available_width() >= 1040.0 {
                         ui.columns(2, |columns| {
-                            let lower_height = 300.0;
-                            let upper_height = height - lower_height - 8.0;
-                            self.tool(&mut columns[0], 0, upper_height);
+                            let calendar_height = if self.weather.is_enabled() { 500.0 } else { 300.0 };
+                            self.tool(&mut columns[0], 0, (height - calendar_height - 8.0).max(300.0));
                             columns[0].add_space(8.0);
-                            self.tool(&mut columns[0], 2, lower_height);
-                            self.tool(&mut columns[1], 1, upper_height);
+                            self.tool(&mut columns[0], 2, calendar_height);
+                            self.tool(&mut columns[1], 1, height - 308.0);
                             columns[1].add_space(8.0);
-                            self.tool(&mut columns[1], 3, lower_height);
+                            self.tool(&mut columns[1], 3, 300.0);
                         });
                     } else {
                         for index in [0, 1, 2, 3] {
                             let tool_height = match index {
-                                2 => 300.0,
+                                2 => if self.weather.is_enabled() { 500.0 } else { 300.0 },
                                 3 => 430.0,
                                 _ => 300.0,
                             };

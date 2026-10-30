@@ -8,6 +8,9 @@ import { chromium } from "playwright";
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
 const key = "jig.personal.v1";
+const weatherSettingsKey = "jig.weather.settings.v1";
+const weatherCacheKey = "jig.weather.cache.v1";
+const weatherOrigins = ["https://api.open-meteo.com", "https://geocoding-api.open-meteo.com"];
 const results = resolve("playwright-results");
 await mkdir(results, { recursive: true });
 
@@ -28,37 +31,78 @@ const browser = await chromium.launch({
   args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"],
 });
 
-async function newPage(label, { raw, viewport = { width: 1440, height: 1100 } } = {}) {
+async function newPage(label, {
+  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache,
+} = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true });
-  if (raw !== undefined) {
+  const initial = {};
+  if (raw !== undefined) initial[key] = raw;
+  if (weatherSettings !== undefined) initial[weatherSettingsKey] = JSON.stringify(weatherSettings);
+  if (weatherCache !== undefined) initial[weatherCacheKey] = JSON.stringify(weatherCache);
+  if (Object.keys(initial).length) {
     // Seed once per tab; a reload must exercise the app's actual saved state.
-    await context.addInitScript(({ key, raw, origin }) => {
+    await context.addInitScript(({ initial, origin }) => {
       if (location.origin === origin && sessionStorage.getItem("jig-smoke-seeded") !== "yes") {
-        localStorage.setItem(key, raw);
+        for (const [key, raw] of Object.entries(initial)) localStorage.setItem(key, raw);
         sessionStorage.setItem("jig-smoke-seeded", "yes");
       }
-    }, { key, raw, origin });
+    }, { initial, origin });
+  }
+  for (const provider of weatherOrigins) {
+    await context.route(`${provider}/**`, async route => {
+      // Always intercept providers, including unexpected requests from a disabled
+      // context: these tests never contact a real weather or location service.
+      if (!weather) { await route.abort(); return; }
+      const request = route.request();
+      const url = new URL(request.url());
+      weather.requests.push(url.toString());
+      assert.equal(request.method(), "GET");
+      assert.equal(request.postData(), null, "Application state must not be posted to weather providers");
+      if (url.origin === weatherOrigins[0]) {
+        assert.equal(url.pathname, "/v1/forecast");
+        const allowed = new Set(["latitude", "longitude", "current", "hourly", "daily", "timezone", "forecast_days", "temperature_unit"]);
+        assert.ok([...url.searchParams.keys()].every(key => allowed.has(key)), `Unexpected forecast query fields: ${url.search}`);
+        assert.equal(Number(url.searchParams.get("latitude")), weather.config.latitude);
+        assert.equal(Number(url.searchParams.get("longitude")), weather.config.longitude);
+        assert.equal(url.searchParams.get("temperature_unit"), weather.config.unit);
+        assert.deepEqual(url.searchParams.get("current").split(",").sort(), ["temperature_2m", "relative_humidity_2m", "weather_code"].sort());
+        assert.equal(url.searchParams.get("hourly"), "relative_humidity_2m");
+        assert.deepEqual(url.searchParams.get("daily").split(",").sort(), ["temperature_2m_max", "temperature_2m_min", "precipitation_probability_max", "weather_code"].sort());
+        assert.equal(url.searchParams.get("timezone"), "auto");
+        assert.equal(Number(url.searchParams.get("forecast_days")), 16);
+        if (weather.fail) {
+          await route.fulfill({ status: 503, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: '{"error":true,"reason":"Synthetic provider outage"}' });
+        } else {
+          await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(mockForecast(weather.config)) });
+        }
+      } else {
+        assert.equal(url.pathname, "/v1/search");
+        const allowed = new Set(["name", "count", "language", "format"]);
+        assert.ok([...url.searchParams.keys()].every(key => allowed.has(key)));
+        await route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({ results: [{ id: 12345, name: "Sample Harbor", country: "Example", country_code: "GB", admin1: "Synthetic Region", latitude: 51.5, longitude: -0.12, timezone: "Etc/UTC" }] }) });
+      }
+    });
   }
   const page = await context.newPage();
-  observe(page, label);
+  observe(page, label, weather ? weatherOrigins : []);
   return { context, page };
 }
 
-function observe(page, label) {
+function observe(page, label, allowedExternal = []) {
   pages.push({ page, label });
   page.setDefaultTimeout(15000);
   page.on("pageerror", error => issues.push(`${label}: ${error.message}`));
   page.on("request", request => {
     const url = new URL(request.url());
-    if (!["blob:", "data:", "about:"].includes(url.protocol) && url.origin !== origin) {
+    if (!["blob:", "data:", "about:"].includes(url.protocol) && url.origin !== origin && !allowedExternal.includes(url.origin)) {
       issues.push(`${label}: unexpected external request ${url.origin}${url.pathname}`);
     }
   });
 }
 
-async function boot(page, reload = false) {
+async function boot(page, reload = false, address = base) {
   if (reload) await page.reload({ waitUntil: "load" });
-  else await page.goto(base, { waitUntil: "load" });
+  else await page.goto(address, { waitUntil: "load" });
   await page.waitForFunction(
     () => window.jigReady === true || typeof window.jigBootError === "string",
     undefined,
@@ -106,9 +150,59 @@ async function expectCalculation(page, expression, result, length) {
   }, { key, expression, result, length }, { timeout: 15000 });
 }
 
+function mockForecast(config) {
+  const unit = config.unit;
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const dates = [0, 1].map(offset => new Date(today.getTime() + offset * 86400000).toISOString().slice(0, 10));
+  const fahrenheit = unit === "fahrenheit";
+  return {
+    latitude: config.latitude, longitude: config.longitude, generationtime_ms: 0.1,
+    utc_offset_seconds: 0, timezone: "Etc/UTC", timezone_abbreviation: "UTC", elevation: 10,
+    current_units: { time: "iso8601", interval: "seconds", temperature_2m: fahrenheit ? "°F" : "°C", relative_humidity_2m: "%", weather_code: "wmo code" },
+    current: { time: `${dates[0]}T12:00`, interval: 900, temperature_2m: fahrenheit ? 70.7 : 21.5, relative_humidity_2m: 67, weather_code: 61 },
+    hourly_units: { time: "iso8601", relative_humidity_2m: "%" },
+    hourly: {
+      time: dates.flatMap(date => Array.from({ length: 24 }, (_, hour) => `${date}T${String(hour).padStart(2, "0")}:00`)),
+      relative_humidity_2m: dates.flatMap((_, day) => Array(24).fill(day === 0 ? 67 : 79)),
+    },
+    daily_units: { time: "iso8601", temperature_2m_max: fahrenheit ? "°F" : "°C", temperature_2m_min: fahrenheit ? "°F" : "°C", precipitation_probability_max: "%", weather_code: "wmo code" },
+    daily: { time: dates, temperature_2m_max: fahrenheit ? [73.76, 77.72] : [23.2, 25.4], temperature_2m_min: fahrenheit ? [59.18, 62.96] : [15.1, 17.2], precipitation_probability_max: [78, 12], weather_code: [61, 2] },
+  };
+}
+
+async function expectWeatherCache(page, config) {
+  await page.waitForFunction(({ key, config }) => {
+    try {
+      const cache = JSON.parse(localStorage.getItem(key));
+      return cache.config.name === config.name && cache.config.unit === config.unit
+        && cache.forecast.days.length === 2 && cache.forecast.current !== null;
+    } catch { return false; }
+  }, { key: weatherCacheKey, config });
+  return page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey);
+}
+
+function checkWeather(cache, config) {
+  const raw = mockForecast(config);
+  assert.deepEqual(cache.config, config);
+  assert.equal(cache.forecast.timezone, "Etc/UTC");
+  assert.ok(Number.isFinite(Date.parse(cache.forecast.fetched_at)));
+  assert.equal(cache.forecast.current.temperature, raw.current.temperature_2m);
+  assert.equal(cache.forecast.current.humidity, 67);
+  assert.equal(cache.forecast.current.code, 61);
+  assert.deepEqual(cache.forecast.days.map(day => ({
+    date: day.date, high: day.high, low: day.low,
+    rain: day.rain_probability, humidity: day.humidity_mean, code: day.code,
+  })), raw.daily.time.map((date, index) => ({
+    date, high: raw.daily.temperature_2m_max[index], low: raw.daily.temperature_2m_min[index],
+    rain: raw.daily.precipitation_probability_max[index], humidity: index === 0 ? 67 : 79,
+    code: raw.daily.weather_code[index],
+  })));
+}
+
 try {
   const demo = await newPage("sample-desktop");
-  await boot(demo.page);
+  await boot(demo.page, false, `${base}#weather=Sample%20Harbor`);
   assert.equal(await saved(demo.page), null, "Fresh preview should start with temporary sample data");
   await demo.page.screenshot({ path: resolve(results, "sample-desktop.png") });
   await calculate(demo.page, "1 / 3");
@@ -223,11 +317,73 @@ try {
   assert.deepEqual(JSON.parse(await saved(compact.page)).entries, fixture.entries);
   await compact.page.screenshot({ path: resolve(results, "calculator-units-mobile.png") });
 
+  // Weather is opt-in. Existing contexts reject provider requests, even when
+  // a URL hash prefills a city; all enabled cases below intercept the provider.
+  const celsius = { name: "Sample Harbor", latitude: 51.5, longitude: -0.12, unit: "celsius" };
+  const weatherFixture = { ...fixture, preferences: { ...fixture.preferences, weather: celsius } };
+  const weatherMock = { config: celsius, requests: [] };
+  const weather = await newPage("weather-celsius", {
+    raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: weatherMock,
+  });
+  await boot(weather.page);
+  const cached = await expectWeatherCache(weather.page, celsius);
+  checkWeather(cached, celsius);
+  assert.equal(weatherMock.requests.length, 1, "A configured location needs one forecast request");
+  assert.deepEqual(JSON.parse(await saved(weather.page)).tasks, fixture.tasks);
+  assert.deepEqual(JSON.parse(await saved(weather.page)).history, fixture.history);
+  await weather.page.screenshot({ path: resolve(results, "weather-desktop.png") });
+  await boot(weather.page, true);
+  await weather.page.waitForTimeout(1600);
+  assert.equal(weatherMock.requests.length, 1, "A fresh cached forecast should survive restart without another provider request");
+  checkWeather(await expectWeatherCache(weather.page, celsius), celsius);
+  await weather.page.setViewportSize({ width: 390, height: 844 });
+  await weather.page.waitForTimeout(500);
+  assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await weather.page.screenshot({ path: resolve(results, "weather-compact.png") });
+
+  // A second city/unit configuration is independent and must request Fahrenheit.
+  const fahrenheit = { name: "Sample Ridge", latitude: 35.68, longitude: 139.76, unit: "fahrenheit" };
+  const fahrenheitMock = { config: fahrenheit, requests: [] };
+  const alternate = await newPage("weather-fahrenheit", {
+    raw: JSON.stringify({ ...fixture, preferences: { ...fixture.preferences, weather: fahrenheit } }),
+    weatherSettings: fahrenheit, weather: fahrenheitMock,
+  });
+  await boot(alternate.page);
+  checkWeather(await expectWeatherCache(alternate.page, fahrenheit), fahrenheit);
+  assert.equal(fahrenheitMock.requests.length, 1);
+
+  // Stale readings remain available during an outage, and failed requests must
+  // not be retried at the one-second dashboard repaint rate.
+  const staleCache = structuredClone(cached);
+  staleCache.forecast.fetched_at = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const outageMock = { config: celsius, requests: [], fail: true };
+  const outage = await newPage("weather-stale-outage", {
+    raw: JSON.stringify(weatherFixture), weatherSettings: celsius,
+    weatherCache: staleCache, weather: outageMock,
+  });
+  await boot(outage.page);
+  await outage.page.waitForFunction(key => localStorage.getItem(key) !== null, weatherCacheKey);
+  await outage.page.waitForTimeout(3500);
+  assert.equal(outageMock.requests.length, 1, "An outage must not create a request loop");
+  assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache, "An outage must preserve the last usable forecast");
+  await outage.page.screenshot({ path: resolve(results, "weather-stale.png") });
+
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded calculator input, unrounded calculator-to-converter transfer, precise restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts and compact layout.");
+  console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded calculator input, unrounded calculator-to-converter transfer, precise restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, compact layout, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
 } catch (error) {
   for (const { page, label } of pages) {
     if (!page.isClosed()) {
+      const diagnostics = await page.evaluate(key => ({
+        // These contexts contain only the explicit synthetic fixtures above.
+        saved: localStorage.getItem(key),
+        activeElement: document.activeElement ? {
+          tag: document.activeElement.tagName,
+          id: document.activeElement.id,
+          value: document.activeElement.value ?? null,
+        } : null,
+        viewport: { width: innerWidth, height: innerHeight },
+      }), key).catch(error => ({ unavailable: String(error) }));
+      console.error(`Failure diagnostics (${label}):`, JSON.stringify(diagnostics));
       await page.screenshot({ path: resolve(results, `failure-${label}.png`) }).catch(() => {});
     }
   }

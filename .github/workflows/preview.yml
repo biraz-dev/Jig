@@ -28,6 +28,7 @@ jobs:
         run: |
           test -f dist/index.html
           test -f dist/bridge.js
+          test -f dist/weather.js
           test -f dist/preview.css
           test -n "$(find dist -name '*.wasm' -print -quit)"
           if find dist -type f \( -name 'jig.json' -o -name '*.md' -o -name '*.lock' -o -name '.env*' \) | grep .; then exit 1; fi
@@ -44,11 +45,13 @@ jobs:
       - name: Inspect sample rendering
         if: always()
         run: |
-          if test -f playwright-results/sample-desktop.png; then
-            echo JIG_SAMPLE_RENDER_BEGIN
-            base64 -w 76 playwright-results/sample-desktop.png
-            echo JIG_SAMPLE_RENDER_END
-          fi
+          for rendering in sample-desktop weather-desktop weather-stale; do
+            if test -f "playwright-results/$rendering.png"; then
+              echo "JIG_RENDER_BEGIN_$rendering"
+              base64 -w 76 "playwright-results/$rendering.png"
+              echo "JIG_RENDER_END_$rendering"
+            fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

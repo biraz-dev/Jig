@@ -6,6 +6,13 @@ mod browser_storage;
 mod web;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../weather_client.rs"]
+mod weather_client;
+#[cfg(target_arch = "wasm32")]
+#[path = "../weather_ui.rs"]
+mod weather_ui;
+
+#[cfg(target_arch = "wasm32")]
 fn main() {
     use wasm_bindgen::{JsCast, JsValue};
     wasm_bindgen_futures::spawn_local(async {

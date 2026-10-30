@@ -428,7 +428,7 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
                 " JIG ",
                 Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" / artist's workbench", Style::default().fg(MUTED)),
+            Span::styled(" / You are a small Small Giant Psionicist.", Style::default().fg(MUTED)),
             Span::raw(format!(
                 "   {}   • local",
                 Local::now().format("%a %d %b %Y  %H:%M:%S")

@@ -1,6 +1,7 @@
 /* Optional Open-Meteo access. No task, deadline or calculation data is sent. */
 (() => {
   "use strict";
+  window.jigWeatherErrorText = error => String(error?.message ?? error);
   const settingsKey = "jig.weather.settings.v1";
   const cacheKey = "jig.weather.cache.v1";
   let forecast = null, forecastError = null, places = null, placesError = null;

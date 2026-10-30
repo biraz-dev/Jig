@@ -137,6 +137,16 @@ fn hybrid_history_preserves_units_precision_and_old_state_files() {
         assert!(invalid.validate().is_err(), "{bad_unit}");
         assert!(State::from_json(&serde_json::to_string(&invalid).unwrap()).is_err());
     }
+
+    // This conversion is just below 3.81 in binary floating point. Reading its
+    // JSON must preserve the exact value, including across repeated restarts.
+    let mut fractional = State::default();
+    fractional.calculate("1 1/2 in cm").unwrap();
+    let expected_bits = fractional.history[0].result.to_bits();
+    for _ in 0..3 {
+        fractional = State::from_json(&serde_json::to_string(&fractional).unwrap()).unwrap();
+        assert_eq!(fractional.history[0].result.to_bits(), expected_bits);
+    }
 }
 #[test]
 fn task_lifecycle_and_reordering() {

@@ -10,8 +10,8 @@ all application data on your device.
 ![Jig terminal dashboard — sample data](docs/sample-dashboard.svg)
 
 The image above renders the Ratatui dashboard with clearly labelled sample data.
-The browser preview uses the same five instruments and the approved visual
-direction.
+The browser preview puts the same five utilities into four compact panels,
+combining the calculator and length converter.
 The [browser preview](https://biraz-dev.github.io/Jig/) is deployed from `main`
 through GitHub Actions. Fresh visitors see clearly labelled sample data.
 
@@ -63,6 +63,17 @@ tool buttons to focus an instrument, **F2** to expand it, and **Esc** to return 
 the dashboard. **Ctrl-Alt-4** focuses the calculator input; **Ctrl-Alt-N** opens the
 start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate controls. On narrow screens the
 panels stack vertically; inline forms and individual panels can scroll.
+
+The calculator and converter share one panel. The converter occupies half the
+former column width; **Use result** or **Ctrl-Alt-U** copies the latest calculator
+result into its current source unit without rounding. **Open** expands a tool and
+**close** returns to the dashboard.
+
+The browser calendar is a month grid with today and deadline dates highlighted.
+Click a deadline date to feature its earliest deadline; choosing a deadline star
+shows that date in the calendar. Calendar note controls and markers are hidden
+in this view. Existing notes remain in saved/imported/exported data and are still
+available through the native CLI and terminal dashboard.
 
 Browser imports and saves have a 2 MiB limit. Invalid saved data is preserved and
 reported. If a save fails, edits remain in memory and **Retry save** becomes

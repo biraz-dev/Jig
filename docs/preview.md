@@ -3,7 +3,9 @@
 The egui/eframe browser dashboard now uses the same Rust calculator, length,
 task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows
 the approved two-column composition on wide screens, stacks panels on narrow
-screens, and can expand one instrument. CRUD forms stay inline. There is no
+screens, and can expand one instrument. Calculator and length conversion share
+one panel, with the converter taking half its former width. Task and deadline
+forms stay inline. There is no
 backend, account, telemetry or data upload.
 
 A single crate remains sufficient. Default Cargo features build the native
@@ -77,9 +79,17 @@ view; Esc returns to all tools. Ctrl-Alt-4 focuses calculator input, and
 Ctrl-Alt-N opens the start-empty confirmation. Tab/Shift-Tab navigate controls;
 normal mouse and text editing work. Calculator history results can be clicked
 to reuse their full precision. Task arrows reorder the checklist, deadline stars
-choose the featured countdown, and calendar date buttons show local notes and
-deadlines. Times display in the device's timezone; deadline input requires a
-qualified RFC3339 time.
+choose the featured countdown and reveal its date in the calendar. The calendar
+is a month grid only: today is highlighted, deadline dates are accented, and
+clicking a deadline date features its earliest deadline. Hover shows matching
+deadline titles. Entry forms and markers are hidden, while existing entries
+remain intact in stored state and JSON exports. Times display in the device's
+timezone; deadline input requires a qualified RFC3339 time.
+
+The **Use result** button or Ctrl-Alt-U transfers the last calculator result into
+the converter's current source unit without rounding. It does not add a history
+record. The **open** / **close** buttons expand an instrument and return to the
+four-panel dashboard.
 
 ## GitHub Actions and Pages
 

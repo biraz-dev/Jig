@@ -84,6 +84,16 @@ async function calculate(page, expression) {
   await page.keyboard.press("Enter");
 }
 
+async function expectTransferredInput(page, result, unit) {
+  // Copy through the ordinary focused text field, not a test-only state hook.
+  await page.evaluate(() => navigator.clipboard.writeText("Jig copy pending"));
+  await page.keyboard.press("Control+Alt+u");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+c");
+  await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, `${result}${unit}`);
+}
+
 async function expectCalculation(page, expression, result, length) {
   await page.waitForFunction(({ key, expression, result, length }) => {
     try {
@@ -100,20 +110,40 @@ try {
   const demo = await newPage("sample-desktop");
   await boot(demo.page);
   assert.equal(await saved(demo.page), null, "Fresh preview should start with temporary sample data");
+  await demo.page.screenshot({ path: resolve(results, "sample-desktop.png") });
   await calculate(demo.page, "1 / 3");
   await demo.page.waitForTimeout(1200);
   assert.equal(await saved(demo.page), null, "Editing sample data must not create personal browser state");
-  await demo.page.screenshot({ path: resolve(results, "sample-desktop.png") });
 
   const personal = await newPage("personal-desktop", { raw: fixtureRaw });
   await boot(personal.page);
   assert.equal(await saved(personal.page), fixtureRaw, "Opening personal state must not rewrite it");
   await calculate(personal.page, "1 / 3");
   await expectCalculation(personal.page, "1 / 3", 1 / 3, 2);
+  await personal.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await expectTransferredInput(personal.page, 1 / 3, "in");
+  // A calculator result becomes a length in the current source unit without
+  // rounding to its two-decimal display or resetting the user's chosen unit.
+  await personal.page.keyboard.type("2cm", { delay: 15 });
+  await expectTransferredInput(personal.page, 1 / 3, "cm");
+  assert.equal(JSON.parse(await saved(personal.page)).history.length, 2, "Transferring a result must not create a calculation");
+  assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Hiding calendar entries must not delete saved notes");
   await boot(personal.page, true);
   assert.equal(JSON.parse(await saved(personal.page)).history.at(-1).result, 1 / 3);
+  assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Calendar notes must survive restart while hidden");
   await calculate(personal.page, "ans * 3");
   await expectCalculation(personal.page, "ans * 3", 1, 3);
+
+  // The merged calculator/converter must work in both its expanded and closed
+  // dashboard forms, with no extra history records caused by switching views.
+  await personal.page.keyboard.press("F2");
+  await calculate(personal.page, "3 / 8");
+  await expectCalculation(personal.page, "3 / 8", 0.375, 4);
+  await personal.page.screenshot({ path: resolve(results, "calculator-units-expanded.png") });
+  await personal.page.keyboard.press("F2");
+  await calculate(personal.page, "ans * 8");
+  await expectCalculation(personal.page, "ans * 8", 3, 5);
+  assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Combined-tool interactions must preserve hidden calendar notes");
   await personal.page.screenshot({ path: resolve(results, "personal-desktop.png") });
 
   // Exercise the public file bridge: export is a local browser download.
@@ -124,7 +154,9 @@ try {
   assert.equal(download.suggestedFilename(), "jig.json");
   const downloadPath = await download.path();
   assert.ok(downloadPath);
-  assert.deepEqual(JSON.parse(await readFile(downloadPath, "utf8")), JSON.parse(exportRaw));
+  const exported = JSON.parse(await readFile(downloadPath, "utf8"));
+  assert.deepEqual(exported, JSON.parse(exportRaw));
+  assert.deepEqual(exported.entries, fixture.entries, "JSON export must retain hidden calendar notes");
 
   // The actual hidden file input queues imports for the Rust UI to validate.
   for (const [name, contents] of [["broken.json", "{broken"], ["unrelated.json", "{}"]]) {
@@ -182,9 +214,17 @@ try {
   assert.equal(await saved(compact.page), null);
   assert.equal(await compact.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await compact.page.screenshot({ path: resolve(results, "sample-mobile.png") });
+  // Reload explicit synthetic personal state so narrow-screen keyboard input
+  // is verified through a real saved result rather than only a screenshot.
+  await compact.page.evaluate(text => window.jigSave(text), fixtureRaw);
+  await boot(compact.page, true);
+  await calculate(compact.page, "12 * 1.5");
+  await expectCalculation(compact.page, "12 * 1.5", 18, 2);
+  assert.deepEqual(JSON.parse(await saved(compact.page)).entries, fixture.entries);
+  await compact.page.screenshot({ path: resolve(results, "calculator-units-mobile.png") });
 
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: WASM startup, sample isolation, real calculator input, precise restart persistence, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts and compact layout.");
+  console.log("Browser smoke passed: WASM startup, sample isolation, real compact/expanded calculator input, unrounded calculator-to-converter transfer, precise restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts and compact layout.");
 } catch (error) {
   for (const { page, label } of pages) {
     if (!page.isClosed()) {

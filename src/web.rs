@@ -129,6 +129,10 @@ impl BrowserApp {
                 "Sample edit applied; demo data is temporary. Export JSON to keep a copy.".into();
         } else {
             self.dirty = true;
+            if self.storage_error {
+                self.status = "Stored data could not be decoded and has been preserved. Export your current work, then explicitly import a valid file or confirm Start empty before saving.".into();
+                return;
+            }
             match browser_storage::save(&self.state) {
                 Ok(()) => {
                     self.dirty = false;
@@ -166,8 +170,32 @@ impl BrowserApp {
     fn replace_personal(&mut self, state: State) {
         self.state = state;
         self.demo = false;
+        // This path is reached only after explicit replacement confirmation.
+        self.storage_error = false;
         self.reset_editors();
         self.changed();
+    }
+
+    fn open_local(&mut self) {
+        if self.dirty {
+            self.status =
+                "Save your changes before opening another dataset. If saving is unavailable, export JSON, then reload to reopen the saved copy."
+                    .into();
+        } else {
+            match browser_storage::load() {
+                Ok(state) => {
+                    self.state = state.unwrap_or_default();
+                    self.demo = false;
+                    self.storage_error = false;
+                    self.reset_editors();
+                    self.status = "Opened your browser-local data.".into();
+                }
+                Err(error) => {
+                    self.storage_error = true;
+                    self.status = format!("Stored data is preserved: {error}");
+                }
+            }
+        }
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
@@ -198,30 +226,12 @@ impl BrowserApp {
                 self.confirm = Some(Confirm::Empty);
             }
             if ui.button("Open local data").clicked() {
-                if self.dirty {
-                    self.status =
-                        "Save or export your unsaved changes before opening another dataset."
-                            .into();
-                } else {
-                    match browser_storage::load() {
-                        Ok(state) => {
-                            self.state = state.unwrap_or_default();
-                            self.demo = false;
-                            self.storage_error = false;
-                            self.reset_editors();
-                            self.status = "Opened your browser-local data.".into();
-                        }
-                        Err(error) => {
-                            self.storage_error = true;
-                            self.status = format!("Stored data is preserved: {error}");
-                        }
-                    }
-                }
+                self.open_local();
             }
             if ui.button("Sample mode").clicked() {
                 if self.dirty {
                     self.status =
-                        "Save or export unsaved changes before switching to sample mode.".into();
+                        "Save your changes before switching to sample mode. If saving is unavailable, export JSON, then reload before switching.".into();
                 } else {
                     self.state = jig::sample::state(Utc::now());
                     self.demo = true;
@@ -834,6 +844,9 @@ impl eframe::App for BrowserApp {
         };
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::N)) {
             self.confirm = Some(Confirm::Empty);
+        }
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
+            self.open_local();
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
             self.focus = 3;

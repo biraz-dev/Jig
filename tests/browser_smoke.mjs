@@ -143,6 +143,19 @@ try {
   assert.equal(await saved(malformed.page), malformedRaw, "Malformed saved state must remain available for recovery");
   await malformed.page.screenshot({ path: resolve(results, "malformed-preserved.png") });
 
+  // A failed explicit reload in an already-personal session must not acknowledge
+  // malformed raw data and then overwrite it on the next ordinary edit.
+  const laterCorrupt = await newPage("later-corrupt-preserved", { raw: fixtureRaw });
+  await boot(laterCorrupt.page);
+  await laterCorrupt.page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key, raw: malformedRaw });
+  await laterCorrupt.page.bringToFront();
+  await laterCorrupt.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await laterCorrupt.page.keyboard.press("Control+Alt+o");
+  await laterCorrupt.page.waitForTimeout(500);
+  await calculate(laterCorrupt.page, "10 + 5");
+  await laterCorrupt.page.waitForTimeout(1200);
+  assert.equal(await saved(laterCorrupt.page), malformedRaw, "Failed reload allowed a later edit to overwrite corrupt data");
+
   // Two tabs share one storage area; stale public bridge writes must be rejected.
   const shared = await newPage("cross-tab-first");
   await boot(shared.page);

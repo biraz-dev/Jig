@@ -117,3 +117,7 @@ from the current clock when it runs again. Improve narrow layouts and resolve
 observed issues before adding more utilities. A native graphical interface,
 service worker, synchronization service and additional tools are not part of
 this preview.
+
+`Ctrl+Alt+O` reopens the saved local dataset. If it cannot be decoded, normal edits
+remain in memory and do not overwrite the saved raw data; export your work before
+an explicitly confirmed replacement.

@@ -133,7 +133,13 @@ fn imported_history_rejects_terminal_controls_and_preserves_ascii_whitespace() {
 
 #[test]
 fn portable_decoder_rejects_unrelated_or_partial_json() {
-    for bad in ["{}", "[]", "null", "{\"name\":\"some other application\",\"version\":1}", "{\"version\":1}"] {
+    for bad in [
+        "{}",
+        "[]",
+        "null",
+        "{\"name\":\"some other application\",\"version\":1}",
+        "{\"version\":1}",
+    ] {
         assert!(State::from_json(bad).is_err());
     }
     let sample = jig::sample::state(Utc::now());

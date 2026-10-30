@@ -90,12 +90,24 @@ pub fn countdown(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
 impl State {
     /// Decode the portable file format. Unrelated JSON must not become empty state.
     pub fn from_json(text: &str) -> Result<Self> {
-        let value: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("Invalid state file: {e}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| format!("Invalid state file: {e}"))?;
         let fields = value.as_object().ok_or("Expected a Jig JSON object")?;
-        for key in ["version", "preferences", "history", "tasks", "deadlines", "entries", "featured"] {
-            if !fields.contains_key(key) { return Err(format!("Not a complete Jig state file: missing {key}")); }
+        for key in [
+            "version",
+            "preferences",
+            "history",
+            "tasks",
+            "deadlines",
+            "entries",
+            "featured",
+        ] {
+            if !fields.contains_key(key) {
+                return Err(format!("Not a complete Jig state file: missing {key}"));
+            }
         }
-        let state: Self = serde_json::from_value(value).map_err(|e| format!("Invalid state file: {e}"))?;
+        let state: Self =
+            serde_json::from_value(value).map_err(|e| format!("Invalid state file: {e}"))?;
         state.validate()?;
         Ok(state)
     }

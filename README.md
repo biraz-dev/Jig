@@ -79,12 +79,21 @@ for another target, such as `1828.8 mm in`.
 
 The browser uses one checklist. Add a task, give it an optional due date, then
 star it to drive the large countdown. Starring an undated task opens its date
-editor first. Completing a dated task clears its star and calendar marker;
+editor first. Completing a dated task clears its star and subdues its calendar mark;
 deleting it also removes its linked date. Previously saved deadlines appear in
 the same list without rewriting the saved file merely to display them.
 
-The compact calendar shows day numbers, today and active due dates. Click a day
-to see its weather details beneath the grid; calendar selection does not change
+Give a dated task a color using its inline swatch: Rose, Amber, Sage, Blue or
+Lilac, or leave it neutral. The same color appears beside the task and as a
+small mark on its due date only. Dates with several tasks show separate marks;
+dense dates show a count for additional tasks. Completed tasks retain a subdued,
+hollow mark. Colors travel with task data in JSON; older files without colors
+load as neutral.
+
+The compact calendar shows day numbers, today and due-date marks. Click or tap a
+day, or use Tab then Enter/Space, to see its task names, Open/Done status and
+weather details beneath the grid. The list scrolls within the panel when needed.
+Calendar selection does not change
 the starred task. Starring a dated task reveals its day in the calendar. Calendar
 note controls and markers stay hidden; existing notes remain in saved/imported/
 exported data and are still available through the native CLI and terminal.
@@ -121,7 +130,7 @@ disable it at any time. Settings stay in this browser; personal JSON exports
 also carry the chosen weather preference. Changing weather in sample mode does
 not save the sample checklist as personal data.
 
-The month grid stays compact and contains only days. Select a date for forecast
+The month grid stays compact with day numbers and task marks. Select a date for forecast
 high/low, rain probability and mean relative humidity beneath the grid. Dates
 outside the returned forecast range have no forecast. Calendar entry controls
 remain hidden and existing entries are preserved.

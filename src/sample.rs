@@ -1,5 +1,5 @@
 //! Synthetic preview data. This module never reads or writes personal state.
-use crate::model::State;
+use crate::model::{State, TaskColor};
 use chrono::{DateTime, Duration, Utc};
 
 /// Build repeatable sample data around a supplied clock value.
@@ -23,14 +23,16 @@ pub fn state(now: DateTime<Utc>) -> State {
             state.toggle_task(id).expect("Sample task was just added");
         }
     }
-    for (title, offset) in [
+    for (title, offset, color) in [
         (
             "Sample: final casting",
             Duration::days(8) + Duration::hours(14),
+            TaskColor::Rose,
         ),
         (
             "Sample: photography",
             Duration::days(13) + Duration::hours(15),
+            TaskColor::Amber,
         ),
         (
             "Sample: exhibition installation",
@@ -38,12 +40,19 @@ pub fn state(now: DateTime<Utc>) -> State {
                 + Duration::hours(17)
                 + Duration::minutes(30)
                 + Duration::seconds(42),
+            TaskColor::Sage,
         ),
     ] {
         let at = now.checked_add_signed(offset).unwrap_or(now);
         let id = state
             .set_deadline(None, title, &at.to_rfc3339())
             .expect("Built-in sample deadline is valid");
+        let task = state
+            .ensure_task_for_deadline(id)
+            .expect("Sample deadline was just added");
+        state
+            .set_task_color(task, Some(color))
+            .expect("Sample task has a date");
         state.feature(id).expect("Sample deadline was just added");
     }
     for title in ["Sample: studio work", "Sample: mould preparation"] {

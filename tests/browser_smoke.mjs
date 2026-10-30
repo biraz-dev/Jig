@@ -65,6 +65,9 @@ async function capture(page, name) {
     "consolidated-mobile", "consolidated-six-weeks", "consolidated-data-open",
     "consolidated-math-maximized", "consolidated-calendar-maximized",
     "consolidated-checklist-maximized", "consolidated-dated-task",
+    "task-colors-desktop", "task-colors-mobile", "task-colors-six-weeks",
+    "task-colors-calendar-empty", "task-colors-mobile-touch",
+    "task-colors-list-scroll",
   ]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
@@ -81,9 +84,9 @@ const browser = await chromium.launch({
 });
 
 async function newPage(label, {
-  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime,
+  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime, hasTouch = false,
 } = {}) {
-  const context = await browser.newContext({ viewport, acceptDownloads: true });
+  const context = await browser.newContext({ viewport, acceptDownloads: true, hasTouch, timezoneId: "Etc/UTC" });
   await context.addInitScript(() => {
     // Browser event diagnostics only; this does not expose or change Rust state.
     window.jigSmokeEvents = [];
@@ -192,6 +195,50 @@ async function boot(page, reload = false, address = base) {
 
 async function saved(page) {
   return page.evaluate(key => localStorage.getItem(key), key);
+}
+
+async function tab(page, count = 1) {
+  for (let index = 0; index < count; index++) {
+    await page.keyboard.press("Tab");
+    await paint(page);
+  }
+}
+
+async function maximizeApplet(page, applet) {
+  // Reset to the dashboard and surrender editor focus through normal shortcuts.
+  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press("Escape");
+  await paint(page);
+  await page.keyboard.press("Control+Alt+4");
+  await paint(page);
+  await page.keyboard.press("Escape");
+  await paint(page);
+  for (let index = 0; index < (applet === "calendar" ? 2 : 1); index++) {
+    await page.keyboard.press("ArrowLeft");
+    await paint(page);
+  }
+  await page.keyboard.press("Control+m");
+  await paint(page);
+}
+
+function taskColorFixture(date = "2026-10-30") {
+  const names = ["casting studies", "photograph sculptures", "glaze tests", "print labels", "pack studio tools", "clear workbench", "collect supplies", "review proofs"];
+  const colors = ["rose", "amber", "sage", "blue", "lilac", undefined, "rose", "amber"];
+  const tomorrow = new Date(`${date}T12:00:00Z`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const nextDate = tomorrow.toISOString().slice(0, 10);
+  const tasks = names.map((name, index) => ({
+    id: index + 1, text: `Sample: ${name}`, complete: index >= 6, deadline: 101 + index,
+    ...(colors[index] ? { color: colors[index] } : {}),
+  }));
+  tasks.push({ id: 9, text: "Sample: exhibition opening", complete: false, deadline: 109, color: "lilac" });
+  return {
+    ...fixture,
+    tasks,
+    deadlines: tasks.map(task => ({ id: task.deadline, title: task.text, at: `${task.id === 9 ? nextDate : date}T18:00:00Z` })),
+    entries: [{ ...fixture.entries[0], id: 200 }],
+    featured: 109,
+  };
 }
 
 async function calculate(page, expression) {
@@ -422,7 +469,9 @@ try {
   assert.deepEqual(exported.entries, fixture.entries, "JSON export must retain hidden calendar notes");
 
   // The actual hidden file input queues imports for the Rust UI to validate.
-  for (const [name, contents] of [["broken.json", "{broken"], ["unrelated.json", "{}"]]) {
+  const invalidColor = structuredClone(fixture);
+  invalidColor.tasks[0].color = "neon";
+  for (const [name, contents] of [["broken.json", "{broken"], ["unrelated.json", "{}"], ["invalid-color.json", JSON.stringify(invalidColor)]]) {
     await personal.page.locator("#jig-import").setInputFiles({
       name, mimeType: "application/json", buffer: Buffer.from(contents),
     });
@@ -480,6 +529,147 @@ try {
   await paint(linked.page);
   await capture(linked.page, "consolidated-dated-task");
   await release(linked.context, "dated-task-desktop");
+
+  // The task colors live on the existing linked task records. One busy date has
+  // all five colors, a neutral task and completed work; the separate starred task
+  // must remain featured when inspecting or editing this date.
+  const coloredFixture = taskColorFixture();
+  const coloredRaw = JSON.stringify(coloredFixture);
+  const colored = await newPage("task-colors-desktop", {
+    raw: coloredRaw, viewport: { width: 1440, height: 1000 }, fixedTime: "2026-10-30T12:00:00Z",
+  });
+  await boot(colored.page);
+  assert.equal(await saved(colored.page), coloredRaw, "Opening colored tasks must not migrate or rewrite them");
+  await capture(colored.page, "task-colors-desktop");
+
+  progress("select calendar dates using keyboard without changing the featured task");
+  await maximizeApplet(colored.page, "calendar");
+  // Data, Source, previous month, next month, Today, then October 1.
+  await tab(colored.page, 6);
+  await colored.page.keyboard.press("Space");
+  await paint(colored.page);
+  await capture(colored.page, "task-colors-calendar-empty");
+  const emptyDayRender = await colored.page.screenshot();
+  await tab(colored.page, 29);
+  await colored.page.keyboard.press("Enter");
+  await paint(colored.page);
+  assert.notDeepEqual(await colored.page.screenshot(), emptyDayRender, "Keyboard date activation must visibly update the calendar");
+  assert.equal(await saved(colored.page), coloredRaw, "Calendar date selection must not edit tasks, colors or the featured countdown");
+  // After October 30: October 31, then the eight noninteractive due-task rows.
+  // The last completed row starts below the list's 120px viewport; keyboard
+  // focus must reveal it without needing a pointer or changing its status.
+  const beforeListScroll = await colored.page.screenshot();
+  await tab(colored.page, 9);
+  assert.notDeepEqual(await colored.page.screenshot(), beforeListScroll, "Tab navigation must visibly reveal the end of the compact task list");
+  await capture(colored.page, "task-colors-list-scroll");
+  assert.equal(await saved(colored.page), coloredRaw, "Inspecting a completed calendar row must not mutate task data");
+
+  progress("choose a task color through the inline keyboard palette");
+  await maximizeApplet(colored.page, "checklist");
+  // Data, Source, first row's star, checkbox, then its color swatch.
+  await tab(colored.page, 5);
+  await colored.page.keyboard.press("Space");
+  await paint(colored.page);
+  // Date, edit, enabled down, del, None, Rose, Amber.
+  await tab(colored.page, 7);
+  await colored.page.keyboard.press("Space");
+  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "amber", key);
+  let coloredState = JSON.parse(await saved(colored.page));
+  assert.equal(coloredState.tasks.length, 9, "Color changes must not create checklist copies");
+  assert.equal(coloredState.deadlines.length, 9, "Color changes must reuse linked deadline records");
+  assert.equal(coloredState.featured, 109, "Color changes must not feature another task");
+
+  progress("move a colored task to another due date using its date editor");
+  await maximizeApplet(colored.page, "checklist");
+  await tab(colored.page, 6); // First row date, after its swatch.
+  await colored.page.keyboard.press("Space");
+  await colored.page.waitForTimeout(250);
+  await colored.page.keyboard.press("Control+a");
+  await colored.page.keyboard.type("2026-10-31T18:00:00Z", { delay: 10 });
+  await colored.page.keyboard.press("Enter");
+  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines.find(deadline => deadline.id === 101).at === "2026-10-31T18:00:00Z", key);
+  coloredState = JSON.parse(await saved(colored.page));
+  assert.equal(coloredState.tasks[0].deadline, 101);
+  assert.equal(coloredState.tasks[0].color, "amber");
+  assert.equal(coloredState.deadlines.length, 9);
+  assert.equal(coloredState.featured, 109, "Editing a different deadline must preserve the starred task");
+
+  progress("complete a colored dated task, then reload its saved state");
+  await maximizeApplet(colored.page, "checklist");
+  await tab(colored.page, 4); // First row checkbox.
+  await colored.page.keyboard.press("Space");
+  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, key);
+  coloredState = JSON.parse(await saved(colored.page));
+  assert.equal(coloredState.tasks[0].color, "amber", "Completion must retain a task's color");
+  assert.equal(coloredState.featured, 109);
+  await boot(colored.page, true);
+  assert.deepEqual(JSON.parse(await saved(colored.page)), coloredState, "Colors, changed dates and completion must survive restart");
+
+  progress("export colored task data through the actual Data control");
+  await maximizeApplet(colored.page, "checklist");
+  await colored.page.keyboard.press("Escape");
+  await paint(colored.page);
+  await colored.page.keyboard.press("Control+Alt+d");
+  await paint(colored.page);
+  // Data, Start empty, Open local, Sample mode, Import JSON, Export JSON.
+  await tab(colored.page, 6);
+  const coloredDownloadEvent = colored.page.waitForEvent("download");
+  await colored.page.keyboard.press("Space");
+  const coloredDownload = await coloredDownloadEvent;
+  assert.equal(coloredDownload.suggestedFilename(), "jig.json");
+  const coloredExport = JSON.parse(await readFile(await coloredDownload.path(), "utf8"));
+  assert.deepEqual(coloredExport, coloredState, "JSON export must include colors and completion on the original task records");
+  await colored.page.keyboard.press("Control+Alt+d");
+  await paint(colored.page);
+  await colored.page.keyboard.press("Escape");
+
+  progress("import colored JSON through the actual file control and confirmation");
+  const importedColors = structuredClone(coloredExport);
+  importedColors.tasks[0].color = "blue";
+  await colored.page.locator("#jig-import").setInputFiles({
+    name: "sample-colored-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(importedColors)),
+  });
+  await colored.page.waitForTimeout(1600);
+  assert.deepEqual(JSON.parse(await saved(colored.page)), coloredState, "Import must wait for confirmation");
+  // With Data collapsed: Data, Confirm import. The file selection only queues
+  // the import; the Rust UI must validate and explicitly accept it.
+  await tab(colored.page, 2);
+  await colored.page.keyboard.press("Space");
+  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "blue", key);
+  assert.deepEqual(JSON.parse(await saved(colored.page)), importedColors, "Valid JSON import must preserve all linked task records, colors and status");
+  await boot(colored.page, true);
+  assert.deepEqual(JSON.parse(await saved(colored.page)), importedColors);
+  await release(colored.context, "task-colors-desktop");
+
+  const coloredMobile = await newPage("task-colors-mobile", {
+    raw: coloredRaw, viewport: { width: 390, height: 844 }, hasTouch: true, fixedTime: "2026-10-30T12:00:00Z",
+  });
+  await boot(coloredMobile.page);
+  await maximizeApplet(coloredMobile.page, "calendar");
+  await tab(coloredMobile.page, 6);
+  await coloredMobile.page.keyboard.press("Space"); // October 1 is empty.
+  await paint(coloredMobile.page);
+  const beforeTouch = await coloredMobile.page.screenshot();
+  // In the fixed 390px maximized calendar, October 30 is Friday in row five.
+  // This canvas fixture coordinate is checked against the captured date header
+  // during visual review; no JavaScript hook selects or mutates application data.
+  await coloredMobile.page.touchscreen.tap(247, 303);
+  await paint(coloredMobile.page);
+  assert.notDeepEqual(await coloredMobile.page.screenshot(), beforeTouch, "Touching another date must visibly update the calendar");
+  await capture(coloredMobile.page, "task-colors-mobile-touch");
+  assert.equal(await saved(coloredMobile.page), coloredRaw, "Touch date selection must preserve the starred task and all task data");
+  await coloredMobile.page.keyboard.press("Escape");
+  await paint(coloredMobile.page);
+  assert.equal(await coloredMobile.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await capture(coloredMobile.page, "task-colors-mobile");
+  await release(coloredMobile.context, "task-colors-mobile");
+
+  const coloredSixWeeks = await newPage("task-colors-six-weeks", {
+    raw: JSON.stringify(taskColorFixture("2026-11-01")), viewport: { width: 1440, height: 1000 }, fixedTime: "2026-11-01T12:00:00Z",
+  });
+  await boot(coloredSixWeeks.page);
+  await capture(coloredSixWeeks.page, "task-colors-six-weeks");
+  await release(coloredSixWeeks.context, "task-colors-six-weeks");
 
   const medium = await newPage("personal-medium", {
     raw: fixtureRaw, viewport: { width: 1024, height: 768 },
@@ -628,7 +818,7 @@ try {
   await release(outage.context, "weather-stale-outage");
 
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: WASM startup, sample isolation, inline Data with math input, Ctrl+M maximize/restore, arrow applet navigation and caret editing, hybrid math and conversion input, fractions, unrounded ans reuse, unit-aware restart persistence, invalid conversion preservation, dated-task star and restart persistence, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, desktop/medium/mobile layouts, six-week weather calendar, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
+  console.log("Browser smoke passed: WASM startup, sample isolation, inline Data with math input, Ctrl+M maximize/restore, arrow applet navigation and caret editing, hybrid math and conversion input, fractions, unrounded ans reuse, unit-aware restart persistence, invalid conversion preservation, dated-task star and restart persistence, task color palette/date/completion edits and reload, multi-deadline keyboard/touch calendar selection without featured changes, colored JSON export/import and invalid-color rejection, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, desktop/medium/mobile layouts, six-week weather calendar, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`);
   // Earlier completed cases already have screenshots; avoid multiplying failure

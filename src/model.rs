@@ -1,5 +1,5 @@
 use crate::{units, weather::WeatherConfig, workbench, Result};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -26,6 +26,29 @@ impl Calculation {
         }
     }
 }
+/// A small named palette; rendering adapters choose its display colors.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskColor {
+    Rose,
+    Amber,
+    Sage,
+    Blue,
+    Lilac,
+}
+impl TaskColor {
+    pub const ALL: [Self; 5] = [Self::Rose, Self::Amber, Self::Sage, Self::Blue, Self::Lilac];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rose => "Rose",
+            Self::Amber => "Amber",
+            Self::Sage => "Sage",
+            Self::Blue => "Blue",
+            Self::Lilac => "Lilac",
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: u64,
@@ -33,6 +56,17 @@ pub struct Task {
     pub complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<TaskColor>,
+}
+/// A read-only calendar view, derived from existing task/deadline records.
+#[derive(Clone, Copy, Debug)]
+pub struct CalendarTask<'a> {
+    pub task_id: Option<u64>,
+    pub deadline_id: u64,
+    pub title: &'a str,
+    pub complete: bool,
+    pub color: Option<TaskColor>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Deadline {
@@ -218,6 +252,7 @@ impl State {
             text: title(text)?,
             complete: false,
             deadline: None,
+            color: None,
         });
         Ok(id)
     }
@@ -279,6 +314,40 @@ impl State {
     pub fn task_deadline(&self, id: u64) -> Option<&Deadline> {
         let deadline = self.tasks.iter().find(|task| task.id == id)?.deadline?;
         self.deadlines.iter().find(|item| item.id == deadline)
+    }
+    /// Color belongs to the task and survives completion or temporarily removing its date.
+    pub fn set_task_color(&mut self, id: u64, color: Option<TaskColor>) -> Result<()> {
+        let index = self
+            .tasks
+            .iter()
+            .position(|task| task.id == id)
+            .ok_or("Task not found")?;
+        if color.is_some() && self.task_deadline(id).is_none() {
+            return Err("Add a date before assigning a task color".into());
+        }
+        self.tasks[index].color = color;
+        Ok(())
+    }
+    /// Only the due date is represented, including completed tasks and legacy deadlines.
+    /// This projection never materializes tasks or changes the featured countdown.
+    pub fn tasks_on_date<Tz: TimeZone>(&self, date: NaiveDate, timezone: &Tz) -> Vec<CalendarTask<'_>> {
+        self.deadlines
+            .iter()
+            .filter(|deadline| deadline.at.with_timezone(timezone).date_naive() == date)
+            .map(|deadline| {
+                let task = self
+                    .tasks
+                    .iter()
+                    .find(|task| task.deadline == Some(deadline.id));
+                CalendarTask {
+                    task_id: task.map(|task| task.id),
+                    deadline_id: deadline.id,
+                    title: task.map_or(deadline.title.as_str(), |task| task.text.as_str()),
+                    complete: task.is_some_and(|task| task.complete),
+                    color: task.and_then(|task| task.color),
+                }
+            })
+            .collect()
     }
     /// A date belongs to its checklist task; assigning one does not feature it.
     pub fn set_task_deadline(&mut self, id: u64, at: Option<&str>) -> Result<()> {

@@ -86,13 +86,25 @@ normal mouse and text editing work. Type `125 * 1.15` for arithmetic or
 full precision, including the source unit of a converted result. Task arrows
 reorder the checklist. Tasks may have a due date; a star chooses the featured
 countdown and reveals its date in the calendar. Starring an undated task opens
-its date editor first. Completing a task clears its star and calendar marker;
+its date editor first. Completing a task clears its star and subdues its calendar mark;
 removing a task also removes its linked date. Existing standalone deadlines
 appear in the same list without a migration or save merely to display them.
 
-The compact calendar contains day numbers with today and active due dates
-highlighted. Clicking a day selects its weather details beneath the grid and
-does not change the starred task. Hover shows matching due-task titles.
+The compact calendar contains day numbers with today and small marks on due
+dates only. Dated checklist tasks have an inline color selector with five muted,
+named choices (Rose, Amber, Sage, Blue and Lilac) plus neutral. Multiple same-day
+tasks have separate marks; a count indicates overflow. Completed marks are
+subdued and hollow. Selecting a day by pointer, touch or Tab then Enter/Space
+shows its task names and explicit Open/Done status in a compact scrolling list
+within the calendar panel, alongside the existing selected-day weather. This
+never changes the starred task or featured countdown. Date, color and completion
+changes are reflected from the shared task/deadline links immediately.
+
+`Task.color` is an optional named value in the existing version-1 JSON format.
+Missing colors default to neutral, unknown colors are rejected on import, and
+colors survive completion and temporarily removing a due date. The calendar is
+a read-only projection, not another persisted set of task records. Legacy
+standalone deadlines remain visible without creating tasks on load or selection.
 Entry forms and markers are hidden, while existing entries
 remain intact in stored state and JSON exports. Times display in the device's
 timezone; deadline input requires a qualified RFC3339 time.

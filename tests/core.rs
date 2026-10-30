@@ -2,7 +2,7 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use jig::{
     calculator::evaluate,
     calendar,
-    model::{countdown, State},
+    model::{countdown, State, TaskColor},
     units::convert,
 };
 
@@ -422,4 +422,141 @@ fn deleting_dated_tasks_removes_their_dates_without_orphans() {
     assert_eq!(state.tasks.len(), 1);
     assert_eq!(state.deadlines.len(), 1);
     state.validate().unwrap();
+}
+
+#[test]
+fn calendar_task_colors_show_every_due_task_without_changing_the_star() {
+    let mut state = State::default();
+    let first = state.add_task("Photograph sculptures").unwrap();
+    let second = state.add_task("Pack prints").unwrap();
+    let completed = state.add_task("Order paper").unwrap();
+    for (task, color) in [
+        (first, TaskColor::Rose),
+        (second, TaskColor::Sage),
+        (completed, TaskColor::Blue),
+    ] {
+        state
+            .set_task_deadline(task, Some("2026-12-02T14:00:00Z"))
+            .unwrap();
+        state.set_task_color(task, Some(color)).unwrap();
+    }
+    state.toggle_task(completed).unwrap();
+    state.feature_task(first).unwrap();
+    let date = chrono::NaiveDate::from_ymd_opt(2026, 12, 2).unwrap();
+    let before = serde_json::to_string(&state).unwrap();
+    let rows = state.tasks_on_date(date, &Utc);
+    assert_eq!(rows.len(), 3, "Same-day tasks must not hide each other");
+    assert_eq!(rows[0].task_id, Some(first));
+    assert_eq!(rows[0].title, "Photograph sculptures");
+    assert_eq!(rows[0].color, Some(TaskColor::Rose));
+    assert!(!rows[0].complete);
+    assert_eq!(rows[1].task_id, Some(second));
+    assert_eq!(rows[1].color, Some(TaskColor::Sage));
+    assert_eq!(rows[2].task_id, Some(completed));
+    assert_eq!(rows[2].color, Some(TaskColor::Blue));
+    assert!(rows[2].complete);
+    assert!(state.tasks_on_date(date.pred_opt().unwrap(), &Utc).is_empty());
+    assert!(state.tasks_on_date(date.succ_opt().unwrap(), &Utc).is_empty());
+    assert_eq!(serde_json::to_string(&state).unwrap(), before);
+    assert_eq!(state.featured, Some(rows[0].deadline_id));
+    assert_eq!(state.tasks.len(), 3);
+    assert_eq!(state.deadlines.len(), 3);
+}
+
+#[test]
+fn calendar_task_colors_follow_date_edits_completion_and_local_dates() {
+    let mut state = State::default();
+    let task = state.add_task("Install work").unwrap();
+    state
+        .set_task_deadline(task, Some("2026-12-02T01:30:00Z"))
+        .unwrap();
+    state.set_task_color(task, Some(TaskColor::Amber)).unwrap();
+    let deadline = state.task_deadline(task).unwrap().id;
+    state.feature_task(task).unwrap();
+    let local = chrono::FixedOffset::west_opt(5 * 3600).unwrap();
+    let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap();
+    let next = first.succ_opt().unwrap();
+    assert_eq!(state.tasks_on_date(first, &local).len(), 1);
+    assert!(state.tasks_on_date(first, &Utc).is_empty());
+    assert_eq!(state.tasks_on_date(next, &Utc).len(), 1);
+    assert!(state.tasks_on_date(next, &local).is_empty());
+
+    state
+        .set_task_deadline(task, Some("2026-12-02T09:00:00-05:00"))
+        .unwrap();
+    state.edit_task(task, "Install finished work").unwrap();
+    assert!(state.tasks_on_date(first, &local).is_empty());
+    let row = state.tasks_on_date(next, &local)[0];
+    assert_eq!(row.deadline_id, deadline, "Editing keeps one deadline record");
+    assert_eq!(row.title, "Install finished work");
+    assert_eq!(row.color, Some(TaskColor::Amber));
+    assert_eq!(state.featured, Some(deadline));
+    state.set_task_color(task, Some(TaskColor::Lilac)).unwrap();
+    assert_eq!(state.tasks_on_date(next, &local)[0].color, Some(TaskColor::Lilac));
+    assert_eq!(state.featured, Some(deadline));
+
+    state.toggle_task(task).unwrap();
+    assert_eq!(state.featured, None);
+    let row = state.tasks_on_date(next, &local)[0];
+    assert!(row.complete);
+    assert_eq!(row.color, Some(TaskColor::Lilac));
+    state.toggle_task(task).unwrap();
+    assert!(!state.tasks_on_date(next, &local)[0].complete);
+    assert_eq!(state.featured, None, "Reopening must not restore the star");
+    state.set_task_deadline(task, None).unwrap();
+    assert!(state.tasks_on_date(next, &local).is_empty());
+    assert_eq!(state.tasks[0].color, Some(TaskColor::Lilac));
+    state
+        .set_task_deadline(task, Some("2026-12-02T09:00:00-05:00"))
+        .unwrap();
+    assert_eq!(state.tasks_on_date(next, &local)[0].color, Some(TaskColor::Lilac));
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.deadlines.len(), 1);
+    state.validate().unwrap();
+}
+
+#[test]
+fn task_colors_roundtrip_and_legacy_calendar_rows_remain_compatible() {
+    let mut state = State::default();
+    let task = state.add_task("Existing checklist item").unwrap();
+    let legacy = state
+        .set_deadline(None, "Existing opening", "2026-12-02T18:00:00Z")
+        .unwrap();
+    let old = serde_json::to_string_pretty(&state).unwrap();
+    assert!(!old.contains("\"color\""));
+    let mut restored = State::from_json(&old).unwrap();
+    assert_eq!(restored.tasks[0].color, None);
+    let date = chrono::NaiveDate::from_ymd_opt(2026, 12, 2).unwrap();
+    let before = serde_json::to_string(&restored).unwrap();
+    let rows = restored.tasks_on_date(date, &Utc);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].task_id, None);
+    assert_eq!(rows[0].deadline_id, legacy);
+    assert_eq!(rows[0].title, "Existing opening");
+    assert_eq!(rows[0].color, None);
+    assert!(!rows[0].complete);
+    assert_eq!(serde_json::to_string(&restored).unwrap(), before);
+
+    assert!(restored.set_task_color(task, Some(TaskColor::Rose)).is_err());
+    assert!(restored.set_task_color(999999, None).is_err());
+    assert_eq!(serde_json::to_string(&restored).unwrap(), before);
+    restored
+        .set_task_deadline(task, Some("2026-12-02T12:00:00Z"))
+        .unwrap();
+    for color in TaskColor::ALL {
+        restored.set_task_color(task, Some(color)).unwrap();
+        let exported = serde_json::to_string_pretty(&restored).unwrap();
+        restored = State::from_json(&exported).unwrap();
+        assert_eq!(restored.tasks[0].color, Some(color));
+        assert_eq!(restored.tasks.len(), 1);
+        assert_eq!(restored.deadlines.len(), 2);
+        assert_eq!(restored.featured, Some(legacy));
+        assert_eq!(restored.tasks_on_date(date, &Utc).len(), 2);
+    }
+    let mut invalid = serde_json::to_value(&restored).unwrap();
+    invalid["tasks"][0]["color"] = "bright_green".into();
+    assert!(State::from_json(&invalid.to_string()).is_err());
+    restored.set_task_color(task, None).unwrap();
+    assert!(!serde_json::to_string(&restored).unwrap().contains("\"color\""));
+    restored.validate().unwrap();
 }

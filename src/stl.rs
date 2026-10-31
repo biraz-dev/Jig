@@ -97,7 +97,9 @@ impl Measurements {
     }
 
     pub fn dimensions_label(&self) -> String {
-        let [x, y, z] = self.dimensions_mm.map(|value| measurement_number(value, 1.0));
+        let [x, y, z] = self
+            .dimensions_mm
+            .map(|value| measurement_number(value, 1.0));
         format!("{x} × {y} × {z} mm")
     }
 

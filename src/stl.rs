@@ -352,7 +352,10 @@ impl Mesh {
             // Normals describe the actual f32 vertices written to the file.
             // Recomputing them is required when axes have different scales.
             let points = exported.map(|point| point.map(f64::from));
-            let normal = cross(subtract(points[1], points[0]), subtract(points[2], points[0]));
+            let normal = cross(
+                subtract(points[1], points[0]),
+                subtract(points[2], points[0]),
+            );
             let length = normal_length(normal);
             let original_normal = cross(
                 subtract(triangle[1], triangle[0]),

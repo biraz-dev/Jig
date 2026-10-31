@@ -9,7 +9,7 @@ use jig::{
     clay::{Basis, Settings},
     stl::{self, LengthUnit, Measurements, Mesh},
     stl_camera::{self, Axis, Perspective, Projection},
-    stl_comparison::{ComparisonLayout, HUMAN_HEIGHT_MM, silhouette_mm},
+    stl_comparison::{silhouette_mm, ComparisonLayout, HUMAN_HEIGHT_MM},
 };
 use std::{cell::RefCell, f32::consts::FRAC_PI_2, sync::Arc, time::Duration};
 use wasm_bindgen::prelude::*;
@@ -400,7 +400,8 @@ impl StlPanel {
     }
 
     fn base_axes(&self) -> [f64; 3] {
-        self.axis_scale.map(|axis| axis * self.scale_percent / 100.0)
+        self.axis_scale
+            .map(|axis| axis * self.scale_percent / 100.0)
     }
 
     fn measure_axes(&self, axes: [f64; 3]) -> Option<Result<Measurements, String>> {
@@ -410,7 +411,12 @@ impl StlPanel {
             unit: self.unit,
             axes: axes.map(f64::to_bits),
         };
-        if let Some(cached) = self.measurement_cache.borrow().iter().find(|item| item.key == key) {
+        if let Some(cached) = self
+            .measurement_cache
+            .borrow()
+            .iter()
+            .find(|item| item.key == key)
+        {
             return Some(cached.value.clone());
         }
         let value = mesh.measure_axes(self.unit, axes);
@@ -418,7 +424,10 @@ impl StlPanel {
         if cache.len() == 2 {
             cache.remove(0);
         }
-        cache.push(MeasurementCache { key, value: value.clone() });
+        cache.push(MeasurementCache {
+            key,
+            value: value.clone(),
+        });
         Some(value)
     }
 
@@ -431,12 +440,23 @@ impl StlPanel {
             self.zoom = 1.0;
             return Ok(());
         }
-        let mesh = self.mesh.as_ref().ok_or("Open a model before fitting the view")?;
+        let mesh = self
+            .mesh
+            .as_ref()
+            .ok_or("Open a model before fitting the view")?;
         let dimensions = mesh.bounds.dimensions();
         let extent = dimensions.into_iter().fold(0.0_f64, f64::max);
         let axes = self.effective_axes(settings);
-        let transformed_extent = dimensions.into_iter().zip(axes).map(|(dimension, factor)| dimension * factor).fold(0.0_f64, f64::max);
-        if !extent.is_finite() || extent <= 0.0 || !transformed_extent.is_finite() || transformed_extent <= 0.0 {
+        let transformed_extent = dimensions
+            .into_iter()
+            .zip(axes)
+            .map(|(dimension, factor)| dimension * factor)
+            .fold(0.0_f64, f64::max);
+        if !extent.is_finite()
+            || extent <= 0.0
+            || !transformed_extent.is_finite()
+            || transformed_extent <= 0.0
+        {
             return Err("The model has no finite nonzero extent to fit.".into());
         }
         let zoom = (extent / transformed_extent) as f32;
@@ -521,8 +541,15 @@ impl StlPanel {
                 if let Some(mesh) = &self.mesh {
                     match mesh.to_binary_stl_axes(self.export_axes(settings)) {
                         Ok(bytes) => {
-                            let stem = self.name.rsplit_once('.').filter(|(_, extension)| extension.eq_ignore_ascii_case("stl")).map_or(self.name.as_str(), |(stem, _)| stem);
-                            export_file(&bytes, &format!("{stem}-jig-{}.stl", self.export_unit.label()));
+                            let stem = self
+                                .name
+                                .rsplit_once('.')
+                                .filter(|(_, extension)| extension.eq_ignore_ascii_case("stl"))
+                                .map_or(self.name.as_str(), |(stem, _)| stem);
+                            export_file(
+                                &bytes,
+                                &format!("{stem}-jig-{}.stl", self.export_unit.label()),
+                            );
                         }
                         Err(error) => self.error = Some(error),
                     }
@@ -590,10 +617,11 @@ impl StlPanel {
                     self.push_snapshot(before);
                 }
             }
-            let perspective = ui.selectable_label(
-                self.projection == Projection::Perspective,
-                "Perspective",
-            ).on_hover_text("Toggle a 45° perspective camera. Off uses orthographic projection.");
+            let perspective = ui
+                .selectable_label(self.projection == Projection::Perspective, "Perspective")
+                .on_hover_text(
+                    "Toggle a 45° perspective camera. Off uses orthographic projection.",
+                );
             self.focused |= perspective.has_focus();
             if perspective.clicked() {
                 let before = self.prepare_snapshot();
@@ -918,19 +946,35 @@ impl StlPanel {
         changed
     }
 
-    fn finish_scale_edit(&mut self, ui: &Ui, response: &egui::Response, before: Snapshot, kind: Gesture) {
+    fn finish_scale_edit(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        before: Snapshot,
+        kind: Gesture,
+    ) {
         if response.changed() && self.differs(&before) {
             self.begin_gesture(kind, before, ui.input(|input| input.time));
         }
         let finish = response.drag_stopped()
             || response.lost_focus()
             || ui.input(|input| input.key_pressed(egui::Key::Enter));
-        if finish && self.pending_gesture.as_ref().is_some_and(|pending| pending.kind == kind) {
+        if finish
+            && self
+                .pending_gesture
+                .as_ref()
+                .is_some_and(|pending| pending.kind == kind)
+        {
             self.finish_gesture();
         }
     }
 
-    fn apply_axis_ratio(&mut self, axis: usize, ratio: f64, settings: &Settings) -> Result<(), String> {
+    fn apply_axis_ratio(
+        &mut self,
+        axis: usize,
+        ratio: f64,
+        settings: &Settings,
+    ) -> Result<(), String> {
         if !ratio.is_finite() || ratio <= 0.0 {
             return Err("Scale and target dimensions must be positive finite numbers.".into());
         }
@@ -941,10 +985,13 @@ impl StlPanel {
             }
             let percent = *value * self.scale_percent;
             if !percent.is_finite() || !(0.000001..=1.0e10).contains(&percent) {
-                return Err("Requested size requires an axis scale outside 0.000001–10000000000%.".into());
+                return Err(
+                    "Requested size requires an axis scale outside 0.000001–10000000000%.".into(),
+                );
             }
         }
-        let effective = axes.map(|value| value * self.scale_percent / 100.0 * self.shrink_factor(settings));
+        let effective =
+            axes.map(|value| value * self.scale_percent / 100.0 * self.shrink_factor(settings));
         if let Some(mesh) = &self.mesh {
             mesh.measure_axes(self.unit, effective)?;
         }
@@ -954,7 +1001,15 @@ impl StlPanel {
     }
 
     fn size_controls(&mut self, ui: &mut Ui, settings: &Settings) {
-        ui.label(RichText::new(format!("Export: {} · import STL as {}", self.export_unit.label(), self.export_unit.label())).color(MUTED).size(11.0));
+        ui.label(
+            RichText::new(format!(
+                "Export: {} · import STL as {}",
+                self.export_unit.label(),
+                self.export_unit.label()
+            ))
+            .color(MUTED)
+            .size(11.0),
+        );
         let size = ui.selectable_label(self.size_open, "Size / export");
         self.focused |= size.has_focus();
         if size.clicked() {
@@ -1056,7 +1111,9 @@ impl StlPanel {
         let comparison = self.comparison_layout(ui, rect, settings);
         let now = ui.input(|input| input.time);
         if response.drag_started() {
-            self.orbit_allowed = ui.input(|input| input.pointer.press_origin()).is_none_or(|position| !gnomon_rect(ui, rect).contains(position));
+            self.orbit_allowed = ui
+                .input(|input| input.pointer.press_origin())
+                .is_none_or(|position| !gnomon_rect(ui, rect).contains(position));
         }
         if response.dragged() && self.orbit_allowed && !self.human_comparison {
             let motion = response.drag_motion();
@@ -1112,16 +1169,48 @@ impl StlPanel {
                     axes: effective.map(|axis| (axis / largest) as f32),
                     projection: self.projection,
                     comparison: comparison.map(|(layout, content)| {
-                        let extent = self.mesh.as_ref().map(|mesh| mesh.bounds.dimensions().into_iter().fold(0.0_f64, f64::max)).unwrap_or(1.0);
+                        let extent = self
+                            .mesh
+                            .as_ref()
+                            .map(|mesh| {
+                                mesh.bounds.dimensions().into_iter().fold(0.0_f64, f64::max)
+                            })
+                            .unwrap_or(1.0);
                         let factor = self.unit.millimeters_per_unit() * largest;
-                        let content_scale = [content.width() / rect.width(), content.height() / rect.height()];
-                        let content_offset = [2.0 * (content.center().x - rect.center().x) / rect.width(), -2.0 * (content.center().y - rect.center().y) / rect.height()];
+                        let content_scale = [
+                            content.width() / rect.width(),
+                            content.height() / rect.height(),
+                        ];
+                        let content_offset = [
+                            2.0 * (content.center().x - rect.center().x) / rect.width(),
+                            -2.0 * (content.center().y - rect.center().y) / rect.height(),
+                        ];
                         let coefficients = layout.mm_to_ndc();
                         let object_offset = layout.object_offset_ndc();
-                        let scale = std::array::from_fn(|axis| (coefficients[axis] * extent * factor * f64::from(self.zoom) * f64::from(content_scale[axis])) as f32);
-                        let offset = std::array::from_fn(|axis| (object_offset[axis] * f64::from(self.zoom) * f64::from(content_scale[axis])) as f32 + content_offset[axis]);
-                        let clip = [(content.left() - rect.left()) / rect.width(), (rect.bottom() - content.bottom()) / rect.height(), content_scale[0], content_scale[1]];
-                        ComparisonView { scale, offset, clip }
+                        let scale = std::array::from_fn(|axis| {
+                            (coefficients[axis]
+                                * extent
+                                * factor
+                                * f64::from(self.zoom)
+                                * f64::from(content_scale[axis])) as f32
+                        });
+                        let offset = std::array::from_fn(|axis| {
+                            (object_offset[axis]
+                                * f64::from(self.zoom)
+                                * f64::from(content_scale[axis])) as f32
+                                + content_offset[axis]
+                        });
+                        let clip = [
+                            (content.left() - rect.left()) / rect.width(),
+                            (rect.bottom() - content.bottom()) / rect.height(),
+                            content_scale[0],
+                            content_scale[1],
+                        ];
+                        ComparisonView {
+                            scale,
+                            offset,
+                            clip,
+                        }
                     }),
                 };
                 let context = ui.ctx().clone();
@@ -1167,12 +1256,17 @@ impl StlPanel {
     }
 
     fn human_toggle(&mut self, ui: &mut Ui) {
-        let Some(viewport) = self.viewport_rect else { return; };
+        let Some(viewport) = self.viewport_rect else {
+            return;
+        };
         let visible = viewport.intersect(ui.clip_rect());
         if visible.width() < 140.0 || visible.height() < 40.0 {
             return;
         }
-        let rect = egui::Rect::from_min_size(egui::pos2(visible.right() - 120.0, visible.top() + 8.0), egui::vec2(112.0, 22.0));
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(visible.right() - 120.0, visible.top() + 8.0),
+            egui::vec2(112.0, 22.0),
+        );
         // Register after ordinary settings, even though this button is painted
         // over the viewport, so established keyboard navigation stays stable.
         let toggle = ui.put(rect, egui::Button::new("Human 5′9″").selected(self.human_comparison)).on_hover_text("Compare with a 69 in / 1752.6 mm human reference. Front X/Z view; the reference is never exported. Ctrl-Alt-H toggles.");
@@ -1183,34 +1277,72 @@ impl StlPanel {
         }
     }
 
-    fn comparison_layout(&self, ui: &Ui, rect: egui::Rect, settings: &Settings) -> Option<(ComparisonLayout, egui::Rect)> {
+    fn comparison_layout(
+        &self,
+        ui: &Ui,
+        rect: egui::Rect,
+        settings: &Settings,
+    ) -> Option<(ComparisonLayout, egui::Rect)> {
         if !self.human_comparison {
             return None;
         }
         let visible = rect.intersect(ui.clip_rect());
-        let content = egui::Rect::from_min_max(egui::pos2(visible.left(), visible.top() + 48.0), visible.max);
+        let content = egui::Rect::from_min_max(
+            egui::pos2(visible.left(), visible.top() + 48.0),
+            visible.max,
+        );
         if content.width() <= 0.0 || content.height() <= 0.0 {
             return None;
         }
         let measurements = self.measurements(settings)?.ok()?;
-        let layout = ComparisonLayout::new(measurements.dimensions_mm, f64::from(content.width() / content.height())).ok()?;
+        let layout = ComparisonLayout::new(
+            measurements.dimensions_mm,
+            f64::from(content.width() / content.height()),
+        )
+        .ok()?;
         Some((layout, content))
     }
 
-    fn draw_human(&self, ui: &Ui, viewport: egui::Rect, content: egui::Rect, layout: ComparisonLayout) {
+    fn draw_human(
+        &self,
+        ui: &Ui,
+        viewport: egui::Rect,
+        content: egui::Rect,
+        layout: ComparisonLayout,
+    ) {
         let painter = ui.painter().with_clip_rect(content);
         let point = |world: [f64; 2]| {
             let ndc = layout.ndc(world);
-            egui::pos2(content.center().x + (ndc[0] * f64::from(self.zoom)) as f32 * content.width() * 0.5, content.center().y - (ndc[1] * f64::from(self.zoom)) as f32 * content.height() * 0.5)
+            egui::pos2(
+                content.center().x + (ndc[0] * f64::from(self.zoom)) as f32 * content.width() * 0.5,
+                content.center().y
+                    - (ndc[1] * f64::from(self.zoom)) as f32 * content.height() * 0.5,
+            )
         };
-        let baseline = [point([0.0, layout.baseline_z_mm]), point([layout.content_size_mm[0], layout.baseline_z_mm])];
-        painter.line_segment(baseline, Stroke::new(1.0, RULE));
+        let baseline = [
+            point([0.0, layout.baseline_z_mm]),
+            point([layout.content_size_mm[0], layout.baseline_z_mm]),
+        ];
+        painter.line_segment(baseline, Stroke::new(1.0_f32, RULE));
         for polygon in silhouette_mm() {
-            let points = polygon.into_iter().map(|[x, z]| point([x + layout.person_center_x_mm, z + layout.baseline_z_mm])).collect();
-            painter.add(egui::Shape::convex_polygon(points, Color32::from_rgb(148, 188, 160), Stroke::NONE));
+            let points = polygon
+                .into_iter()
+                .map(|[x, z]| point([x + layout.person_center_x_mm, z + layout.baseline_z_mm]))
+                .collect();
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                Color32::from_rgb(148, 188, 160),
+                Stroke::NONE,
+            ));
         }
         let visible = viewport.intersect(ui.clip_rect());
-        ui.painter().with_clip_rect(visible).text(egui::pos2(visible.center().x, visible.top() + 34.0), egui::Align2::CENTER_TOP, "Front X/Z · 69 in / 1752.6 mm reference", FontId::monospace(11.0), MUTED);
+        ui.painter().with_clip_rect(visible).text(
+            egui::pos2(visible.center().x, visible.top() + 34.0),
+            egui::Align2::CENTER_TOP,
+            "Front X/Z · 69 in / 1752.6 mm reference",
+            FontId::monospace(11.0),
+            MUTED,
+        );
     }
 
     fn gnomon(&mut self, ui: &mut Ui, viewport: egui::Rect) {
@@ -1219,7 +1351,8 @@ impl StlPanel {
             return;
         }
         let center = rect.center();
-        ui.painter().circle_filled(center, 36.0, BG.gamma_multiply(0.92));
+        ui.painter()
+            .circle_filled(center, 36.0, BG.gamma_multiply(0.92));
         let (right, up, depth) = stl_camera::axes(self.yaw, self.pitch);
         let mut axes = [
             (Axis::X, PINK),
@@ -1231,19 +1364,34 @@ impl StlPanel {
             let index = axis.index();
             let direction = egui::vec2(right[index], -up[index]);
             let label_center = if direction.length_sq() < 0.02 {
-                ui.painter().circle_stroke(center, 4.0, Stroke::new(1.0_f32, color));
+                ui.painter()
+                    .circle_stroke(center, 4.0, Stroke::new(1.0_f32, color));
                 center + egui::vec2(-11.0, 10.0)
             } else {
                 let end = center + direction * 25.0;
-                ui.painter().line_segment([center, end], Stroke::new(1.5_f32, color));
+                ui.painter()
+                    .line_segment([center, end], Stroke::new(1.5_f32, color));
                 center + direction * 31.0
             };
-            ui.painter().text(label_center, egui::Align2::CENTER_CENTER, axis.label(), FontId::monospace(11.0), color);
+            ui.painter().text(
+                label_center,
+                egui::Align2::CENTER_CENTER,
+                axis.label(),
+                FontId::monospace(11.0),
+                color,
+            );
             // Mouse/touch axis labels share the exact model basis. Preset
             // buttons remain the keyboard path, preserving existing tab order.
-            let target = egui::Rect::from_center_size(label_center, egui::vec2(20.0, 20.0)).intersect(rect);
+            let target =
+                egui::Rect::from_center_size(label_center, egui::vec2(20.0, 20.0)).intersect(rect);
             let sense = egui::Sense::click().difference(egui::Sense::focusable_noninteractive());
-            let click = ui.interact(target, ui.id().with(("stl-axis-snap", index)), sense).on_hover_text(format!("Look from +{} · right-click for −{}", axis.label(), axis.label()));
+            let click = ui
+                .interact(target, ui.id().with(("stl-axis-snap", index)), sense)
+                .on_hover_text(format!(
+                    "Look from +{} · right-click for −{}",
+                    axis.label(),
+                    axis.label()
+                ));
             if click.clicked() || click.secondary_clicked() {
                 let before = self.prepare_snapshot();
                 (self.yaw, self.pitch) = axis.snap_angles(!click.secondary_clicked());
@@ -1260,7 +1408,11 @@ impl StlPanel {
         let mut report = format!("Jig STL report\nFile: {}\nSource units: {} (STL has no units)\nModel scale: {:.2}%\nMode: {}\n", self.name, self.unit.label(), self.scale_percent, self.mode.label());
         let axes = self.base_axes().map(|scale| scale * 100.0);
         report.push_str(&format!("Axis scale: X {:.6}% · Y {:.6}% · Z {:.6}%\nScale edits: {}\nExport units: {} (import exported STL as {})\nProjection: {}{}\nCamera yaw: {:.6} rad\nCamera pitch: {:.6} rad\n", axes[0], axes[1], axes[2], if self.linked { "Linked" } else { "Independent" }, self.export_unit.label(), self.export_unit.label(), self.projection.label(), if self.projection == Projection::Perspective { " (45°)" } else { "" }, self.yaw, self.pitch));
-        report.push_str(&format!("Comparison: {}\nReference height: {:.6} mm (69 in)\n", if self.human_comparison { "On" } else { "Off" }, HUMAN_HEIGHT_MM));
+        report.push_str(&format!(
+            "Comparison: {}\nReference height: {:.6} mm (69 in)\n",
+            if self.human_comparison { "On" } else { "Off" },
+            HUMAN_HEIGHT_MM
+        ));
         if self.human_comparison {
             if let Some(Ok(measurements)) = self.measurements(settings) {
                 report.push_str(&format!("Object / human height: {:.6}\nComparison view: Front X/Z, Z up, feet at model minimum Z. Reference is not exported.\n", measurements.dimensions_mm[2] / HUMAN_HEIGHT_MM));
@@ -1361,7 +1513,10 @@ fn gnomon_rect(ui: &Ui, viewport: egui::Rect) -> egui::Rect {
     if visible.width() < 86.0 || visible.height() < 86.0 {
         return egui::Rect::NOTHING;
     }
-    egui::Rect::from_min_size(egui::pos2(visible.left(), visible.bottom() - 86.0), egui::vec2(86.0, 86.0))
+    egui::Rect::from_min_size(
+        egui::pos2(visible.left(), visible.bottom() - 86.0),
+        egui::vec2(86.0, 86.0),
+    )
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1527,7 +1682,10 @@ impl Renderer {
                 );
             }
         }
-        self.half_extents = mesh.bounds.dimensions().map(|dimension| (dimension / extent * 0.5) as f32);
+        self.half_extents = mesh
+            .bounds
+            .dimensions()
+            .map(|dimension| (dimension / extent * 0.5) as f32);
         self.vertices = (mesh.triangles.len() * 3) as i32;
         self.last_view = None;
         self.error = None;
@@ -1635,31 +1793,70 @@ impl Renderer {
                     view.pitch,
                 );
                 gl.uniform_3_f32(
-                    gl.get_uniform_location(self.mesh_program, "u_axes").as_ref(),
-                    view.axes[0], view.axes[1], view.axes[2],
+                    gl.get_uniform_location(self.mesh_program, "u_axes")
+                        .as_ref(),
+                    view.axes[0],
+                    view.axes[1],
+                    view.axes[2],
                 );
                 let perspective = if view.projection == Projection::Perspective {
                     let aspect = viewport.width_px.max(1) as f32 / viewport.height_px.max(1) as f32;
-                    let radius = (self.half_extents[0] * view.axes[0]).hypot(self.half_extents[1] * view.axes[1]).hypot(self.half_extents[2] * view.axes[2]);
-                    let base_radius = self.half_extents[0].hypot(self.half_extents[1]).hypot(self.half_extents[2]);
-                    Perspective::fit_distance(aspect, base_radius).and_then(|fit| {
-                        // Beyond this distance the model is already subpixel;
-                        // retain enough f32 depth precision for a legal frustum.
-                        let distance = (fit / view.scale).clamp(radius * 1.05, radius * 100000.0);
-                        Perspective::new(aspect, radius, distance)
-                    }).ok()
+                    let radius = (self.half_extents[0] * view.axes[0])
+                        .hypot(self.half_extents[1] * view.axes[1])
+                        .hypot(self.half_extents[2] * view.axes[2]);
+                    let base_radius = self.half_extents[0]
+                        .hypot(self.half_extents[1])
+                        .hypot(self.half_extents[2]);
+                    Perspective::fit_distance(aspect, base_radius)
+                        .and_then(|fit| {
+                            // Beyond this distance the model is already subpixel;
+                            // retain enough f32 depth precision for a legal frustum.
+                            let distance =
+                                (fit / view.scale).clamp(radius * 1.05, radius * 100000.0);
+                            Perspective::new(aspect, radius, distance)
+                        })
+                        .ok()
                 } else {
                     None
                 };
-                gl.uniform_1_i32(gl.get_uniform_location(self.mesh_program, "u_comparison").as_ref(), i32::from(view.comparison.is_some()));
+                gl.uniform_1_i32(
+                    gl.get_uniform_location(self.mesh_program, "u_comparison")
+                        .as_ref(),
+                    i32::from(view.comparison.is_some()),
+                );
                 if let Some(comparison) = view.comparison {
-                    gl.uniform_2_f32(gl.get_uniform_location(self.mesh_program, "u_comparison_scale").as_ref(), comparison.scale[0], comparison.scale[1]);
-                    gl.uniform_2_f32(gl.get_uniform_location(self.mesh_program, "u_comparison_offset").as_ref(), comparison.offset[0], comparison.offset[1]);
+                    gl.uniform_2_f32(
+                        gl.get_uniform_location(self.mesh_program, "u_comparison_scale")
+                            .as_ref(),
+                        comparison.scale[0],
+                        comparison.scale[1],
+                    );
+                    gl.uniform_2_f32(
+                        gl.get_uniform_location(self.mesh_program, "u_comparison_offset")
+                            .as_ref(),
+                        comparison.offset[0],
+                        comparison.offset[1],
+                    );
                 }
-                gl.uniform_1_i32(gl.get_uniform_location(self.mesh_program, "u_perspective").as_ref(), i32::from(perspective.is_some()));
+                gl.uniform_1_i32(
+                    gl.get_uniform_location(self.mesh_program, "u_perspective")
+                        .as_ref(),
+                    i32::from(perspective.is_some()),
+                );
                 if let Some(camera) = perspective {
-                    gl.uniform_4_f32(gl.get_uniform_location(self.mesh_program, "u_camera").as_ref(), camera.distance, camera.focal_x, camera.focal_y, camera.depth_scale);
-                    gl.uniform_1_f32(gl.get_uniform_location(self.mesh_program, "u_depth_offset").as_ref(), camera.depth_offset);
+                    gl.uniform_4_f32(
+                        gl.get_uniform_location(self.mesh_program, "u_camera")
+                            .as_ref(),
+                        camera.distance,
+                        camera.focal_x,
+                        camera.focal_y,
+                        camera.depth_scale,
+                    );
+                    gl.uniform_1_f32(
+                        gl.get_uniform_location(self.mesh_program, "u_depth_offset")
+                            .as_ref(),
+                        camera.depth_offset,
+                    );
                 }
                 gl.uniform_2_f32(
                     gl.get_uniform_location(self.mesh_program, "u_fit").as_ref(),

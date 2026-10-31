@@ -242,7 +242,14 @@ fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
     assert!(text.contains("Volume: 8000.00 mm^3 (8.00 cm^3)"));
     let inspect_axes = |extra: &[&str]| {
         let mut args = vec![
-            "stl", binary_name, "--scale-x", "200", "--scale-y", "300", "--scale-z", "400",
+            "stl",
+            binary_name,
+            "--scale-x",
+            "200",
+            "--scale-y",
+            "300",
+            "--scale-z",
+            "400",
         ];
         args.extend_from_slice(extra);
         invoke(&args)

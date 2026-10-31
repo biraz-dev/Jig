@@ -71,7 +71,10 @@ fn model_and_person_share_the_ground_and_one_physical_scale() {
         let ground = layout.ndc([0.0, 0.0])[1];
         let object_height = layout.ndc([0.0, dimensions[2]])[1] - ground;
         let person_height = layout.ndc([0.0, HUMAN_HEIGHT_MM])[1] - ground;
-        close(object_height / person_height, dimensions[2] / HUMAN_HEIGHT_MM);
+        close(
+            object_height / person_height,
+            dimensions[2] / HUMAN_HEIGHT_MM,
+        );
         assert_eq!(
             layout.object_offset_ndc(),
             layout.ndc(layout.object_center_xz_mm)
@@ -85,11 +88,7 @@ fn model_and_person_share_the_ground_and_one_physical_scale() {
 #[test]
 fn portrait_and_wide_views_fit_both_subjects_with_the_same_padding() {
     for aspect in [0.2, 0.5, 1.0, 1.6, 4.0] {
-        for dimensions in [
-            [5.0; 3],
-            [5000.0, 500.0, 8000.0],
-            [12000.0, 2000.0, 1000.0],
-        ] {
+        for dimensions in [[5.0; 3], [5000.0, 500.0, 8000.0], [12000.0, 2000.0, 1000.0]] {
             let layout = ComparisonLayout::new(dimensions, aspect).unwrap();
             close(layout.view_size_mm[0] / layout.view_size_mm[1], aspect);
             let bound = 1.0 - 2.0 * PADDING_FRACTION;

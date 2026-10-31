@@ -1418,7 +1418,8 @@ impl eframe::App for BrowserApp {
                     .iter()
                     .position(|index| *index == self.focus)
                     .unwrap_or(0);
-                self.focus = order[(current + if previous { order.len() - 1 } else { 1 }) % order.len()];
+                self.focus =
+                    order[(current + if previous { order.len() - 1 } else { 1 }) % order.len()];
                 self.focus_calculator = false;
                 self.focus_task_date = false;
                 self.scroll_selected = true;

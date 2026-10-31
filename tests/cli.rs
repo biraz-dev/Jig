@@ -243,14 +243,12 @@ fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
     let output = invoke(&["stl", binary_name, "--units", "cm"]);
     assert!(output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("Dimensions: 100.00 x 100.00 x 100.00 mm")
+        String::from_utf8_lossy(&output.stdout).contains("Dimensions: 100.00 x 100.00 x 100.00 mm")
     );
     let output = invoke(&["stl", binary_name, "--units", "in"]);
     assert!(output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("Dimensions: 254.00 x 254.00 x 254.00 mm")
+        String::from_utf8_lossy(&output.stdout).contains("Dimensions: 254.00 x 254.00 x 254.00 mm")
     );
     let output = invoke(&["stl", binary_name, "--shrinkage", "10"]);
     assert!(output.status.success());
@@ -261,8 +259,7 @@ fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
     let output = invoke(&["stl", binary_name, "--shrinkage", "20", "--compensate"]);
     assert!(output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("Dimensions: 12.50 x 12.50 x 12.50 mm")
+        String::from_utf8_lossy(&output.stdout).contains("Dimensions: 12.50 x 12.50 x 12.50 mm")
     );
     let output = invoke(&["stl", open_path.to_str().unwrap()]);
     assert!(output.status.success());

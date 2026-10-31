@@ -371,7 +371,11 @@ fn inspect_stl(
         println!(
             "Linear shrinkage estimate: {}% ({})",
             state.number(percent),
-            if compensate { "compensated" } else { "forecast" }
+            if compensate {
+                "compensated"
+            } else {
+                "forecast"
+            }
         );
     }
     let [x, y, z] = measurements.dimensions_mm;

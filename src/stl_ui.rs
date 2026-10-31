@@ -232,10 +232,22 @@ impl StlPanel {
         if self.mesh.is_none() {
             ui.add_space(6.0);
             ui.label(RichText::new("Choose a local STL or inspect the sample cube.").color(MUTED));
-            ui.label(RichText::new("ASCII / binary · up to 20 MiB · files stay on this device").color(MUTED).size(11.0));
+            ui.label(
+                RichText::new("ASCII / binary · up to 20 MiB · files stay on this device")
+                    .color(MUTED)
+                    .size(11.0),
+            );
             return false;
         }
-        ui.label(RichText::new(format!("{} · {} triangles", self.name, self.mesh.as_ref().map_or(0, |mesh| mesh.triangles.len()))).color(MUTED).size(11.0));
+        ui.label(
+            RichText::new(format!(
+                "{} · {} triangles",
+                self.name,
+                self.mesh.as_ref().map_or(0, |mesh| mesh.triangles.len())
+            ))
+            .color(MUTED)
+            .size(11.0),
+        );
         ui.horizontal_wrapped(|ui| {
             for (label, yaw, pitch) in [
                 ("Iso", 0.65, 0.55),
@@ -306,27 +318,80 @@ impl StlPanel {
         };
         match measurements {
             Ok(measurements) => {
-                ui.label(RichText::new(self.mode.measurement_label()).color(MUTED).size(11.0));
+                ui.label(
+                    RichText::new(self.mode.measurement_label())
+                        .color(MUTED)
+                        .size(11.0),
+                );
                 if let Some(volume) = measurements.volume_mm3 {
-                    ui.label(RichText::new(format!("{:.2} cm³", volume / 1000.0)).color(CREAM).size(24.0));
-                    ui.label(RichText::new(format!("Total volume · {:.2} mL · {:.2} in³", volume / 1000.0, volume / 25.4_f64.powi(3))).color(MUTED).size(11.0));
-                    ui.label(RichText::new("Closed mesh estimate · intersections not checked").color(MUTED).size(11.0));
+                    ui.label(
+                        RichText::new(format!("{:.2} cm³", volume / 1000.0))
+                            .color(CREAM)
+                            .size(24.0),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "Total volume · {:.2} mL · {:.2} in³",
+                            volume / 1000.0,
+                            volume / 25.4_f64.powi(3)
+                        ))
+                        .color(MUTED)
+                        .size(11.0),
+                    );
+                    ui.label(
+                        RichText::new("Closed mesh estimate · intersections not checked")
+                            .color(MUTED)
+                            .size(11.0),
+                    );
                 } else {
-                    ui.label(RichText::new("Total volume unavailable").color(PINK).size(14.0));
+                    ui.label(
+                        RichText::new("Total volume unavailable")
+                            .color(PINK)
+                            .size(14.0),
+                    );
                 }
-                ui.label(RichText::new(format!("Area {:.2} cm²", measurements.surface_area_mm2 / 100.0)).color(CREAM).size(12.0));
+                ui.label(
+                    RichText::new(format!(
+                        "Area {:.2} cm²",
+                        measurements.surface_area_mm2 / 100.0
+                    ))
+                    .color(CREAM)
+                    .size(12.0),
+                );
                 let [x, y, z] = measurements.dimensions_mm;
-                ui.label(RichText::new(format!("{x:.2} × {y:.2} × {z:.2} mm")).color(CREAM).size(12.0));
+                ui.label(
+                    RichText::new(format!("{x:.2} × {y:.2} × {z:.2} mm"))
+                        .color(CREAM)
+                        .size(12.0),
+                );
                 if self.mode != ShrinkMode::Off {
-                    if let Some(Ok(base)) = self.mesh.as_ref().map(|mesh| mesh.measure(self.unit, self.scale_percent / 100.0)) {
+                    if let Some(Ok(base)) = self
+                        .mesh
+                        .as_ref()
+                        .map(|mesh| mesh.measure(self.unit, self.scale_percent / 100.0))
+                    {
                         if let Some(volume) = base.volume_mm3 {
-                            ui.label(RichText::new(format!("Base model {:.2} cm³", volume / 1000.0)).color(MUTED).size(11.0));
+                            ui.label(
+                                RichText::new(format!("Base model {:.2} cm³", volume / 1000.0))
+                                    .color(MUTED)
+                                    .size(11.0),
+                            );
                         }
                     }
                 }
                 if let Some(mesh) = &self.mesh {
                     if mesh.metrics.volume.is_none() {
-                        ui.label(RichText::new(format!("Open edges {} · non-manifold {} · winding {} · degenerate {}", mesh.metrics.boundary_edges, mesh.metrics.non_manifold_edges, mesh.metrics.inconsistent_edges, mesh.metrics.degenerate_triangles)).color(PINK).size(11.0));
+                        ui.label(
+                            RichText::new(format!(
+                                "Open edges {} · non-manifold {} · winding {} · degenerate {}",
+                                mesh.metrics.boundary_edges,
+                                mesh.metrics.non_manifold_edges,
+                                mesh.metrics.inconsistent_edges,
+                                mesh.metrics.degenerate_triangles
+                            ))
+                            .color(PINK)
+                            .size(11.0),
+                        );
                         if mesh.metrics.mixed_component_winding {
                             ui.label(RichText::new("Mixed shell orientation / possible cavity; enclosed volume unverified").color(PINK).size(11.0));
                         }
@@ -353,14 +418,25 @@ impl StlPanel {
         });
         ui.horizontal_wrapped(|ui| {
             ui.label("Scale");
-            let response = ui.push_id("stl-scale", |ui| {
-                ui.add(egui::DragValue::new(&mut self.scale_percent).range(0.01..=10000.0).speed(1.0).suffix("%"))
-            }).inner;
+            let response = ui
+                .push_id("stl-scale", |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.scale_percent)
+                            .range(0.01..=10000.0)
+                            .speed(1.0)
+                            .suffix("%"),
+                    )
+                })
+                .inner;
             self.focused |= response.has_focus();
         });
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("Shrink").color(MUTED).size(12.0));
-            for mode in [ShrinkMode::Off, ShrinkMode::Estimate, ShrinkMode::Compensate] {
+            for mode in [
+                ShrinkMode::Off,
+                ShrinkMode::Estimate,
+                ShrinkMode::Compensate,
+            ] {
                 let response = ui.selectable_label(self.mode == mode, mode.label());
                 self.focused |= response.has_focus();
                 if response.clicked() {
@@ -377,13 +453,29 @@ impl StlPanel {
                 self.material_open = !self.material_open;
             }
             if let Some(profile) = &selected {
-                ui.label(RichText::new(format!("{} · cone {}", profile.name, profile.cone)).color(MUTED).size(11.0));
+                ui.label(
+                    RichText::new(format!("{} · cone {}", profile.name, profile.cone))
+                        .color(MUTED)
+                        .size(11.0),
+                );
             }
         });
         if let Some(profile) = &selected {
-            ui.label(RichText::new(format!("{:.2}% linear · {}", profile.linear_shrinkage, profile.basis.label())).color(MUTED).size(11.0));
+            ui.label(
+                RichText::new(format!(
+                    "{:.2}% linear · {}",
+                    profile.linear_shrinkage,
+                    profile.basis.label()
+                ))
+                .color(MUTED)
+                .size(11.0),
+            );
             if self.mode != ShrinkMode::Off {
-                let formula = if self.mode == ShrinkMode::Estimate { "Length × (1 − shrinkage)" } else { "Length ÷ (1 − shrinkage)" };
+                let formula = if self.mode == ShrinkMode::Estimate {
+                    "Length × (1 − shrinkage)"
+                } else {
+                    "Length ÷ (1 − shrinkage)"
+                };
                 ui.label(RichText::new(formula).color(MUTED).size(11.0));
             }
             if let Some(source) = &profile.source {
@@ -394,13 +486,20 @@ impl StlPanel {
             ui.indent("stl-material-choices", |ui| {
                 for profile in settings.available_profiles() {
                     ui.horizontal_wrapped(|ui| {
-                        let response = ui.selectable_label(settings.selected == profile.id, format!("{} · {:.2}%", profile.label(), profile.linear_shrinkage));
+                        let response = ui.selectable_label(
+                            settings.selected == profile.id,
+                            format!("{} · {:.2}%", profile.label(), profile.linear_shrinkage),
+                        );
                         self.focused |= response.has_focus();
                         if response.clicked() && settings.selected != profile.id {
                             settings.selected = profile.id.clone();
                             changed = true;
                         }
-                        if settings.custom_profiles.iter().any(|item| item.id == profile.id) {
+                        if settings
+                            .custom_profiles
+                            .iter()
+                            .any(|item| item.id == profile.id)
+                        {
                             if ui.small_button("del").clicked() {
                                 match settings.remove_custom(&profile.id) {
                                     Ok(()) => changed = true,
@@ -416,19 +515,31 @@ impl StlPanel {
                     self.custom_open = !self.custom_open;
                 }
                 if self.custom_open {
-                    let response = ui.add(egui::TextEdit::singleline(&mut self.custom_name).hint_text("Clay body / test name").desired_width(ui.available_width()));
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.custom_name)
+                            .hint_text("Clay body / test name")
+                            .desired_width(ui.available_width()),
+                    );
                     self.focused |= response.has_focus();
                     ui.horizontal_wrapped(|ui| {
                         ui.label("Cone");
-                        let response = ui.add(egui::TextEdit::singleline(&mut self.custom_cone).desired_width(50.0));
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.custom_cone).desired_width(50.0),
+                        );
                         self.focused |= response.has_focus();
                         ui.label("Linear shrink");
-                        let response = ui.add(egui::DragValue::new(&mut self.custom_shrinkage).range(0.0..=99.99).speed(0.1).suffix("%"));
+                        let response = ui.add(
+                            egui::DragValue::new(&mut self.custom_shrinkage)
+                                .range(0.0..=99.99)
+                                .speed(0.1)
+                                .suffix("%"),
+                        );
                         self.focused |= response.has_focus();
                     });
                     ui.horizontal_wrapped(|ui| {
                         for basis in Basis::ALL {
-                            let response = ui.selectable_label(self.custom_basis == basis, basis.label());
+                            let response =
+                                ui.selectable_label(self.custom_basis == basis, basis.label());
                             self.focused |= response.has_focus();
                             if response.clicked() {
                                 self.custom_basis = basis;
@@ -438,7 +549,12 @@ impl StlPanel {
                     let response = ui.button("Save test profile");
                     self.focused |= response.has_focus();
                     if response.clicked() {
-                        match settings.add_custom(&self.custom_name, &self.custom_cone, self.custom_shrinkage, self.custom_basis) {
+                        match settings.add_custom(
+                            &self.custom_name,
+                            &self.custom_cone,
+                            self.custom_shrinkage,
+                            self.custom_basis,
+                        ) {
                             Ok(_) => {
                                 self.custom_open = false;
                                 changed = true;
@@ -454,7 +570,10 @@ impl StlPanel {
     }
 
     fn viewport(&mut self, ui: &mut Ui, height: f32, settings: &Settings) {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click_and_drag());
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), height),
+            egui::Sense::click_and_drag(),
+        );
         self.focused |= response.has_focus();
         if response.dragged() {
             let motion = response.drag_motion();
@@ -488,20 +607,26 @@ impl StlPanel {
                         context.request_repaint();
                     }
                 });
-                ui.painter().add(egui::PaintCallback { rect, callback: Arc::new(callback) });
+                ui.painter().add(egui::PaintCallback {
+                    rect,
+                    callback: Arc::new(callback),
+                });
             }
         }
         self.gnomon(ui, rect);
         if self.focused {
-            ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0_f32, MUTED));
+            ui.painter()
+                .hline(rect.x_range(), rect.bottom(), Stroke::new(1.0_f32, MUTED));
         } else {
-            ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(0.5_f32, RULE));
+            ui.painter()
+                .hline(rect.x_range(), rect.bottom(), Stroke::new(0.5_f32, RULE));
         }
     }
 
     fn gnomon(&self, ui: &Ui, rect: egui::Rect) {
         let center = egui::pos2(rect.left() + 43.0, rect.bottom() - 43.0);
-        ui.painter().circle_filled(center, 36.0, BG.gamma_multiply(0.92));
+        ui.painter()
+            .circle_filled(center, 36.0, BG.gamma_multiply(0.92));
         let (right, up, depth) = camera_axes(self.yaw, self.pitch);
         let mut axes = [
             (0, "X", PINK),
@@ -512,13 +637,27 @@ impl StlPanel {
         for (axis, label, color) in axes {
             let direction = egui::vec2(right[axis], -up[axis]);
             if direction.length_sq() < 0.02 {
-                ui.painter().circle_stroke(center, 4.0, Stroke::new(1.0_f32, color));
-                ui.painter().text(center + egui::vec2(-11.0, 10.0), egui::Align2::CENTER_CENTER, label, FontId::monospace(11.0), color);
+                ui.painter()
+                    .circle_stroke(center, 4.0, Stroke::new(1.0_f32, color));
+                ui.painter().text(
+                    center + egui::vec2(-11.0, 10.0),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    FontId::monospace(11.0),
+                    color,
+                );
                 continue;
             }
             let end = center + direction * 25.0;
-            ui.painter().line_segment([center, end], Stroke::new(1.5_f32, color));
-            ui.painter().text(center + direction * 31.0, egui::Align2::CENTER_CENTER, label, FontId::monospace(11.0), color);
+            ui.painter()
+                .line_segment([center, end], Stroke::new(1.5_f32, color));
+            ui.painter().text(
+                center + direction * 31.0,
+                egui::Align2::CENTER_CENTER,
+                label,
+                FontId::monospace(11.0),
+                color,
+            );
         }
         ui.painter().circle_filled(center, 2.0, CREAM);
     }
@@ -526,21 +665,39 @@ impl StlPanel {
     fn report(&self, settings: &Settings) -> String {
         let mut report = format!("Jig STL report\nFile: {}\nSource units: {} (STL has no units)\nModel scale: {:.2}%\nMode: {}\n", self.name, self.unit.label(), self.scale_percent, self.mode.label());
         if let Some(profile) = settings.selected_profile() {
-            report.push_str(&format!("Clay: {}\nCone: {}\nLinear shrinkage: {:.6}%\nBasis: {}\n", profile.name, profile.cone, profile.linear_shrinkage, profile.basis.label()));
+            report.push_str(&format!(
+                "Clay: {}\nCone: {}\nLinear shrinkage: {:.6}%\nBasis: {}\n",
+                profile.name,
+                profile.cone,
+                profile.linear_shrinkage,
+                profile.basis.label()
+            ));
             if let Some(source) = profile.source {
                 report.push_str(&format!("Source: {source}\n"));
             }
         }
         if let Some(Ok(measurements)) = self.measurements(settings) {
             let [x, y, z] = measurements.dimensions_mm;
-            report.push_str(&format!("Dimensions: {x:.6} × {y:.6} × {z:.6} mm\nSurface area: {:.6} mm² / {:.6} cm²\n", measurements.surface_area_mm2, measurements.surface_area_mm2 / 100.0));
+            report.push_str(&format!(
+                "Dimensions: {x:.6} × {y:.6} × {z:.6} mm\nSurface area: {:.6} mm² / {:.6} cm²\n",
+                measurements.surface_area_mm2,
+                measurements.surface_area_mm2 / 100.0
+            ));
             if let Some(volume) = measurements.volume_mm3 {
-                report.push_str(&format!("Total volume: {volume:.6} mm³ / {:.6} cm³ (mL) / {:.6} in³\n", volume / 1000.0, volume / 25.4_f64.powi(3)));
+                report.push_str(&format!(
+                    "Total volume: {volume:.6} mm³ / {:.6} cm³ (mL) / {:.6} in³\n",
+                    volume / 1000.0,
+                    volume / 25.4_f64.powi(3)
+                ));
             } else {
                 report.push_str("Total volume: unavailable (mesh must be closed, nondegenerate and coherently oriented)\n");
             }
             if self.mode != ShrinkMode::Off {
-                if let Some(Ok(base)) = self.mesh.as_ref().map(|mesh| mesh.measure(self.unit, self.scale_percent / 100.0)) {
+                if let Some(Ok(base)) = self
+                    .mesh
+                    .as_ref()
+                    .map(|mesh| mesh.measure(self.unit, self.scale_percent / 100.0))
+                {
                     if let Some(volume) = base.volume_mm3 {
                         report.push_str(&format!("Base model volume: {volume:.6} mm³\n"));
                     }
@@ -561,11 +718,24 @@ impl StlPanel {
 
 fn sample_cube() -> Result<Mesh, String> {
     let vertices = [
-        [0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0], [0.0, 10.0, 0.0],
-        [0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [10.0, 10.0, 10.0], [0.0, 10.0, 10.0],
+        [0.0, 0.0, 0.0],
+        [10.0, 0.0, 0.0],
+        [10.0, 10.0, 0.0],
+        [0.0, 10.0, 0.0],
+        [0.0, 0.0, 10.0],
+        [10.0, 0.0, 10.0],
+        [10.0, 10.0, 10.0],
+        [0.0, 10.0, 10.0],
     ];
     let mut triangles = Vec::new();
-    for [a, b, c, d] in [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [3, 7, 6, 2], [0, 4, 7, 3], [1, 2, 6, 5]] {
+    for [a, b, c, d] in [
+        [0, 3, 2, 1],
+        [4, 5, 6, 7],
+        [0, 1, 5, 4],
+        [3, 7, 6, 2],
+        [0, 4, 7, 3],
+        [1, 2, 6, 5],
+    ] {
         triangles.push([vertices[a], vertices[b], vertices[c]]);
         triangles.push([vertices[a], vertices[c], vertices[d]]);
     }
@@ -575,7 +745,11 @@ fn sample_cube() -> Result<Mesh, String> {
 fn camera_axes(yaw: f32, pitch: f32) -> ([f32; 3], [f32; 3], [f32; 3]) {
     let (sy, cy) = yaw.sin_cos();
     let (sp, cp) = pitch.sin_cos();
-    ([cy, -sy, 0.0], [sp * sy, sp * cy, cp], [cp * sy, cp * cy, -sp])
+    (
+        [cy, -sy, 0.0],
+        [sp * sy, sp * cy, cp],
+        [cp * sy, cp * cy, -sp],
+    )
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -618,9 +792,19 @@ impl Renderer {
             let mut textures = Vec::new();
             let mut renderbuffers = Vec::new();
             let result = (|| {
-                let mesh_program = program(gl, version.version_declaration(), MESH_VERTEX, MESH_FRAGMENT)?;
+                let mesh_program = program(
+                    gl,
+                    version.version_declaration(),
+                    MESH_VERTEX,
+                    MESH_FRAGMENT,
+                )?;
                 programs.push(mesh_program);
-                let composite_program = program(gl, version.version_declaration(), QUAD_VERTEX, QUAD_FRAGMENT)?;
+                let composite_program = program(
+                    gl,
+                    version.version_declaration(),
+                    QUAD_VERTEX,
+                    QUAD_FRAGMENT,
+                )?;
                 programs.push(composite_program);
                 let vertex_array = gl.create_vertex_array()?;
                 arrays.push(vertex_array);
@@ -648,29 +832,48 @@ impl Renderer {
                 })
             })();
             if result.is_err() {
-                for handle in programs { gl.delete_program(handle); }
-                for handle in arrays { gl.delete_vertex_array(handle); }
-                for handle in buffers { gl.delete_buffer(handle); }
-                for handle in framebuffers { gl.delete_framebuffer(handle); }
-                for handle in textures { gl.delete_texture(handle); }
-                for handle in renderbuffers { gl.delete_renderbuffer(handle); }
+                for handle in programs {
+                    gl.delete_program(handle);
+                }
+                for handle in arrays {
+                    gl.delete_vertex_array(handle);
+                }
+                for handle in buffers {
+                    gl.delete_buffer(handle);
+                }
+                for handle in framebuffers {
+                    gl.delete_framebuffer(handle);
+                }
+                for handle in textures {
+                    gl.delete_texture(handle);
+                }
+                for handle in renderbuffers {
+                    gl.delete_renderbuffer(handle);
+                }
             }
             result
         }
     }
 
     fn upload(&mut self, gl: &glow::Context, mesh: &Mesh) -> Result<(), String> {
-        let center: [f64; 3] = std::array::from_fn(|axis| mesh.bounds.min[axis] * 0.5 + mesh.bounds.max[axis] * 0.5);
+        let center: [f64; 3] =
+            std::array::from_fn(|axis| mesh.bounds.min[axis] * 0.5 + mesh.bounds.max[axis] * 0.5);
         let extent = mesh.bounds.dimensions().into_iter().fold(0.0_f64, f64::max);
         if extent <= 0.0 || !extent.is_finite() {
             return Err("Model has no usable spatial extent for a 3D view.".into());
         }
         let mut bytes = Vec::with_capacity(mesh.triangles.len() * 3 * 6 * 4);
         for triangle in &mesh.triangles {
-            let points: [[f32; 3]; 3] = triangle.map(|point| std::array::from_fn(|axis| ((point[axis] - center[axis]) / extent) as f32));
+            let points: [[f32; 3]; 3] = triangle.map(|point| {
+                std::array::from_fn(|axis| ((point[axis] - center[axis]) / extent) as f32)
+            });
             let a: [f32; 3] = std::array::from_fn(|axis| points[1][axis] - points[0][axis]);
             let b: [f32; 3] = std::array::from_fn(|axis| points[2][axis] - points[0][axis]);
-            let mut normal = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+            let mut normal = [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ];
             let length = normal.iter().map(|value| value * value).sum::<f32>().sqrt();
             if length > 0.0 {
                 normal = normal.map(|value| value / length);
@@ -695,7 +898,9 @@ impl Renderer {
             gl.bind_vertex_array(None);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
             if gl.get_error() != glow::NO_ERROR {
-                return Err("Could not allocate the 3D model buffer. Measurements remain available.".into());
+                return Err(
+                    "Could not allocate the 3D model buffer. Measurements remain available.".into(),
+                );
             }
         }
         self.vertices = (mesh.triangles.len() * 3) as i32;
@@ -721,22 +926,67 @@ impl Renderer {
             gl.disable(glow::BLEND);
             if self.size != [width, height] {
                 gl.bind_texture(glow::TEXTURE_2D, Some(self.color));
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-                gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA as i32, width, height, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MIN_FILTER,
+                    glow::LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MAG_FILTER,
+                    glow::LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_WRAP_S,
+                    glow::CLAMP_TO_EDGE as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_WRAP_T,
+                    glow::CLAMP_TO_EDGE as i32,
+                );
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA as i32,
+                    width,
+                    height,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(None),
+                );
                 gl.bind_renderbuffer(glow::RENDERBUFFER, Some(self.depth));
                 gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT16, width, height);
                 gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.framebuffer));
-                gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.color), 0);
-                gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(self.depth));
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    Some(self.color),
+                    0,
+                );
+                gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::DEPTH_ATTACHMENT,
+                    glow::RENDERBUFFER,
+                    Some(self.depth),
+                );
                 if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
-                    self.error = Some("The 3D framebuffer could not be allocated. Measurements remain available.".into());
+                    self.error = Some(
+                        "The 3D framebuffer could not be allocated. Measurements remain available."
+                            .into(),
+                    );
                     gl.bind_framebuffer(glow::FRAMEBUFFER, painter.intermediate_fbo());
                     gl.bind_renderbuffer(glow::RENDERBUFFER, None);
                     gl.enable(glow::SCISSOR_TEST);
-                    gl.scissor(clip.left_px, clip.from_bottom_px, clip.width_px, clip.height_px);
+                    gl.scissor(
+                        clip.left_px,
+                        clip.from_bottom_px,
+                        clip.width_px,
+                        clip.height_px,
+                    );
                     return;
                 }
                 self.size = [width, height];
@@ -753,22 +1003,47 @@ impl Renderer {
                 gl.clear_depth_f32(1.0);
                 gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
                 gl.use_program(Some(self.mesh_program));
-                gl.uniform_2_f32(gl.get_uniform_location(self.mesh_program, "u_angles").as_ref(), view.yaw, view.pitch);
-                gl.uniform_2_f32(gl.get_uniform_location(self.mesh_program, "u_fit").as_ref(), 1.1 * (viewport.height_px as f32 / viewport.width_px.max(1) as f32).min(1.0) * view.scale, 1.1 * (viewport.width_px as f32 / viewport.height_px.max(1) as f32).min(1.0) * view.scale);
+                gl.uniform_2_f32(
+                    gl.get_uniform_location(self.mesh_program, "u_angles")
+                        .as_ref(),
+                    view.yaw,
+                    view.pitch,
+                );
+                gl.uniform_2_f32(
+                    gl.get_uniform_location(self.mesh_program, "u_fit").as_ref(),
+                    1.1 * (viewport.height_px as f32 / viewport.width_px.max(1) as f32).min(1.0)
+                        * view.scale,
+                    1.1 * (viewport.width_px as f32 / viewport.height_px.max(1) as f32).min(1.0)
+                        * view.scale,
+                );
                 gl.bind_vertex_array(Some(self.vertex_array));
                 gl.draw_arrays(glow::TRIANGLES, 0, self.vertices);
                 self.last_view = Some(view);
             }
             gl.bind_framebuffer(glow::FRAMEBUFFER, painter.intermediate_fbo());
-            gl.viewport(viewport.left_px, viewport.from_bottom_px, viewport.width_px, viewport.height_px);
+            gl.viewport(
+                viewport.left_px,
+                viewport.from_bottom_px,
+                viewport.width_px,
+                viewport.height_px,
+            );
             gl.enable(glow::SCISSOR_TEST);
-            gl.scissor(clip.left_px, clip.from_bottom_px, clip.width_px, clip.height_px);
+            gl.scissor(
+                clip.left_px,
+                clip.from_bottom_px,
+                clip.width_px,
+                clip.height_px,
+            );
             gl.disable(glow::DEPTH_TEST);
             gl.depth_mask(false);
             gl.use_program(Some(self.composite_program));
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.color));
-            gl.uniform_1_i32(gl.get_uniform_location(self.composite_program, "u_image").as_ref(), 0);
+            gl.uniform_1_i32(
+                gl.get_uniform_location(self.composite_program, "u_image")
+                    .as_ref(),
+                0,
+            );
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
             gl.bind_vertex_array(None);
@@ -795,13 +1070,21 @@ impl Renderer {
     }
 }
 
-fn program(gl: &glow::Context, version: &str, vertex: &str, fragment: &str) -> Result<glow::Program, String> {
+fn program(
+    gl: &glow::Context,
+    version: &str,
+    vertex: &str,
+    fragment: &str,
+) -> Result<glow::Program, String> {
     // Shader text is fixed application code; errors are reported inline rather
     // than panicking and taking the rest of the workbench down.
     unsafe {
         let program = gl.create_program()?;
         let mut shaders = Vec::new();
-        for (kind, source) in [(glow::VERTEX_SHADER, vertex), (glow::FRAGMENT_SHADER, fragment)] {
+        for (kind, source) in [
+            (glow::VERTEX_SHADER, vertex),
+            (glow::FRAGMENT_SHADER, fragment),
+        ] {
             let shader = match gl.create_shader(kind) {
                 Ok(shader) => shader,
                 Err(error) => {

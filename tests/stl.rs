@@ -106,10 +106,7 @@ fn tetrahedron_and_globally_reversed_winding_have_correct_volume() {
     let mesh = Mesh::from_triangles(triangles.clone()).unwrap();
     close(mesh.metrics.volume.unwrap(), 1.0 / 6.0);
     close(mesh.metrics.surface_area, 1.5 + 3.0_f64.sqrt() / 2.0);
-    let reversed = triangles
-        .into_iter()
-        .map(|[a, b, c]| [a, c, b])
-        .collect();
+    let reversed = triangles.into_iter().map(|[a, b, c]| [a, c, b]).collect();
     let mesh = Mesh::from_triangles(reversed).unwrap();
     close(mesh.metrics.volume.unwrap(), 1.0 / 6.0);
     assert_eq!(mesh.metrics.inconsistent_edges, 0);

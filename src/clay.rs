@@ -6,8 +6,7 @@ use crate::{model::title, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const STANDARD_104_SOURCE: &str =
-    "https://www.standardclay.com/products/104-red-clay-w-grog";
+pub const STANDARD_104_SOURCE: &str = "https://www.standardclay.com/products/104-red-clay-w-grog";
 pub const STANDARD_104_REVIEWED: &str = "2026-10-30";
 
 /// The input dimensions must refer to this starting stage.
@@ -67,9 +66,7 @@ impl Profile {
         if normalize_cone(&self.cone)? != self.cone {
             return Err("Use a canonical cone such as 06, 04, 4 or 6".into());
         }
-        if !self.linear_shrinkage.is_finite()
-            || !(0.0..100.0).contains(&self.linear_shrinkage)
-        {
+        if !self.linear_shrinkage.is_finite() || !(0.0..100.0).contains(&self.linear_shrinkage) {
             return Err("Linear shrinkage must be at least 0% and less than 100%".into());
         }
         if let Some(source) = &self.source {

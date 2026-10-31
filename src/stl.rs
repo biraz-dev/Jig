@@ -108,12 +108,12 @@ pub fn parse(bytes: &[u8]) -> Result<Mesh> {
                 return Err("STL must contain 1 to 200,000 triangles".into());
             }
             let mut triangles = Vec::with_capacity(count);
-            for record in bytes[84..].chunks_exact(50) {
+            for record in bytes[84..].as_chunks::<50>().0 {
                 let mut coordinates = [0.0; 12];
                 for (index, value) in coordinates.iter_mut().enumerate() {
-                    *value = f32::from_le_bytes(
-                        record[index * 4..index * 4 + 4].try_into().unwrap(),
-                    ) as f64;
+                    *value =
+                        f32::from_le_bytes(record[index * 4..index * 4 + 4].try_into().unwrap())
+                            as f64;
                     if !value.is_finite() {
                         return Err("STL contains a non-finite coordinate or normal".into());
                     }
@@ -172,12 +172,12 @@ impl Mesh {
             max: [f64::NEG_INFINITY; 3],
         };
         for point in triangles.iter().flatten() {
-            for axis in 0..3 {
-                if !point[axis].is_finite() {
+            for (axis, coordinate) in point.iter().enumerate() {
+                if !coordinate.is_finite() {
                     return Err("STL contains a non-finite coordinate".into());
                 }
-                bounds.min[axis] = bounds.min[axis].min(point[axis]);
-                bounds.max[axis] = bounds.max[axis].max(point[axis]);
+                bounds.min[axis] = bounds.min[axis].min(*coordinate);
+                bounds.max[axis] = bounds.max[axis].max(*coordinate);
             }
         }
         let metrics = analyze(&triangles, bounds)?;
@@ -205,8 +205,7 @@ impl Mesh {
                 .zip(dimensions_mm)
                 .any(|(source, scaled)| *source > 0.0 && scaled == 0.0)
             || (self.metrics.surface_area > 0.0 && surface_area_mm2 == 0.0)
-            || (self.metrics.volume.is_some_and(|value| value > 0.0)
-                && volume_mm3 == Some(0.0))
+            || (self.metrics.volume.is_some_and(|value| value > 0.0) && volume_mm3 == Some(0.0))
         {
             return Err("Scaled measurements exceed numeric limits".into());
         }
@@ -228,7 +227,10 @@ impl Mesh {
         bytes.extend_from_slice(&(self.triangles.len() as u32).to_le_bytes());
         let mut exported_vertices = HashMap::new();
         for triangle in &self.triangles {
-            let normal = cross(subtract(triangle[1], triangle[0]), subtract(triangle[2], triangle[0]));
+            let normal = cross(
+                subtract(triangle[1], triangle[0]),
+                subtract(triangle[2], triangle[0]),
+            );
             let length = dot(normal, normal).sqrt();
             for coordinate in normal.map(|value| if length > 0.0 { value / length } else { 0.0 }) {
                 bytes.extend_from_slice(&(coordinate as f32).to_le_bytes());
@@ -236,7 +238,10 @@ impl Mesh {
             for point in triangle {
                 let scaled = point.map(|coordinate| (coordinate * scale) as f32);
                 if scaled.iter().any(|value| !value.is_finite())
-                    || point.iter().zip(scaled).any(|(source, value)| *source != 0.0 && value == 0.0)
+                    || point
+                        .iter()
+                        .zip(scaled)
+                        .any(|(source, value)| *source != 0.0 && value == 0.0)
                 {
                     return Err("Scaled vertices exceed binary STL precision limits".into());
                 }
@@ -302,7 +307,10 @@ fn analyze(triangles: &[Triangle], bounds: Bounds) -> Result<Metrics> {
     let mut surface = Sum::default();
     let mut degenerate_triangles = 0;
     for (index, triangle) in triangles.iter().enumerate() {
-        let normal = cross(subtract(triangle[1], triangle[0]), subtract(triangle[2], triangle[0]));
+        let normal = cross(
+            subtract(triangle[1], triangle[0]),
+            subtract(triangle[2], triangle[0]),
+        );
         let area = dot(normal, normal).sqrt() * 0.5;
         if !area.is_finite() {
             return Err("STL geometry exceeds numeric limits".into());
@@ -325,7 +333,14 @@ fn analyze(triangles: &[Triangle], bounds: Bounds) -> Result<Metrics> {
                 edge.direction += direction;
                 union(&mut parents, &mut ranks, index, edge.triangle);
             } else {
-                edges.insert(key, Edge { count: 1, direction, triangle: index });
+                edges.insert(
+                    key,
+                    Edge {
+                        count: 1,
+                        direction,
+                        triangle: index,
+                    },
+                );
             }
         }
     }
@@ -352,15 +367,21 @@ fn analyze(triangles: &[Triangle], bounds: Bounds) -> Result<Metrics> {
         }
         component.volume.add(volume);
     }
-    let positive = components.values().any(|component| component.volume.value > 0.0);
-    let negative = components.values().any(|component| component.volume.value < 0.0);
+    let positive = components
+        .values()
+        .any(|component| component.volume.value > 0.0);
+    let negative = components
+        .values()
+        .any(|component| component.volume.value < 0.0);
     let mixed_component_winding = positive && negative;
     let closed = boundary_edges == 0
         && non_manifold_edges == 0
         && inconsistent_edges == 0
         && degenerate_triangles == 0
         && !mixed_component_winding
-        && components.values().all(|component| component.volume.value != 0.0);
+        && components
+            .values()
+            .all(|component| component.volume.value != 0.0);
     let mut volume = Sum::default();
     for component in components.values() {
         volume.add(component.volume.value.abs());
@@ -408,7 +429,11 @@ fn subtract(a: Point, b: Point) -> Point {
 }
 
 fn cross(a: Point, b: Point) -> Point {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 fn dot(a: Point, b: Point) -> f64 {

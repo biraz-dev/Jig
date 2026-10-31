@@ -336,6 +336,25 @@ impl BrowserApp {
         self.calculation.clear();
     }
 
+    fn focus_after_resize(&mut self, ctx: &egui::Context) {
+        let editing = ctx
+            .memory(|memory| memory.focused())
+            .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
+        if editing {
+            return;
+        }
+        if self.focus == 2
+            && self.timeline_view
+            && self.task_date_edit.is_none()
+            && self.task_date_legacy.is_none()
+        {
+            self.timeline.request_focus();
+        } else if self.focus == 4 {
+            self.stl.request_open_focus();
+        }
+        self.scroll_selected = true;
+    }
+
     fn restore_weather(&mut self) {
         if let Some(config) = self.state.preferences.weather.clone() {
             self.weather.replace_config(Some(config));
@@ -1142,6 +1161,14 @@ impl BrowserApp {
 
     fn task_date_editor(&mut self, ui: &mut Ui, id: u64) {
         ui.indent(("task-date-editor", id), |ui| {
+            if self.focus_task_date {
+                // Opening an editor with Enter/Space must not also submit its
+                // newly focused field in this same frame.
+                ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
+                });
+            }
             let owner = if self.task_date_timeline { 2 } else { 1 };
             let field = egui::Id::new(("task-date-input", id));
             ui.label(RichText::new("Due").color(BLUE).size(11.0));
@@ -1790,24 +1817,12 @@ impl eframe::App for BrowserApp {
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M)) {
             self.expanded = !self.expanded;
-            if self.focus == 2
-                && self.timeline_view
-                && self.task_date_edit.is_none()
-                && self.task_date_legacy.is_none()
-            {
-                self.timeline.request_focus();
-            }
+            self.focus_after_resize(ctx);
             ctx.request_repaint();
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
             self.expanded = !self.expanded;
-            if self.focus == 2
-                && self.timeline_view
-                && self.task_date_edit.is_none()
-                && self.task_date_legacy.is_none()
-            {
-                self.timeline.request_focus();
-            }
+            self.focus_after_resize(ctx);
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.expanded = false;

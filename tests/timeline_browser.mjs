@@ -59,7 +59,7 @@ async function key(page, value) {
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["timeline-desktop", "timeline-mobile", "timeline-edit", "timeline-failure"]);
+  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-mobile", "timeline-edit", "timeline-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
@@ -242,6 +242,9 @@ try {
   await assertMilestone(current.page, rose);
   assert.equal(await raw(current.page), originalRaw, "Viewing a timeline must not migrate legacy deadlines, add dates or change the featured task");
   await capture(current.page, "timeline-desktop");
+  await key(current.page, "Control+m");
+  await capture(current.page, "timeline-dashboard");
+  await key(current.page, "Control+m");
 
   progress("navigate week and month windows with the keyboard");
   await tab(current.page); // Month follows the shortcut's Week anchor.

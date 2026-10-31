@@ -143,9 +143,41 @@ async function readReport(page) {
     await page.evaluate(() => navigator.clipboard.writeText("Undo report pending"));
     await stl(page);
     if (attempt) await page.waitForTimeout(250);
-    // The shortcut focuses Open STL; Sample, Clear, then Copy follow it.
-    await tab(page, 3);
-    await key(page, "Space");
+    // Read through the visible Copy control. A lost keyboard anchor after
+    // cross-applet Undo must never turn this observation into a Sample click.
+    assert.deepEqual(page.viewportSize(), { width: 1440, height: 1000 });
+    await page.mouse.move(1400, 980);
+    await paint(page);
+    const png = await page.screenshot({
+      ...screenshotOptions, timeout: 5000, clip: { x: 8, y: 46, width: 420, height: 36 },
+    });
+    const visible = await page.evaluate(async encoded => {
+      const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      const count = (left, top, right, bottom, color, tolerance) => {
+        let total = 0;
+        for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+          const offset = ((y - 46) * bitmap.width + x - 8) * 4;
+          if (color.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= tolerance)) total++;
+        }
+        return total;
+      };
+      const answer = {
+        heading: count(16, 55, 45, 75, [234, 133, 173], 12),
+        fill: count(288, 55, 384, 75, [60, 60, 60], 6),
+        label: count(288, 55, 384, 75, [246, 218, 174], 12),
+      };
+      bitmap.close();
+      return answer;
+    }, png.toString("base64"));
+    assert.ok(visible.heading >= 10 && visible.fill >= 900 && visible.label >= 30,
+      `The maximized STL heading and Copy report control must be visible before clicking: ${JSON.stringify(visible)}`);
+    await page.mouse.click(336, 65, { delay: 50 });
+    await paint(page);
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
       report = await page.evaluate(() => navigator.clipboard.readText());

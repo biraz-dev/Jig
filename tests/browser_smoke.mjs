@@ -66,7 +66,7 @@ async function capture(page, name) {
     "consolidated-math-maximized", "consolidated-calendar-maximized",
     "consolidated-checklist-maximized", "consolidated-dated-task",
     "task-colors-desktop", "task-colors-mobile", "task-colors-six-weeks",
-    "task-colors-calendar-empty", "task-colors-mobile-touch",
+    "task-colors-calendar-empty", "task-colors-calendar-selected", "task-colors-mobile-touch",
     "task-colors-list-scroll",
     "task-colors-date-focus", "task-colors-failure",
   ]);
@@ -198,29 +198,32 @@ async function saved(page) {
   return page.evaluate(key => localStorage.getItem(key), key);
 }
 
+async function navigateKey(page, key) {
+  await page.keyboard.press(key);
+  await paint(page);
+  // Browser animation frames can run before WASM has consumed its input queue.
+  // Give each discrete navigation action its own app frame, as human typing
+  // does, instead of letting several Tab events collapse into one advance.
+  await page.waitForTimeout(100);
+}
+
 async function tab(page, count = 1) {
   for (let index = 0; index < count; index++) {
-    await page.keyboard.press("Tab");
-    await paint(page);
+    await navigateKey(page, "Tab");
   }
 }
 
 async function maximizeApplet(page, applet) {
   // Reset to the dashboard and surrender editor focus through normal shortcuts.
   await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await page.keyboard.press("Escape");
-  await paint(page);
-  await page.keyboard.press("Control+Alt+4");
-  await paint(page);
+  await navigateKey(page, "Escape");
+  await navigateKey(page, "Control+Alt+4");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
-  await page.keyboard.press("Escape");
-  await paint(page);
+  await navigateKey(page, "Escape");
   for (let index = 0; index < (applet === "calendar" ? 2 : 1); index++) {
-    await page.keyboard.press("ArrowLeft");
-    await paint(page);
+    await navigateKey(page, "ArrowLeft");
   }
-  await page.keyboard.press("Control+m");
-  await paint(page);
+  await navigateKey(page, "Control+m");
 }
 
 function taskColorFixture(date = "2026-10-30") {
@@ -548,15 +551,14 @@ try {
   await maximizeApplet(colored.page, "calendar");
   // Data, Source, previous month, next month, Today, then October 1.
   await tab(colored.page, 6);
-  await colored.page.keyboard.press("Space");
-  await paint(colored.page);
+  await navigateKey(colored.page, "Space");
   await capture(colored.page, "task-colors-calendar-empty");
   const emptyDayRender = await colored.page.screenshot();
   await tab(colored.page, 29);
-  await colored.page.keyboard.press("Enter");
-  await paint(colored.page);
+  await navigateKey(colored.page, "Enter");
   assert.notDeepEqual(await colored.page.screenshot(), emptyDayRender, "Keyboard date activation must visibly update the calendar");
   assert.equal(await saved(colored.page), coloredRaw, "Calendar date selection must not edit tasks, colors or the featured countdown");
+  await capture(colored.page, "task-colors-calendar-selected");
   // After October 30: October 31, then the eight noninteractive due-task rows.
   // The last completed row starts below the list's 120px viewport; keyboard
   // focus must reveal it without needing a pointer or changing its status.
@@ -570,11 +572,10 @@ try {
   await maximizeApplet(colored.page, "checklist");
   // Data, Source, first row's star, checkbox, then its color swatch.
   await tab(colored.page, 5);
-  await colored.page.keyboard.press("Space");
-  await paint(colored.page);
+  await navigateKey(colored.page, "Space");
   // Date, edit, enabled down, del, None, Rose, Amber.
   await tab(colored.page, 7);
-  await colored.page.keyboard.press("Space");
+  await navigateKey(colored.page, "Space");
   await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "amber", key);
   let coloredState = JSON.parse(await saved(colored.page));
   assert.equal(coloredState.tasks.length, 9, "Color changes must not create checklist copies");
@@ -588,11 +589,11 @@ try {
   await paint(colored.page);
   await tab(colored.page);
   await capture(colored.page, "task-colors-date-focus");
-  await colored.page.keyboard.press("Space");
+  await navigateKey(colored.page, "Space");
   await colored.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await colored.page.keyboard.press("Control+a");
   await colored.page.keyboard.type("2026-10-31T18:00:00Z", { delay: 10 });
-  await colored.page.keyboard.press("Enter");
+  await navigateKey(colored.page, "Enter");
   await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines.find(deadline => deadline.id === 101).at === "2026-10-31T18:00:00Z", key);
   coloredState = JSON.parse(await saved(colored.page));
   assert.equal(coloredState.tasks[0].deadline, 101);
@@ -605,7 +606,7 @@ try {
   progress("complete a colored dated task, then reload its saved state");
   await maximizeApplet(colored.page, "checklist");
   await tab(colored.page, 4); // First row checkbox.
-  await colored.page.keyboard.press("Space");
+  await navigateKey(colored.page, "Space");
   await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, key);
   coloredState = JSON.parse(await saved(colored.page));
   assert.equal(coloredState.tasks[0].color, "amber", "Completion must retain a task's color");
@@ -615,21 +616,18 @@ try {
 
   progress("export colored task data through the actual Data control");
   await maximizeApplet(colored.page, "checklist");
-  await colored.page.keyboard.press("Escape");
-  await paint(colored.page);
-  await colored.page.keyboard.press("Control+Alt+d");
-  await paint(colored.page);
+  await navigateKey(colored.page, "Escape");
+  await navigateKey(colored.page, "Control+Alt+d");
   // Data, Start empty, Open local, Sample mode, Import JSON, Export JSON.
   await tab(colored.page, 6);
   const coloredDownloadEvent = colored.page.waitForEvent("download");
-  await colored.page.keyboard.press("Space");
+  await navigateKey(colored.page, "Space");
   const coloredDownload = await coloredDownloadEvent;
   assert.equal(coloredDownload.suggestedFilename(), "jig.json");
   const coloredExport = JSON.parse(await readFile(await coloredDownload.path(), "utf8"));
   assert.deepEqual(coloredExport, coloredState, "JSON export must include colors and completion on the original task records");
-  await colored.page.keyboard.press("Control+Alt+d");
-  await paint(colored.page);
-  await colored.page.keyboard.press("Escape");
+  await navigateKey(colored.page, "Control+Alt+d");
+  await navigateKey(colored.page, "Escape");
 
   progress("import colored JSON through the actual file control and confirmation");
   const importedColors = structuredClone(coloredExport);
@@ -642,7 +640,7 @@ try {
   // With Data collapsed: Data, Confirm import. The file selection only queues
   // the import; the Rust UI must validate and explicitly accept it.
   await tab(colored.page, 2);
-  await colored.page.keyboard.press("Space");
+  await navigateKey(colored.page, "Space");
   await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "blue", key);
   assert.deepEqual(JSON.parse(await saved(colored.page)), importedColors, "Valid JSON import must preserve all linked task records, colors and status");
   await boot(colored.page, true);
@@ -655,7 +653,7 @@ try {
   await boot(coloredMobile.page);
   await maximizeApplet(coloredMobile.page, "calendar");
   await tab(coloredMobile.page, 6);
-  await coloredMobile.page.keyboard.press("Space"); // October 1 is empty.
+  await navigateKey(coloredMobile.page, "Space"); // October 1 is empty.
   await paint(coloredMobile.page);
   const beforeTouch = await coloredMobile.page.screenshot();
   // In the fixed 390px maximized calendar, October 30 is Friday in row five.
@@ -663,11 +661,11 @@ try {
   // during visual review; no JavaScript hook selects or mutates application data.
   await coloredMobile.page.touchscreen.tap(247, 303);
   await paint(coloredMobile.page);
+  await coloredMobile.page.waitForTimeout(100);
   assert.notDeepEqual(await coloredMobile.page.screenshot(), beforeTouch, "Touching another date must visibly update the calendar");
   await capture(coloredMobile.page, "task-colors-mobile-touch");
   assert.equal(await saved(coloredMobile.page), coloredRaw, "Touch date selection must preserve the starred task and all task data");
-  await coloredMobile.page.keyboard.press("Escape");
-  await paint(coloredMobile.page);
+  await navigateKey(coloredMobile.page, "Escape");
   assert.equal(await coloredMobile.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await capture(coloredMobile.page, "task-colors-mobile");
   await release(coloredMobile.context, "task-colors-mobile");

@@ -853,6 +853,10 @@ impl StlPanel {
     }
 
     fn gnomon(&self, ui: &Ui, rect: egui::Rect) {
+        let rect = rect.intersect(ui.clip_rect());
+        if rect.width() < 86.0 || rect.height() < 86.0 {
+            return;
+        }
         let center = egui::pos2(rect.left() + 43.0, rect.bottom() - 43.0);
         ui.painter()
             .circle_filled(center, 36.0, BG.gamma_multiply(0.92));

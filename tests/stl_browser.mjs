@@ -53,7 +53,9 @@ async function key(page, value) {
 }
 async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
-  const png = await page.screenshot({ path: resolve(results, `${name}.png`) });
+  const png = await page.screenshot({
+    path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide",
+  });
   const allow = new Set([
     "stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-failure", "stl-reloaded", "stl-open-mesh",
     "stl-focus-open", "stl-focus-tab1", "stl-focus-tab2", "stl-focus-tab3",
@@ -161,13 +163,16 @@ async function modelView(page) {
   // The maximized desktop viewport's interior excludes control focus outlines,
   // footer text and the fixed axis widget. A restored camera must draw the same
   // cube pixels here; the supplied clock is fixed for deterministic captures.
-  return page.screenshot({ clip: { x: 50, y: 180, width: 700, height: 600 } });
+  return page.screenshot({
+    clip: { x: 50, y: 180, width: 700, height: 600 }, timeout: 60000, animations: "disabled", caret: "hide",
+  });
 }
 
 async function setScale(page, percent) {
   await maximize(page);
   await tab(page, 16); // Physical scale, starting from the Open STL anchor.
-  await key(page, "Enter");
+  // DragValue enters its text editor on Tab focus. Enter would commit and close
+  // it before typing; wait for that real editor instead, then commit once below.
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await page.keyboard.press("Control+a");
   await page.keyboard.type(String(percent), { delay: 30 });

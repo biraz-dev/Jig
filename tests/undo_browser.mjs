@@ -9,6 +9,7 @@ const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
 const storageKey = "jig.personal.v1";
 const results = resolve("playwright-results");
+const screenshotOptions = { timeout: 60000, animations: "disabled", caret: "hide" };
 await mkdir(results, { recursive: true });
 const fixture = {
   version: 1,
@@ -42,7 +43,7 @@ async function key(page, value) {
 }
 async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
-  const png = await page.screenshot({ path: resolve(results, `${name}.png`) });
+  const png = await page.screenshot({ ...screenshotOptions, path: resolve(results, `${name}.png`) });
   const allowed = new Set(["undo-desktop", "undo-viewer-cleared", "undo-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
@@ -260,13 +261,12 @@ try {
   progress("reverse STL and calculator actions in one chronological history");
   current = await open("undo-cross-applet");
   await stl(current.page);
-  const emptyModel = await current.page.screenshot({ clip: { x: 50, y: 180, width: 700, height: 600 } });
+  const emptyModel = await current.page.screenshot({ ...screenshotOptions, clip: { x: 50, y: 180, width: 700, height: 600 } });
   await current.page.locator("#jig-stl-import").setInputFiles({ name: "Sample-undo-cube.stl", mimeType: "model/stl", buffer: cube() });
   await current.page.waitForTimeout(1300);
   assert.match(await readReport(current.page), /Total volume: 1000\.000000 mm³/);
   await stl(current.page);
   await tab(current.page, 16); // Open STL -> physical scale, independent of header controls.
-  await key(current.page, "Enter");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await current.page.keyboard.press("Control+a");
   await current.page.keyboard.type("200", { delay: 30 });
@@ -281,7 +281,7 @@ try {
   assert.deepEqual(await state(current.page), fixture, "Viewer undo must not rewrite workbench state");
   await key(current.page, "Control+z"); // The initial local-file open is the remaining entry.
   await paint(current.page);
-  assert.deepEqual(await current.page.screenshot({ clip: { x: 50, y: 180, width: 700, height: 600 } }), emptyModel, "Undoing the file open must restore the empty viewer");
+  assert.deepEqual(await current.page.screenshot({ ...screenshotOptions, clip: { x: 50, y: 180, width: 700, height: 600 } }), emptyModel, "Undoing the file open must restore the empty viewer");
   await capture(current.page, "undo-viewer-cleared");
   await current.context.close();
 

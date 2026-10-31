@@ -186,7 +186,7 @@ self-intersections, overlapping or nested shells; a closed mesh is not a
 certificate of a valid solid. Mixed-winding cavity meshes need inspection or
 repair in a modeling application. Jig does not repair geometry.
 
-Shrinkage is an explicitly chosen **uniform linear estimate**. Forecast applies
+Shrinkage is an explicitly chosen **uniform linear estimate**. Estimate applies
 `1 - shrinkage / 100`; compensation applies its reciprocal. For example, 6%
 linear shrinkage retains 94% of each length and about 83.06% of volume.
 Compensation requires about **106.38%** of the target length. These calculations
@@ -382,9 +382,10 @@ background tabs may throttle the otherwise one-second countdown refresh. Browser
 storage can be cleared or unavailable; JSON export is the portable backup.
 Browser state is capped at 2 MiB; CLI history is intentionally unbounded.
 
-Arithmetic uses f64 rather than exact decimal/rational values. There is no undo,
-recurring deadline, timezone database selection, external calendar sync,
-scientific calculator or automatic backup retention. The native terminal editor
+Arithmetic uses f64 rather than exact decimal/rational values. Undo is currently
+available in the browser; the terminal has no undo. There are no recurring
+deadlines, timezone database selection, external calendar sync, scientific
+calculator or automatic backup retention. The native terminal editor
 uses append/backspace editing. No native graphical application is included.
 The preview bundles monospace fonts and makes no remote font requests.
 Optional weather sends the selected location to Open-Meteo as described above. It has no service worker: reopening it offline depends on the browser's

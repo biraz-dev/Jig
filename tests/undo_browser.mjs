@@ -33,7 +33,8 @@ const timer = setTimeout(() => {
 function progress(message) { phase = message; console.log(`Undo browser phase: ${message}`); }
 async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.waitForTimeout(100);
+  // Browser RAF can precede WASM input consumption under software-rendered 3D.
+  await page.waitForTimeout(250);
 }
 async function key(page, value) {
   await page.keyboard.press(value);
@@ -137,18 +138,23 @@ async function stl(page) {
   await page.waitForTimeout(250);
 }
 async function readReport(page) {
-  await page.evaluate(() => navigator.clipboard.writeText("Undo report pending"));
-  await stl(page);
-  // The shortcut focuses Open STL; Sample, Clear, then Copy follow it.
-  await tab(page, 3);
-  await key(page, "Space");
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
-    const report = await page.evaluate(() => navigator.clipboard.readText());
-    if (report.startsWith("Jig STL report\n")) return report;
-    await page.waitForTimeout(50);
+  let report = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => navigator.clipboard.writeText("Undo report pending"));
+    await stl(page);
+    if (attempt) await page.waitForTimeout(250);
+    // The shortcut focuses Open STL; Sample, Clear, then Copy follow it.
+    await tab(page, 3);
+    await key(page, "Space");
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      report = await page.evaluate(() => navigator.clipboard.readText());
+      if (report.startsWith("Jig STL report\n")) return report;
+      await page.waitForTimeout(50);
+    }
+    if (attempt === 0) console.warn("Undo report read unavailable; retrying the read-only Copy report action once after reanchoring.");
   }
-  assert.fail("The visible Copy report control did not produce an STL report");
+  assert.fail(`The visible Copy report control did not produce an STL report after two bounded read attempts; clipboard began ${JSON.stringify(report.slice(0, 180))}`);
 }
 async function exportData(page, hasUndo) {
   await resetFocus(page);

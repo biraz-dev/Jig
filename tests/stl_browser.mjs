@@ -324,6 +324,7 @@ try {
   await boot(current.page);
   assert.equal(await saved(current.page), fixtureRaw);
   await maximize(current.page);
+  const emptyViewer = await modelView(current.page);
   // The shortcut has focused the actual Open STL button; activate it directly.
   const chooserEvent = current.page.waitForEvent("filechooser", { timeout: 5000 });
   await key(current.page, "Space");
@@ -456,6 +457,7 @@ try {
 
   progress("clear and restore a model using the visible Undo button");
   await control(current.page, 6); // Clear drops the current model.
+  assert.deepEqual(await modelView(current.page), emptyViewer, "Clear must empty the model before testing Undo");
   // The global header Undo remains available after the applet is empty.
   await control(current.page, 2);
   const restoredAfterClear = await copyReport(current.page);

@@ -521,7 +521,14 @@ impl BrowserApp {
                 }
             });
         if self.scroll_selected && self.focus == index {
-            frame.response.scroll_to_me(Some(egui::Align::Center));
+            // An expanded viewer can be slightly taller than the visible area.
+            // Align its top so selecting it never scrolls the file controls away.
+            let align = if self.expanded && index == 4 {
+                egui::Align::Min
+            } else {
+                egui::Align::Center
+            };
+            frame.response.scroll_to_me(Some(align));
             self.scroll_selected = false;
         }
         let visible = ui.clip_rect();
@@ -1582,18 +1589,7 @@ impl eframe::App for BrowserApp {
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
-            let available_height = ui.available_height();
-            if self.expanded
-                && self.focus == 4
-                && ui.available_width() >= 760.0
-                && available_height >= 500.0
-            {
-                // The wide viewer already scrolls its settings internally.
-                // Keep its toolbar outside the dashboard's focus-driven scroll.
-                self.tool(ui, 4, available_height - 8.0);
-                return;
-            }
-            let height = available_height.max(500.0);
+            let height = ui.available_height().max(500.0);
             egui::ScrollArea::vertical()
                 .id_salt("dashboard")
                 .show(ui, |ui| {

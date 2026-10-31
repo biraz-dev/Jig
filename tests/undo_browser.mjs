@@ -148,20 +148,41 @@ async function readReport(page) {
     assert.deepEqual(page.viewportSize(), { width: 1440, height: 1000 });
     await page.mouse.move(1400, 980);
     await paint(page);
-    const png = await page.screenshot({
-      ...screenshotOptions, timeout: 5000, clip: { x: 8, y: 46, width: 420, height: 36 },
-    });
-    const visible = await page.evaluate(async encoded => {
+    let encoded;
+    let clipped = true;
+    try {
+      const png = await page.screenshot({
+        ...screenshotOptions, timeout: 5000, clip: { x: 8, y: 46, width: 420, height: 36 },
+      });
+      encoded = png.toString("base64");
+    } catch (error) {
+      if (error.name !== "TimeoutError") throw error;
+      console.warn("Undo toolbar screenshot timed out; verifying the same public canvas pixels instead.");
+      let timeout;
+      try {
+        const data = await Promise.race([
+          page.evaluate(() => document.getElementById("jig_canvas")?.toDataURL("image/png") ?? ""),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Public Undo canvas capture exceeded 3000ms")), 3000);
+          }),
+        ]);
+        assert.ok(data.startsWith("data:image/png;base64,"), "The public canvas must provide a PNG for toolbar verification");
+        encoded = data.slice("data:image/png;base64,".length);
+        clipped = false;
+      } finally { clearTimeout(timeout); }
+    }
+    const visible = await page.evaluate(async ({ encoded, clipped }) => {
       const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
       const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const canvas = new OffscreenCanvas(420, 36);
       const context = canvas.getContext("2d");
-      context.drawImage(bitmap, 0, 0);
-      const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      if (clipped) context.drawImage(bitmap, 0, 0);
+      else context.drawImage(bitmap, 8, 46, 420, 36, 0, 0, 420, 36);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
       const count = (left, top, right, bottom, color, tolerance) => {
         let total = 0;
         for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
-          const offset = ((y - 46) * bitmap.width + x - 8) * 4;
+          const offset = ((y - 46) * canvas.width + x - 8) * 4;
           if (color.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= tolerance)) total++;
         }
         return total;
@@ -173,7 +194,7 @@ async function readReport(page) {
       };
       bitmap.close();
       return answer;
-    }, png.toString("base64"));
+    }, { encoded, clipped });
     assert.ok(visible.heading >= 10 && visible.fill >= 900 && visible.label >= 30,
       `The maximized STL heading and Copy report control must be visible before clicking: ${JSON.stringify(visible)}`);
     await page.mouse.click(336, 65, { delay: 50 });

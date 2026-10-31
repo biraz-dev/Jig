@@ -197,14 +197,60 @@ async function assertMilestone(page, firstBar) {
   }, { encoded: png.toString("base64"), centerY: (firstBar.top + firstBar.bottom) / 2 + 3 * 36 });
   assert.ok(marker && marker.count >= 8 && marker.width <= 13 && marker.height >= 6, "A task with only a due date must render as a compact colored milestone rather than an invented duration");
 }
+async function assertCompactRows(page, png) {
+  const visible = await page.evaluate(async encoded => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    // Confine this inspection to the actual left calendar/timeline panel.
+    // Locate the first duration's 10px color band, then inspect the distinct
+    // task/status marks at the left of each real 36px row beneath it.
+    const bands = [];
+    for (let y = 150; y < 500; y++) {
+      let count = 0;
+      for (let x = 100; x < 330; x++) {
+        const offset = (y * bitmap.width + x) * 4;
+        if ([234, 133, 173].every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 3)) count++;
+      }
+      if (count > 30) {
+        let band = bands.at(-1);
+        if (!band || y > band.bottom + 1) { band = { top: y, bottom: y, count: 0 }; bands.push(band); }
+        band.bottom = y; band.count += count;
+      }
+    }
+    const band = bands.filter(value => value.bottom - value.top >= 5).sort((a, b) => b.count - a.count)[0];
+    if (!band) { bitmap.close(); return 0; }
+    const firstMarkY = (band.top + band.bottom) / 2 - 8;
+    let visible = 0;
+    for (let row = 0; row < 7; row++) {
+      let marked = false;
+      for (let y = Math.floor(firstMarkY + row * 36 - 4); y <= Math.ceil(firstMarkY + row * 36 + 4); y++) for (let x = 17; x <= 28; x++) {
+        const offset = (y * bitmap.width + x) * 4;
+        const channels = [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
+        if (Math.max(...channels) > 55 && Math.max(...channels) - Math.min(...channels) > 10) marked = true;
+      }
+      if (marked) visible++;
+    }
+    bitmap.close();
+    return visible;
+  }, png.toString("base64"));
+  assert.ok(visible >= 5, `The fixed dashboard timeline must expose at least five task rows without expanding or scrolling; found ${visible}`);
+}
 async function schedule(page, due, start, submit = true) {
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.type(due, { delay: 15 });
+  // Browser event delivery can precede WASM text consumption. Give the last
+  // character its own app frame before moving focus to another field.
+  await paint(page);
   await key(page, "Tab");
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.type(start, { delay: 15 });
+  await paint(page);
   if (submit) await key(page, "Enter");
 }
 async function exportData(page) {
@@ -243,7 +289,7 @@ try {
   assert.equal(await raw(current.page), originalRaw, "Viewing a timeline must not migrate legacy deadlines, add dates or change the featured task");
   await capture(current.page, "timeline-desktop");
   await key(current.page, "Control+m");
-  await capture(current.page, "timeline-dashboard");
+  await assertCompactRows(current.page, await capture(current.page, "timeline-dashboard"));
   await key(current.page, "Control+m");
 
   progress("navigate week and month windows with the keyboard");

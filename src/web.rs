@@ -1905,11 +1905,12 @@ impl eframe::App for BrowserApp {
                         let calendar_width = 330.0;
                         let width = ui.available_width();
                         let main_height = 350.0;
+                        let calendar_height = if self.timeline_view { main_height } else { 0.0 };
                         ui.horizontal_top(|ui| {
                             ui.allocate_ui_with_layout(
-                                egui::vec2(calendar_width, 0.0),
+                                egui::vec2(calendar_width, calendar_height),
                                 egui::Layout::top_down(egui::Align::Min),
-                                |ui| self.tool(ui, 2, 0.0),
+                                |ui| self.tool(ui, 2, calendar_height),
                             );
                             ui.add_space(12.0);
                             ui.allocate_ui_with_layout(
@@ -1948,7 +1949,7 @@ impl eframe::App for BrowserApp {
                         ui.add_space(8.0);
                         ui.scope(|ui| {
                             ui.set_max_width(ui.available_width().min(330.0));
-                            self.tool(ui, 2, 0.0);
+                            self.tool(ui, 2, if self.timeline_view { 350.0 } else { 0.0 });
                         });
                         ui.add_space(8.0);
                         self.tool(ui, 1, 300.0);

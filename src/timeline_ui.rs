@@ -92,7 +92,7 @@ impl TimelinePanel {
         // Dated work remains immediately visible even with many undated notes.
         rows.sort_by_key(|row| row.due.is_none());
         let width = (ui.available_width() - 16.0).max(1.0);
-        let label_width = (width * 0.34).clamp(88.0, 190.0).min(width * 0.52);
+        let label_width = (width * 0.40).clamp(88.0, 190.0).min(width * 0.52);
         let (header, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
         self.header(ui, header, label_width, window, today);
         if rows.is_empty() {
@@ -104,7 +104,7 @@ impl TimelinePanel {
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical()
                 .id_salt("timeline-rows")
-                .max_height(if width >= 760.0 { 420.0 } else { 240.0 })
+                .max_height(if width >= 760.0 { 420.0 } else { 220.0 })
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     for row in &rows {

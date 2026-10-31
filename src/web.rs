@@ -23,10 +23,7 @@ const UNDO_STEPS: usize = 20;
 const UNDO_BYTES: usize = 64 * 1024 * 1024;
 
 enum UndoEntry {
-    Data {
-        state: Box<State>,
-        bytes: usize,
-    },
+    Data { state: Box<State>, bytes: usize },
     Viewer(StlSnapshot),
 }
 
@@ -288,7 +285,8 @@ impl BrowserApp {
             UndoEntry::Data { state, .. } => {
                 self.state = *state;
                 if self.weather.config() != self.state.preferences.weather.as_ref() {
-                    self.weather.replace_config(self.state.preferences.weather.clone());
+                    self.weather
+                        .replace_config(self.state.preferences.weather.clone());
                 }
                 self.reset_editors();
                 // Reuse save guards: a stale tab or corrupt raw file stays preserved.

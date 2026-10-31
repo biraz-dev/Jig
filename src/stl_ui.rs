@@ -240,13 +240,21 @@ impl StlPanel {
     }
 
     fn begin_gesture(&mut self, kind: Gesture, before: Snapshot, now: f64) {
-        if self.pending_gesture.as_ref().is_some_and(|pending| pending.kind != kind) {
+        if self
+            .pending_gesture
+            .as_ref()
+            .is_some_and(|pending| pending.kind != kind)
+        {
             self.finish_gesture();
         }
         if let Some(pending) = &mut self.pending_gesture {
             pending.last_input = now;
         } else {
-            self.pending_gesture = Some(PendingGesture { before, kind, last_input: now });
+            self.pending_gesture = Some(PendingGesture {
+                before,
+                kind,
+                last_input: now,
+            });
         }
     }
 
@@ -443,7 +451,11 @@ impl StlPanel {
         });
         let width = ui.available_width();
         let header_height = ui.cursor().top() - top;
-        let graphics_reserve = if self.graphics_error.is_some() { 24.0 } else { 0.0 };
+        let graphics_reserve = if self.graphics_error.is_some() {
+            24.0
+        } else {
+            0.0
+        };
         let content_height = (height - header_height - graphics_reserve - 8.0).max(170.0);
         if width >= 620.0 {
             let viewer_width = (width * 0.58).max(310.0);
@@ -606,7 +618,12 @@ impl StlPanel {
             let finish = response.drag_stopped()
                 || response.lost_focus()
                 || ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if finish && self.pending_gesture.as_ref().is_some_and(|pending| pending.kind == Gesture::Scale) {
+            if finish
+                && self
+                    .pending_gesture
+                    .as_ref()
+                    .is_some_and(|pending| pending.kind == Gesture::Scale)
+            {
                 self.finish_gesture();
             }
         });
@@ -772,7 +789,10 @@ impl StlPanel {
             }
         }
         if response.drag_stopped()
-            && self.pending_gesture.as_ref().is_some_and(|pending| pending.kind == Gesture::Orbit)
+            && self
+                .pending_gesture
+                .as_ref()
+                .is_some_and(|pending| pending.kind == Gesture::Orbit)
         {
             self.finish_gesture();
         }

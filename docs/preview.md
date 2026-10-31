@@ -17,6 +17,10 @@ WebGL 2 color/depth framebuffer, then composites into the applet's clipped egui
 rectangle. A corner X/Y/Z gnomon tracks orientation. Camera zoom is separate from
 physical scale, and the viewer does not animate while idle. Its depth-buffered
 texture is reused until the model, camera or viewport size changes.
+The gnomon supports axis-aligned snaps. A 45° perspective mode shares the same
+Z-up camera basis as orthographic rendering. The Human scale overlay uses a
+fixed 1752.6 mm silhouette and a common XZ baseline; it never enters the mesh or
+exported STL. Camera and comparison settings are session-only and undoable.
 
 `src/stl.rs` parses bounded binary/ASCII STL and computes bounds, area, topology
 diagnostics and conditional volume without terminal, DOM or GPU dependencies.
@@ -25,6 +29,11 @@ diagnostics and conditional volume without terminal, DOM or GPU dependencies.
 bytes and filenames never enter browser storage, workbench JSON or a network
 request. A bad replacement file preserves the current model. The CLI's `stl`
 command uses the same geometry and scale calculations.
+Uniform and per-axis scale use the same core transformations for measurements
+and exported vertices. Nonuniform area is summed from transformed triangles;
+the viewer caches measurements across camera-only changes. Exported f32 vertex
+bounds are checked against the requested dimensions. Output units default to mm
+and are explicit because STL has no standard unit metadata.
 
 `src/clay.rs` contains the two exact published Standard #104 cone points and
 validates user test profiles. Optional `Preferences.clay` stores only profile
@@ -148,6 +157,8 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
+The six browser suites run against the same built artifact in separate jobs,
+with at most three runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
 contains `[render]` also prints allowlisted synthetic screenshots as
@@ -162,6 +173,11 @@ It also covers small-mesh measurements and checks that the maximized STL action
 row remains clickable after keyboard navigation on a high-DPI display. Compact
 measurement labels live with the portable geometry measurements; raw report and
 export values retain their precision.
+`tests/scale_browser.mjs`, `tests/camera_browser.mjs` and
+`tests/human_browser.mjs` cover per-axis and target sizing, explicit export-unit
+roundtrips, projection/axis interactions, and the human reference's physical
+scale and shared baseline. Fixtures are generated boxes; the reference does not
+enter exports or persistent state.
 
 The header Undo and Ctrl-Z share one chronological journal for workbench data and
 viewer actions. Workbench snapshots retain the validated `State`; STL snapshots

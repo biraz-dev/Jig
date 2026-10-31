@@ -33,33 +33,47 @@ jobs:
           test -f dist/preview.css
           test -n "$(find dist -name '*.wasm' -print -quit)"
           if find dist -type f \( -name 'jig.json' -o -name '*.md' -o -name '*.lock' -o -name '.env*' \) | grep .; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jig-browser-dist
+          path: dist/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+  browser:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        suite: [browser_smoke, stl_browser, undo_browser, scale_browser, camera_browser, human_browser]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: jig-browser-dist
+          path: dist/
       - name: Install browser test tools
         run: |
           npm install --no-save --package-lock=false playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-small,stl-tiny,stl-failure,stl-failure-canvas,stl-focus-open,stl-focus-tab1,stl-focus-tab2,stl-focus-tab3,undo-desktop,undo-failure' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-small,stl-tiny,stl-failure,stl-failure-canvas,stl-focus-open,stl-focus-tab1,stl-focus-tab2,stl-focus-tab3,undo-desktop,undo-failure,scale-axes,scale-target,scale-mobile,scale-failure,camera-orthographic,camera-perspective,camera-axis-x,camera-axis-y,camera-axis-z,camera-mobile,camera-failure,human-equal-height,human-half-height,human-centimeters,human-mobile,human-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"
           python3 -m http.server 4173 --directory "$RUNNER_TEMP/jig-site" > "$RUNNER_TEMP/jig-http.log" 2>&1 &
-          jig_browser_result=0
-          node tests/browser_smoke.mjs || jig_browser_result=1
-          node tests/stl_browser.mjs || jig_browser_result=1
-          node tests/undo_browser.mjs || jig_browser_result=1
-          exit "$jig_browser_result"
+          node "tests/${{ matrix.suite }}.mjs"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: browser-test-results
+          name: browser-test-results-${{ matrix.suite }}
           path: playwright-results/
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist/
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    needs: [build, browser]
     runs-on: ubuntu-24.04
     permissions:
       pages: write

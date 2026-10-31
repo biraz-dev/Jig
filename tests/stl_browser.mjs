@@ -214,7 +214,7 @@ async function modelView(page) {
 
 async function setScale(page, percent) {
   await maximize(page);
-  await tab(page, 16); // Physical scale, starting from the Open STL anchor.
+  await tab(page, 17); // Physical scale, after the view projection toggle.
   // DragValue enters its text editor on Tab focus. Enter would commit and close
   // it before typing; wait for that real editor instead, then commit once below.
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
@@ -391,7 +391,7 @@ try {
   assert.deepEqual(await modelView(current.page), beforeOrbit, "One Undo must restore an entire orbit gesture");
 
   progress("interpret unitless STL coordinates using explicit source units");
-  await control(current.page, 18); // Source units: cm.
+  await control(current.page, 19); // Source units: cm.
   const centimeterReport = await copyReport(current.page);
   assert.match(centimeterReport, /Source units: cm/);
   assert.deepEqual(measurements(centimeterReport), { area: 60000, volume: 1000000, dimensions: [100, 100, 100] });
@@ -414,7 +414,7 @@ try {
   assert.deepEqual(measurements(await copyReport(current.page)), measurements(scaledReport));
 
   progress("apply Standard 104 cone 06 linear shrinkage and compensation");
-  await control(current.page, 22); // Estimate.
+  await control(current.page, 23); // Estimate.
   const estimatedReport = await copyReport(current.page);
   assert.match(estimatedReport, /Standard #104/);
   assert.match(estimatedReport, /Cone: 06\b/);
@@ -428,8 +428,8 @@ try {
   const beforeEstimateReport = await copyReport(current.page);
   assert.match(beforeEstimateReport, /Mode: Off/);
   assert.deepEqual(measurements(beforeEstimateReport), measurements(scaledReport), "Undo must restore the former shrinkage mode");
-  await control(current.page, 22); // Reapply Estimate.
-  await control(current.page, 23); // Compensate.
+  await control(current.page, 23); // Reapply Estimate.
+  await control(current.page, 24); // Compensate.
   const compensatedReport = await copyReport(current.page);
   assert.match(compensatedReport, /Mode: Compensate/);
   const compensated = measurements(compensatedReport);
@@ -440,7 +440,7 @@ try {
   const beforeCompensationReport = await copyReport(current.page);
   assert.match(beforeCompensationReport, /Mode: Estimate/);
   assert.deepEqual(measurements(beforeCompensationReport), estimated, "Undo must restore the former estimate");
-  await control(current.page, 23); // Reapply Compensate for the local export.
+  await control(current.page, 24); // Reapply Compensate for the local export.
   assert.equal(await saved(current.page), fixtureRaw, "Mesh transforms and camera changes must not save model data");
 
   progress("export compensated geometry using the selected source units");
@@ -466,7 +466,7 @@ try {
   assert.equal(await saved(current.page), fixtureRaw);
 
   progress("select an exact manufacturer cone point and save only preferences");
-  await control(current.page, 24); // Material opens its inline choices.
+  await control(current.page, 25); // Material opens its inline choices.
   // Manufacturer data link, Standard 104/cone06, Standard 104/cone4.
   await tab(current.page, 3);
   await key(current.page, "Space");
@@ -500,7 +500,7 @@ try {
   for (const field of ["tasks", "deadlines", "entries", "history", "featured"]) assert.deepEqual(materialUndoState[field], fixture[field]);
   // The inline material list remains open; choose the second published point
   // again so restart testing covers an explicitly saved, nondefault selection.
-  await control(current.page, 27);
+  await control(current.page, 28);
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).preferences.clay?.selected === "standard-104-4", storageKey);
   const savedWithClay = await saved(current.page);
   const clayState = JSON.parse(savedWithClay);

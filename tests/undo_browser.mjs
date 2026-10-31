@@ -272,7 +272,7 @@ try {
   await current.page.waitForTimeout(1300);
   assert.match(await readReport(current.page), /Total volume: 1000\.000000 mm³/);
   await stl(current.page);
-  await tab(current.page, 16); // Open STL -> physical scale, independent of header controls.
+  await tab(current.page, 17); // Open STL -> physical scale, after projection.
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await current.page.keyboard.press("Control+a");
   await current.page.keyboard.type("200", { delay: 30 });

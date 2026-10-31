@@ -5,6 +5,8 @@ pub mod clay;
 pub mod model;
 pub mod sample;
 pub mod stl;
+pub mod stl_camera;
+pub mod stl_comparison;
 pub mod units;
 pub mod weather;
 pub mod workbench;

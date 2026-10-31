@@ -35,6 +35,15 @@ enum Command {
         /// Uniform size as a percentage of the original model
         #[arg(long, default_value_t = 100.0)]
         scale: f64,
+        /// Additional X percentage multiplied by --scale (100 leaves X unchanged)
+        #[arg(long, default_value_t = 100.0)]
+        scale_x: f64,
+        /// Additional Y percentage multiplied by --scale (100 leaves Y unchanged)
+        #[arg(long, default_value_t = 100.0)]
+        scale_y: f64,
+        /// Additional Z percentage multiplied by --scale (100 leaves Z unchanged)
+        #[arg(long, default_value_t = 100.0)]
+        scale_z: f64,
         /// Estimated linear shrinkage percentage; not a prediction of warping
         #[arg(long)]
         shrinkage: Option<f64>,
@@ -187,10 +196,21 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
             file,
             units,
             scale,
+            scale_x,
+            scale_y,
+            scale_z,
             shrinkage,
             compensate,
         } => {
-            inspect_stl(&file, &units, scale, shrinkage, compensate, state)?;
+            inspect_stl(
+                &file,
+                &units,
+                scale,
+                [scale_x, scale_y, scale_z],
+                shrinkage,
+                compensate,
+                state,
+            )?;
             return Ok(false);
         }
         Command::Precision { decimals } => state.preferences.decimals = decimals as usize,
@@ -323,12 +343,19 @@ fn inspect_stl(
     path: &std::path::Path,
     units: &str,
     scale_percent: f64,
+    axis_percent: [f64; 3],
     shrink_percent: Option<f64>,
     compensate: bool,
     state: &State,
 ) -> Result<(), String> {
     if !scale_percent.is_finite() || scale_percent <= 0.0 {
         return Err("Scale must be a finite percentage greater than zero".into());
+    }
+    if axis_percent
+        .iter()
+        .any(|percent| !percent.is_finite() || *percent <= 0.0)
+    {
+        return Err("Each axis scale must be a finite percentage greater than zero".into());
     }
     let unit = match units {
         "mm" => stl::LengthUnit::Millimeters,
@@ -363,10 +390,19 @@ fn inspect_stl(
         return Err("STL exceeds the 20 MiB file limit".into());
     }
     let mesh = stl::parse(&bytes)?;
-    let measurements = mesh.measure(unit, scale_percent / 100.0 * factor)?;
+    let scales = axis_percent.map(|percent| scale_percent / 100.0 * (percent / 100.0) * factor);
+    let measurements = mesh.measure_axes(unit, scales)?;
     println!("STL: {} triangles", mesh.triangles.len());
     println!("Source units: {units} (STL carries no unit metadata)");
     println!("Scale: {}%", state.number(scale_percent));
+    if axis_percent != [100.0; 3] {
+        println!(
+            "Axis scale: X {}%, Y {}%, Z {}% (multiplied by uniform scale)",
+            state.number(axis_percent[0]),
+            state.number(axis_percent[1]),
+            state.number(axis_percent[2])
+        );
+    }
     if let Some(percent) = shrink_percent {
         println!(
             "Linear shrinkage estimate: {}% ({})",

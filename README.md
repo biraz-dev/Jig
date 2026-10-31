@@ -159,6 +159,15 @@ Open a local binary or ASCII STL in the browser applet. Drag to rotate, use the
 zoom controls, and choose front, side, top or isometric views. The corner X/Y/Z
 gnomon follows the camera. **Ctrl-Alt-5** selects the viewer and focuses **Open
 STL**; Enter opens the file picker. **Ctrl-M** maximizes or restores the applet.
+Click X, Y or Z on the gnomon to look straight along that axis. **Perspective**
+switches between orthographic and perspective projection with a 45° vertical
+field of view. **Iso** returns to the isometric orthographic view. Camera changes
+do not alter dimensions or exported geometry and can be undone.
+The viewport's **Human 5′9″** toggle (or **Ctrl-Alt-H**) adds a 1752.6 mm height reference in
+an orthographic front XZ view with Z up. The silhouette's feet align with the
+model's lowest Z level. Both use the same physical scale; resizing the model
+changes its relationship to the person. The reference is excluded from STL
+exports and from object measurements.
 The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
 one another correctly. Other workbench tools continue to use the existing layout.
 
@@ -176,8 +185,16 @@ STL files do not contain units. Choose **mm**, **cm** or **in** for the source
 coordinates before interpreting the numbers. Physical scale is independent of
 camera zoom. The applet reports dimensions, surface area and total enclosed
 volume, including cm³ (equivalent to mL) and in³. Length changes by the scale
-factor, area by its square and volume by its cube. Measurements use every
+factor, area by its square and volume by its cube when scaling uniformly. For
+independent X/Y/Z scaling, area is calculated from the transformed faces and
+volume follows the product of the three scale factors. Measurements use every
 accepted triangle. Models are limited to **20 MiB and 200,000 triangles**.
+
+The main **Scale** percentage resizes all axes. Open **Size / export** (or press
+**Ctrl-Alt-S**) for per-axis percentages and exact target dimensions in mm.
+Linked edits preserve proportions; unlinked edits change only the chosen axis.
+Target dimensions include the selected shrinkage or compensation mode, so they
+describe the geometry that will be exported. Scaling edits are undoable.
 
 Small volume and area displays switch to mm³ and mm² when needed. Positive
 measurements below two-decimal display precision show `<0.01` rather than zero.
@@ -211,13 +228,21 @@ Clay profile selection and custom values travel in the existing portable JSON.
 Older files remain valid. Loaded mesh bytes, filenames, camera, source units and
 per-model scale remain in memory and are discarded on reload. Reopen the STL to
 continue; it is never uploaded or included in workbench JSON. Scaled STL export
-is a local download in the original source units; STL still carries no unit tag.
+is a local download in the explicitly selected output units, defaulting to mm.
+The filename and report identify the output units; the recipient must import
+using those units because STL carries no standard unit metadata. Exported
+vertices contain the selected physical scale, independently of camera zoom or
+projection. Jig checks exported dimensions against the requested size within
+binary STL precision (relative tolerance 0.001%) and rejects files whose distant
+coordinates or rounding would distort the dimensions. Original files remain
+unchanged.
 
 The CLI reads a model without changing it or the saved workbench:
 
 ```sh
 jig stl sculpture.stl --units mm
 jig stl sculpture.stl --units in --scale 150
+jig stl sculpture.stl --scale-x 200 --scale-y 100 --scale-z 150
 jig stl sculpture.stl --shrinkage 6
 jig stl sculpture.stl --shrinkage 11 --compensate
 ```

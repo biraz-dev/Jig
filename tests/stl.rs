@@ -385,3 +385,147 @@ fn scaled_binary_export_roundtrips_without_changing_original_geometry() {
     let translated = Mesh::from_triangles(translated(cube(), [1e9; 3])).unwrap();
     assert!(translated.to_binary_stl(1.0).is_err());
 }
+
+#[test]
+fn independent_axis_scaling_matches_a_rectangular_box_in_each_source_unit() {
+    let mesh = Mesh::from_triangles(cube()).unwrap();
+    for unit in [
+        LengthUnit::Millimeters,
+        LengthUnit::Centimeters,
+        LengthUnit::Inches,
+    ] {
+        let measured = mesh.measure_axes(unit, [2.0, 3.0, 4.0]).unwrap();
+        let factor = unit.millimeters_per_unit();
+        for (dimension, expected) in measured.dimensions_mm.into_iter().zip([2.0, 3.0, 4.0]) {
+            close(dimension, expected * factor);
+        }
+        close(measured.surface_area_mm2, 52.0 * factor.powi(2));
+        close(measured.volume_mm3.unwrap(), 24.0 * factor.powi(3));
+    }
+    assert_eq!(mesh.bounds.dimensions(), [1.0; 3]);
+    close(mesh.metrics.surface_area, 6.0);
+    close(mesh.metrics.volume.unwrap(), 1.0);
+}
+
+#[test]
+fn anisotropic_scaling_uses_oblique_face_geometry_and_exports_matching_normals() {
+    let triangle = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let mesh = Mesh::from_triangles(vec![triangle]).unwrap();
+    let measured = mesh
+        .measure_axes(LengthUnit::Millimeters, [2.0, 3.0, 4.0])
+        .unwrap();
+    assert_eq!(measured.dimensions_mm, [2.0, 3.0, 4.0]);
+    close(measured.surface_area_mm2, 61.0_f64.sqrt());
+    assert_eq!(measured.volume_mm3, None);
+
+    let bytes = mesh.to_binary_stl_axes([2.0, 3.0, 4.0]).unwrap();
+    let normal: [f64; 3] = std::array::from_fn(|axis| {
+        f32::from_le_bytes(bytes[84 + axis * 4..88 + axis * 4].try_into().unwrap()) as f64
+    });
+    let expected = [6.0, 4.0, 3.0].map(|value| value / 61.0_f64.sqrt());
+    for (actual, expected) in normal.into_iter().zip(expected) {
+        assert!((actual - expected).abs() < 1e-7);
+    }
+    let restored = stl::parse(&bytes).unwrap();
+    assert_eq!(
+        restored.triangles,
+        vec![[[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]]]
+    );
+    close(restored.metrics.surface_area, 61.0_f64.sqrt());
+    assert_eq!(restored.metrics.volume, None);
+}
+
+#[test]
+fn independent_axis_export_roundtrips_actual_vertices_dimensions_area_and_volume() {
+    let mesh = Mesh::from_triangles(translated(cube(), [-3.0, 5.0, 7.0])).unwrap();
+    let bytes = mesh.to_binary_stl_axes([2.0, 3.0, 4.0]).unwrap();
+    let restored = stl::parse(&bytes).unwrap();
+    assert_eq!(bytes.len(), 84 + 50 * mesh.triangles.len());
+    assert_eq!(restored.bounds.min, [-6.0, 15.0, 28.0]);
+    assert_eq!(restored.bounds.max, [-4.0, 18.0, 32.0]);
+    assert_eq!(restored.bounds.dimensions(), [2.0, 3.0, 4.0]);
+    close(restored.metrics.surface_area, 52.0);
+    close(restored.metrics.volume.unwrap(), 24.0);
+    assert_eq!(restored.metrics.boundary_edges, 0);
+    assert_eq!(restored.metrics.inconsistent_edges, 0);
+    assert_eq!(mesh.bounds.min, [-3.0, 5.0, 7.0]);
+    assert_eq!(mesh.bounds.dimensions(), [1.0; 3]);
+}
+
+#[test]
+fn uniform_axis_factors_preserve_the_existing_scalar_interface() {
+    let mesh = Mesh::from_triangles(cube()).unwrap();
+    for unit in [
+        LengthUnit::Millimeters,
+        LengthUnit::Centimeters,
+        LengthUnit::Inches,
+    ] {
+        for factor in [0.25, 1.0, 2.5] {
+            let scalar = mesh.measure(unit, factor).unwrap();
+            let axes = mesh.measure_axes(unit, [factor; 3]).unwrap();
+            assert_eq!(scalar.dimensions_mm, axes.dimensions_mm);
+            assert_eq!(scalar.surface_area_mm2, axes.surface_area_mm2);
+            assert_eq!(scalar.volume_mm3, axes.volume_mm3);
+            assert_eq!(
+                mesh.to_binary_stl(factor).unwrap(),
+                mesh.to_binary_stl_axes([factor; 3]).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn independent_axis_factors_reject_invalid_or_unrepresentable_geometry() {
+    let mesh = Mesh::from_triangles(cube()).unwrap();
+    for axis in 0..3 {
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut factors = [1.0; 3];
+            factors[axis] = invalid;
+            assert!(mesh.measure_axes(LengthUnit::Millimeters, factors).is_err());
+            assert!(mesh.to_binary_stl_axes(factors).is_err());
+        }
+        let mut overflow = [1.0; 3];
+        overflow[axis] = 1e100;
+        assert!(mesh.to_binary_stl_axes(overflow).is_err());
+        let mut underflow = [1.0; 3];
+        underflow[axis] = 1e-50;
+        assert!(mesh.to_binary_stl_axes(underflow).is_err());
+    }
+    assert!(mesh
+        .measure_axes(LengthUnit::Millimeters, [1e308; 3])
+        .is_err());
+    assert!(mesh
+        .measure_axes(LengthUnit::Millimeters, [1e-200; 3])
+        .is_err());
+    let distant = Mesh::from_triangles(translated(cube(), [1e9; 3])).unwrap();
+    assert!(distant.to_binary_stl_axes([2.0, 3.0, 4.0]).is_err());
+}
+
+#[test]
+fn binary_export_rejects_precision_that_changes_dimensions_without_merging_vertices() {
+    let large_cube: Vec<Triangle> = cube()
+        .into_iter()
+        .map(|triangle| triangle.map(|point| point.map(|coordinate| coordinate * 100.0)))
+        .collect();
+    let distant = Mesh::from_triangles(translated(large_cube.clone(), [1e9; 3])).unwrap();
+    assert_eq!(distant.bounds.dimensions(), [100.0; 3]);
+    // At this offset, the two distinct f32 positions are 128 units apart.
+    // Retaining distinct vertices alone does not preserve the intended size.
+    assert!(distant.to_binary_stl(1.0).is_err());
+    assert!(distant.to_binary_stl_axes([1.0; 3]).is_err());
+
+    let origin = Mesh::from_triangles(large_cube).unwrap();
+    let factors = [1.23456789, 0.987654321, std::f64::consts::PI];
+    let measured = origin
+        .measure_axes(LengthUnit::Millimeters, factors)
+        .unwrap();
+    let restored = stl::parse(&origin.to_binary_stl_axes(factors).unwrap()).unwrap();
+    for (actual, expected) in restored
+        .bounds
+        .dimensions()
+        .into_iter()
+        .zip(measured.dimensions_mm)
+    {
+        assert!((actual - expected).abs() <= expected * 1e-5);
+    }
+}

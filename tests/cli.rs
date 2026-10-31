@@ -240,6 +240,49 @@ fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
     assert!(text.contains("Dimensions: 20.00 x 20.00 x 20.00 mm"));
     assert!(text.contains("Surface area: 2400.00 mm^2"));
     assert!(text.contains("Volume: 8000.00 mm^3 (8.00 cm^3)"));
+    let inspect_axes = |extra: &[&str]| {
+        let mut args = vec![
+            "stl", binary_name, "--scale-x", "200", "--scale-y", "300", "--scale-z", "400",
+        ];
+        args.extend_from_slice(extra);
+        invoke(&args)
+    };
+    let output = inspect_axes(&[]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Dimensions: 20.00 x 30.00 x 40.00 mm"));
+    assert!(text.contains("Surface area: 5200.00 mm^2"));
+    assert!(text.contains("Volume: 24000.00 mm^3 (24.00 cm^3)"));
+    assert!(text.contains("Axis scale: X 200.00%, Y 300.00%, Z 400.00%"));
+
+    let output = inspect_axes(&["--scale", "200"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Dimensions: 40.00 x 60.00 x 80.00 mm"));
+    assert!(text.contains("Surface area: 20800.00 mm^2"));
+    assert!(text.contains("Volume: 192000.00 mm^3 (192.00 cm^3)"));
+
+    let output = inspect_axes(&["--units", "cm"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Dimensions: 200.00 x 300.00 x 400.00 mm"));
+    assert!(text.contains("Surface area: 520000.00 mm^2"));
+    assert!(text.contains("Volume: 24000000.00 mm^3 (24000.00 cm^3)"));
+
+    let output = inspect_axes(&["--shrinkage", "10"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Dimensions: 18.00 x 27.00 x 36.00 mm"));
+    assert!(text.contains("Surface area: 4212.00 mm^2"));
+    assert!(text.contains("Volume: 17496.00 mm^3 (17.50 cm^3)"));
+
+    let output = inspect_axes(&["--shrinkage", "20", "--compensate"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Dimensions: 25.00 x 37.50 x 50.00 mm"));
+    assert!(text.contains("Surface area: 8125.00 mm^2"));
+    assert!(text.contains("Volume: 46875.00 mm^3 (46.88 cm^3)"));
+
     let output = invoke(&["stl", binary_name, "--units", "cm"]);
     assert!(output.status.success());
     assert!(
@@ -283,6 +326,19 @@ fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
         assert!(output.stdout.is_empty(), "{args:?}");
         assert!(!output.stderr.is_empty(), "{args:?}");
     }
+    for axis in ["--scale-x", "--scale-y", "--scale-z"] {
+        for value in ["0", "-1", "NaN", "inf"] {
+            let argument = format!("{axis}={value}");
+            let output = invoke(&["stl", binary_name, &argument]);
+            assert!(!output.status.success(), "{argument}");
+            assert!(output.stdout.is_empty(), "{argument}");
+            assert!(!output.stderr.is_empty(), "{argument}");
+        }
+    }
+    let output = invoke(&["stl", binary_name, "--scale", "1e308", "--scale-x", "1e308"]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
     let oversized_path = dir.join("sample-too-large.stl");
     fs::File::create(&oversized_path)
         .unwrap()
@@ -302,5 +358,7 @@ fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("Surface area: 600.000 mm^2"));
     assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(fs::read(&binary_path).unwrap(), binary);
+    assert_eq!(fs::read(&ascii_path).unwrap(), ascii.as_bytes());
     fs::remove_dir_all(dir).unwrap();
 }

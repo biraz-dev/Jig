@@ -237,11 +237,47 @@ impl Mesh {
 
     /// STL itself carries no units. The selected unit is an explicit assumption.
     pub fn measure(&self, unit: LengthUnit, scale: f64) -> Result<Measurements> {
-        positive_scale(scale)?;
-        let factor = unit.millimeters_per_unit() * scale;
-        let dimensions_mm = self.bounds.dimensions().map(|value| value * factor);
-        let surface_area_mm2 = self.metrics.surface_area * factor.powi(2);
-        let volume_mm3 = self.metrics.volume.map(|value| value * factor.powi(3));
+        self.measure_axes(unit, [scale; 3])
+    }
+
+    /// Measure positive diagonal scaling along the model's original X/Y/Z axes.
+    /// Nonuniform surface area comes from the transformed faces, not an average
+    /// scale factor. The original mesh and its topology are never changed.
+    pub fn measure_axes(&self, unit: LengthUnit, scale: Point) -> Result<Measurements> {
+        for factor in scale {
+            positive_scale(factor)?;
+        }
+        let factors = scale.map(|value| value * unit.millimeters_per_unit());
+        let dimensions_mm: Point =
+            std::array::from_fn(|axis| self.bounds.dimensions()[axis] * factors[axis]);
+        if factors.iter().any(|value| !value.is_finite())
+            || dimensions_mm.iter().any(|value| !value.is_finite())
+        {
+            return Err("Scaled measurements exceed numeric limits".into());
+        }
+        let uniform = factors[0] == factors[1] && factors[1] == factors[2];
+        let surface_area_mm2 = if uniform {
+            self.metrics.surface_area * factors[0].powi(2)
+        } else {
+            let mut area = Sum::default();
+            for triangle in &self.triangles {
+                let a = subtract(triangle[1], triangle[0]);
+                let b = subtract(triangle[2], triangle[0]);
+                let normal = cross(
+                    std::array::from_fn(|axis| a[axis] * factors[axis]),
+                    std::array::from_fn(|axis| b[axis] * factors[axis]),
+                );
+                area.add(normal_length(normal) * 0.5);
+            }
+            area.value
+        };
+        let volume_mm3 = self.metrics.volume.map(|value| {
+            if uniform {
+                value * factors[0].powi(3)
+            } else {
+                value * factors[0] * factors[1] * factors[2]
+            }
+        });
         if dimensions_mm.iter().any(|value| !value.is_finite())
             || !surface_area_mm2.is_finite()
             || volume_mm3.is_some_and(|value| !value.is_finite())
@@ -266,29 +302,37 @@ impl Mesh {
     /// Export uniformly scaled vertices in the original source units.
     /// This preserves topology and does not repair a mesh or add STL unit metadata.
     pub fn to_binary_stl(&self, scale: f64) -> Result<Vec<u8>> {
-        positive_scale(scale)?;
+        self.to_binary_stl_axes([scale; 3])
+    }
+
+    /// Export positive diagonal scaling along the model's original X/Y/Z axes.
+    /// Factors apply to coordinates directly; callers can include a conversion
+    /// between source and output units. STL itself stores no unit metadata.
+    pub fn to_binary_stl_axes(&self, scale: Point) -> Result<Vec<u8>> {
+        for factor in scale {
+            positive_scale(factor)?;
+        }
         let mut bytes = Vec::with_capacity(84 + self.triangles.len() * 50);
+        let expected_dimensions: Point =
+            std::array::from_fn(|axis| self.bounds.dimensions()[axis] * scale[axis]);
+        let mut exported_bounds = Bounds {
+            min: [f64::INFINITY; 3],
+            max: [f64::NEG_INFINITY; 3],
+        };
         bytes.resize(80, 0);
         let label = b"Jig local scaled STL";
         bytes[..label.len()].copy_from_slice(label);
         bytes.extend_from_slice(&(self.triangles.len() as u32).to_le_bytes());
         let mut exported_vertices = HashMap::new();
         for triangle in &self.triangles {
-            let normal = cross(
-                subtract(triangle[1], triangle[0]),
-                subtract(triangle[2], triangle[0]),
-            );
-            let length = dot(normal, normal).sqrt();
-            for coordinate in normal.map(|value| if length > 0.0 { value / length } else { 0.0 }) {
-                bytes.extend_from_slice(&(coordinate as f32).to_le_bytes());
-            }
-            for point in triangle {
-                let scaled = point.map(|coordinate| (coordinate * scale) as f32);
+            let mut exported = [[0.0_f32; 3]; 3];
+            for (point, scaled) in triangle.iter().zip(&mut exported) {
+                *scaled = std::array::from_fn(|axis| (point[axis] * scale[axis]) as f32);
                 if scaled.iter().any(|value| !value.is_finite())
                     || point
                         .iter()
-                        .zip(scaled)
-                        .any(|(source, value)| *source != 0.0 && value == 0.0)
+                        .zip(scaled.iter())
+                        .any(|(source, value)| *source != 0.0 && *value == 0.0)
                 {
                     return Err("Scaled vertices exceed binary STL precision limits".into());
                 }
@@ -300,11 +344,44 @@ impl Mesh {
                 {
                     return Err("Binary STL precision would merge distinct vertices".into());
                 }
-                for coordinate in scaled {
+                for (axis, value) in scaled.iter().enumerate() {
+                    exported_bounds.min[axis] = exported_bounds.min[axis].min(f64::from(*value));
+                    exported_bounds.max[axis] = exported_bounds.max[axis].max(f64::from(*value));
+                }
+            }
+            // Normals describe the actual f32 vertices written to the file.
+            // Recomputing them is required when axes have different scales.
+            let points = exported.map(|point| point.map(f64::from));
+            let normal = cross(subtract(points[1], points[0]), subtract(points[2], points[0]));
+            let length = normal_length(normal);
+            let original_normal = cross(
+                subtract(triangle[1], triangle[0]),
+                subtract(triangle[2], triangle[0]),
+            );
+            if length == 0.0 && normal_length(original_normal) > 0.0 {
+                return Err("Binary STL precision would collapse a triangle".into());
+            }
+            for coordinate in normal.map(|value| if length > 0.0 { value / length } else { 0.0 }) {
+                bytes.extend_from_slice(&(coordinate as f32).to_le_bytes());
+            }
+            for point in exported {
+                for coordinate in point {
                     bytes.extend_from_slice(&coordinate.to_le_bytes());
                 }
             }
             bytes.extend_from_slice(&[0, 0]);
+        }
+        // Distinct vertices can still move far enough during f32 rounding to
+        // change the exported size, especially far from the coordinate origin.
+        if exported_bounds
+            .dimensions()
+            .iter()
+            .zip(expected_dimensions)
+            .any(|(actual, expected)| {
+                !expected.is_finite() || (*actual - expected).abs() > expected * 1e-5
+            })
+        {
+            return Err("Binary STL precision would change the model dimensions; move the model closer to the origin before exporting".into());
         }
         Ok(bytes)
     }
@@ -485,6 +562,10 @@ fn cross(a: Point, b: Point) -> Point {
 
 fn dot(a: Point, b: Point) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn normal_length(normal: Point) -> f64 {
+    normal[0].hypot(normal[1]).hypot(normal[2])
 }
 
 struct Tokens<'a> {

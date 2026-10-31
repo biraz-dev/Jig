@@ -45,7 +45,8 @@ const timer = setTimeout(() => {
 function progress(message) { phase = message; console.log(`STL browser phase: ${message}`); }
 async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.waitForTimeout(100);
+  // Browser RAF can precede WASM input consumption under software-rendered 3D.
+  await page.waitForTimeout(250);
 }
 async function key(page, value) {
   await page.keyboard.press(value);
@@ -107,7 +108,7 @@ async function failureDiagnostics(page) {
     }
   }
 }
-const browser = await chromium.launch({ headless: true, args: ["--use-gl=angle", "--use-angle=swiftshader-webgl", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
+const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 async function newPage(label, viewport = { width: 1440, height: 1000 }, seed = true, deviceScaleFactor = 1) {
   const context = await browser.newContext({ viewport, deviceScaleFactor, acceptDownloads: true, hasTouch: viewport.width < 500, timezoneId: "Etc/UTC" });
   contexts.push(context);

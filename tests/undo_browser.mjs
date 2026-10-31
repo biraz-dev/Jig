@@ -53,7 +53,7 @@ async function capture(page, name) {
     console.log(`JIG_RENDER_END_${name}`);
   }
 }
-const browser = await chromium.launch({ headless: true, args: ["--use-gl=angle", "--use-angle=swiftshader-webgl", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
+const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 async function open(label, state = fixture) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true, timezoneId: "Etc/UTC" });
   contexts.push(context);

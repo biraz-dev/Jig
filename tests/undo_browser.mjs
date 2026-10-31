@@ -152,7 +152,7 @@ async function readReport(page) {
     let clipped = true;
     try {
       const png = await page.screenshot({
-        ...screenshotOptions, timeout: 5000, clip: { x: 8, y: 46, width: 420, height: 36 },
+        ...screenshotOptions, timeout: 15000, clip: { x: 8, y: 46, width: 420, height: 36 },
       });
       encoded = png.toString("base64");
     } catch (error) {

@@ -327,11 +327,12 @@ try {
   await expectState(current.page, fixture, "Undo must restore the changed due day and exact nonmidnight start together");
 
   progress("edit the same task from its row and undo an atomic date-range change");
+  const beforeOpening = await raw(current.page);
   await timeline(current.page);
   await tab(current.page, 5); // Week, Month, Previous, Next, Today, then first row.
   await key(current.page, "Enter");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
-  assert.equal(await raw(current.page), originalRaw, "Opening the inline editor must not edit or star the task");
+  assert.equal(await raw(current.page), beforeOpening, "Opening the inline editor must not edit or star the task");
   await schedule(current.page, "2026-11-02", "2026-10-27", false);
   await capture(current.page, "timeline-edit");
   await key(current.page, "Enter");

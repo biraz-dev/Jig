@@ -72,6 +72,7 @@ pub struct Snapshot {
     export_unit: LengthUnit,
     projection: Projection,
     human_comparison: bool,
+    grey_matcap: bool,
     mode: ShrinkMode,
     yaw: f32,
     pitch: f32,
@@ -126,6 +127,7 @@ pub struct StlPanel {
     export_unit: LengthUnit,
     projection: Projection,
     human_comparison: bool,
+    grey_matcap: bool,
     mode: ShrinkMode,
     yaw: f32,
     pitch: f32,
@@ -164,6 +166,7 @@ impl StlPanel {
             export_unit: LengthUnit::Millimeters,
             projection: Projection::Orthographic,
             human_comparison: false,
+            grey_matcap: false,
             mode: ShrinkMode::Off,
             yaw: 0.65,
             pitch: 0.55,
@@ -264,6 +267,7 @@ impl StlPanel {
             export_unit: self.export_unit,
             projection: self.projection,
             human_comparison: self.human_comparison,
+            grey_matcap: self.grey_matcap,
             mode: self.mode,
             yaw: self.yaw,
             pitch: self.pitch,
@@ -281,6 +285,7 @@ impl StlPanel {
             || self.export_unit != before.export_unit
             || self.projection != before.projection
             || self.human_comparison != before.human_comparison
+            || self.grey_matcap != before.grey_matcap
             || self.mode != before.mode
             || self.yaw.to_bits() != before.yaw.to_bits()
             || self.pitch.to_bits() != before.pitch.to_bits()
@@ -367,6 +372,7 @@ impl StlPanel {
         self.export_unit = before.export_unit;
         self.projection = before.projection;
         self.human_comparison = before.human_comparison;
+        self.grey_matcap = before.grey_matcap;
         self.mode = before.mode;
         self.yaw = before.yaw;
         self.pitch = before.pitch;
@@ -671,6 +677,7 @@ impl StlPanel {
             changed |= self.controls(ui, settings);
         }
         self.human_toggle(ui);
+        self.matcap_toggle(ui);
         if let Some(error) = &self.graphics_error {
             ui.label(RichText::new(error).color(PINK).size(11.0));
         }
@@ -1117,7 +1124,11 @@ impl StlPanel {
         if response.drag_started() {
             self.orbit_allowed = ui
                 .input(|input| input.pointer.press_origin())
-                .is_none_or(|position| !gnomon_rect(ui, rect).contains(position));
+                .is_none_or(|position| {
+                    !gnomon_rect(ui, rect).contains(position)
+                        && !viewport_toggle_rect(ui, rect, false).contains(position)
+                        && !viewport_toggle_rect(ui, rect, true).contains(position)
+                });
         }
         if response.dragged() && self.orbit_allowed && !self.human_comparison {
             let motion = response.drag_motion();
@@ -1172,6 +1183,7 @@ impl StlPanel {
                     scale: (self.zoom as f64 * largest) as f32,
                     axes: effective.map(|axis| (axis / largest) as f32),
                     projection: self.projection,
+                    grey_matcap: self.grey_matcap,
                     comparison: comparison.map(|(layout, content)| {
                         let extent = self
                             .mesh
@@ -1263,20 +1275,50 @@ impl StlPanel {
         let Some(viewport) = self.viewport_rect else {
             return;
         };
-        let visible = viewport.intersect(ui.clip_rect());
-        if visible.width() < 140.0 || visible.height() < 40.0 {
+        let rect = viewport_toggle_rect(ui, viewport, false);
+        if rect == egui::Rect::NOTHING {
             return;
         }
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(visible.right() - 120.0, visible.top() + 8.0),
-            egui::vec2(112.0, 22.0),
-        );
         // Register after ordinary settings, even though this button is painted
         // over the viewport, so established keyboard navigation stays stable.
         let toggle = ui.put(rect, egui::Button::new("Human 5′9″").selected(self.human_comparison)).on_hover_text("Compare with a 69 in / 1752.6 mm human reference. Front X/Z view; the reference is never exported. Ctrl-Alt-H toggles.");
         self.focused |= toggle.has_focus();
         if toggle.clicked() {
             self.toggle_human_comparison();
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// Appearance is a local camera setting, never a change to mesh geometry.
+    pub fn toggle_grey_matcap(&mut self) {
+        if self.mesh.is_none() {
+            return;
+        }
+        let before = self.prepare_snapshot();
+        self.grey_matcap = !self.grey_matcap;
+        self.push_snapshot(before);
+    }
+
+    fn matcap_toggle(&mut self, ui: &mut Ui) {
+        let Some(viewport) = self.viewport_rect else {
+            return;
+        };
+        let rect = viewport_toggle_rect(ui, viewport, true);
+        if rect == egui::Rect::NOTHING {
+            return;
+        }
+        // Append to keyboard order without shifting existing viewer controls.
+        let toggle = ui
+            .put(
+                rect,
+                egui::Button::new("Grey matcap").selected(self.grey_matcap),
+            )
+            .on_hover_text(
+                "Neutral grey studio material for reading surface details. View only; never exported. Ctrl-Alt-G toggles.",
+            );
+        self.focused |= toggle.has_focus();
+        if toggle.clicked() {
+            self.toggle_grey_matcap();
             ui.ctx().request_repaint();
         }
     }
@@ -1417,6 +1459,14 @@ impl StlPanel {
             if self.human_comparison { "On" } else { "Off" },
             HUMAN_HEIGHT_MM
         ));
+        report.push_str(&format!(
+            "Viewport material: {}\n",
+            if self.grey_matcap {
+                "Grey matcap"
+            } else {
+                "Warm clay"
+            }
+        ));
         if self.human_comparison {
             if let Some(Ok(measurements)) = self.measurements(settings) {
                 report.push_str(&format!("Object / human height: {:.6}\nComparison view: Front X/Z, Z up, feet at model minimum Z. Reference is not exported.\n", measurements.dimensions_mm[2] / HUMAN_HEIGHT_MM));
@@ -1512,6 +1562,25 @@ fn sample_cube() -> Result<Mesh, String> {
     Mesh::from_triangles(triangles)
 }
 
+fn viewport_toggle_rect(ui: &Ui, viewport: egui::Rect, left: bool) -> egui::Rect {
+    let visible = viewport.intersect(ui.clip_rect());
+    // Keep both controls separate on phones; keyboard shortcuts also work when
+    // an exceptionally narrow/clipped viewport cannot display both buttons.
+    let minimum_width = if left { 248.0 } else { 140.0 };
+    if visible.width() < minimum_width || visible.height() < 40.0 {
+        return egui::Rect::NOTHING;
+    }
+    let x = if left {
+        visible.left() + 8.0
+    } else {
+        visible.right() - 120.0
+    };
+    egui::Rect::from_min_size(
+        egui::pos2(x, visible.top() + 8.0),
+        egui::vec2(112.0, 22.0),
+    )
+}
+
 fn gnomon_rect(ui: &Ui, viewport: egui::Rect) -> egui::Rect {
     let visible = viewport.intersect(ui.clip_rect());
     if visible.width() < 86.0 || visible.height() < 86.0 {
@@ -1538,6 +1607,7 @@ struct View {
     axes: [f32; 3],
     projection: Projection,
     comparison: Option<ComparisonView>,
+    grey_matcap: bool,
 }
 
 /// Two small GL programs render the full mesh into a depth-buffered texture,
@@ -1824,6 +1894,11 @@ impl Renderer {
                     None
                 };
                 gl.uniform_1_i32(
+                    gl.get_uniform_location(self.mesh_program, "u_matcap")
+                        .as_ref(),
+                    i32::from(view.grey_matcap),
+                );
+                gl.uniform_1_i32(
                     gl.get_uniform_location(self.mesh_program, "u_comparison")
                         .as_ref(),
                     i32::from(view.comparison.is_some()),
@@ -2029,10 +2104,33 @@ void main() {
 const MESH_FRAGMENT: &str = r#"
 precision mediump float;
 in vec3 v_normal;
+uniform bool u_matcap;
 out vec4 out_color;
+// A procedural grey sphere matcap: the studio illumination is fixed in view
+// space and sampled by the surface normal. Broad soft lights keep facets and
+// small changes in curvature readable without a glossy, pinpoint reflection.
+vec3 grey_ball(vec2 uv) {
+    vec2 xy = uv * 2.0 - 1.0;
+    vec3 n = vec3(xy, sqrt(max(0.0, 1.0 - dot(xy, xy))));
+    float key = max(dot(n, normalize(vec3(-0.45, 0.65, 0.8))), 0.0);
+    float fill = max(dot(n, normalize(vec3(0.75, -0.15, 0.65))), 0.0);
+    float softbox = pow(max(dot(n, normalize(vec3(-0.35, 0.55, 1.0))), 0.0), 8.0);
+    float rim = pow(1.0 - n.z, 2.0);
+    float grey = 0.25 + 0.36 * key + 0.12 * fill + 0.13 * softbox
+               - 0.10 * rim - 0.04 * max(-n.y, 0.0);
+    return vec3(clamp(grey, 0.14, 0.88));
+}
 void main() {
-    float light = 0.30 + 0.70 * abs(dot(normalize(v_normal), normalize(vec3(-0.4, 0.6, 1.0))));
-    out_color = vec4(vec3(0.965, 0.855, 0.682) * light, 1.0);
+    if (u_matcap) {
+        // Camera depth points away from the eye. Flip back-facing normals for
+        // the existing two-sided viewport, without altering mesh/export data.
+        vec3 normal = normalize(vec3(v_normal.xy, -v_normal.z));
+        if (normal.z < 0.0) normal = -normal;
+        out_color = vec4(grey_ball(normal.xy * 0.5 + 0.5), 1.0);
+    } else {
+        float light = 0.30 + 0.70 * abs(dot(normalize(v_normal), normalize(vec3(-0.4, 0.6, 1.0))));
+        out_color = vec4(vec3(0.965, 0.855, 0.682) * light, 1.0);
+    }
 }
 "#;
 const QUAD_VERTEX: &str = r#"

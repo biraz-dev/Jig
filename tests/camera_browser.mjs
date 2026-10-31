@@ -29,6 +29,40 @@ function box() {
   return bytes;
 }
 
+function greyball() {
+  // Closed, slightly grooved sphere: its changing face normals exercise a
+  // matcap more meaningfully than a box with three uniformly shaded planes.
+  const segments = 48, rings = 32, radius = 20;
+  const vertices = [[0, 0, radius]];
+  for (let latitude = 1; latitude < rings; latitude++) {
+    const phi = Math.PI * latitude / rings;
+    const radial = radius * Math.sin(phi) * (1 + 0.07 * Math.cos(8 * phi));
+    for (let longitude = 0; longitude < segments; longitude++) {
+      const theta = 2 * Math.PI * longitude / segments;
+      vertices.push([radial * Math.cos(theta), radial * Math.sin(theta), radius * Math.cos(phi)]);
+    }
+  }
+  const bottom = vertices.push([0, 0, -radius]) - 1;
+  const ring = (latitude, longitude) => 1 + (latitude - 1) * segments + longitude % segments;
+  const triangles = [];
+  for (let longitude = 0; longitude < segments; longitude++) {
+    triangles.push([0, ring(1, longitude), ring(1, longitude + 1)]);
+    for (let latitude = 1; latitude < rings - 1; latitude++) {
+      const a = ring(latitude, longitude), b = ring(latitude + 1, longitude);
+      const c = ring(latitude + 1, longitude + 1), d = ring(latitude, longitude + 1);
+      triangles.push([a, b, c], [a, c, d]);
+    }
+    triangles.push([bottom, ring(rings - 1, longitude + 1), ring(rings - 1, longitude)]);
+  }
+  const bytes = Buffer.alloc(84 + triangles.length * 50);
+  bytes.write("Sample: grooved greyball material test");
+  bytes.writeUInt32LE(triangles.length, 80);
+  triangles.forEach((triangle, index) => triangle.forEach((vertex, corner) => vertices[vertex].forEach((value, axis) => {
+    bytes.writeFloatLE(value, 84 + index * 50 + 12 + corner * 12 + axis * 4);
+  })));
+  return bytes;
+}
+
 let phase = "launch Chromium";
 let originalError;
 let current;
@@ -55,7 +89,7 @@ async function key(page, value) {
 }
 async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 function renderLog(name, png) {
-  const allowed = new Set(["camera-orthographic", "camera-perspective", "camera-axis-x", "camera-axis-y", "camera-axis-z", "camera-mobile", "camera-failure"]);
+  const allowed = new Set(["camera-orthographic", "camera-perspective", "camera-axis-x", "camera-axis-y", "camera-axis-z", "camera-mobile", "camera-matcap", "camera-matcap-mobile", "camera-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (!allowed.has(name) || !requested.has(name) || png.length > 1024 * 1024) return;
   console.log(`JIG_RENDER_BEGIN_${name}`);
@@ -205,6 +239,73 @@ async function clickAxis(page, axis) {
   await paint(page);
 }
 
+async function matcapVisual(page, kind) {
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  return page.evaluate(async ({ encoded, kind }) => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const phone = bitmap.width < 500;
+    const bounds = kind === "button"
+      ? { left: 20, right: 150, top: phone ? 180 : 115, bottom: phone ? 650 : 235 }
+      : { left: phone ? 100 : 130, right: phone ? bitmap.width - 20 : 780, top: phone ? 350 : 190, bottom: phone ? 610 : 850 };
+    const near = (offset, target) => target.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 3);
+    const accepts = offset => kind === "button"
+      ? [[21, 31, 43], [38, 54, 73], [43, 66, 90], [40, 72, 101], [60, 60, 60]].some(color => near(offset, color))
+      : pixels[offset] >= 45 && pixels[offset] <= 245 && Math.abs(pixels[offset] - pixels[offset + 1]) <= 2 && Math.abs(pixels[offset] - pixels[offset + 2]) <= 2;
+    const seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
+    for (let y = bounds.top; y < bounds.bottom; y++) for (let x = bounds.left; x < bounds.right; x++) {
+      const start = y * bitmap.width + x;
+      if (seen[start] || !accepts(start * 4)) continue;
+      const stack = [start];
+      seen[start] = 1;
+      const region = { left: x, right: x, top: y, bottom: y, count: 0, minimum: 255, maximum: 0 };
+      const shades = new Set();
+      while (stack.length) {
+        const index = stack.pop(), py = Math.floor(index / bitmap.width), px = index % bitmap.width, shade = pixels[index * 4];
+        region.left = Math.min(region.left, px); region.right = Math.max(region.right, px);
+        region.top = Math.min(region.top, py); region.bottom = Math.max(region.bottom, py); region.count++;
+        region.minimum = Math.min(region.minimum, shade); region.maximum = Math.max(region.maximum, shade); shades.add(Math.floor(shade / 5));
+        for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
+          if (nx < bounds.left || nx >= bounds.right || ny < bounds.top || ny >= bounds.bottom) continue;
+          const next = ny * bitmap.width + nx;
+          if (!seen[next] && accepts(next * 4)) { seen[next] = 1; stack.push(next); }
+        }
+      }
+      regions.push({ ...region, width: region.right - region.left + 1, height: region.bottom - region.top + 1, shades: shades.size });
+    }
+    bitmap.close();
+    const candidates = kind === "button"
+      ? regions.filter(region => region.width >= 100 && region.width <= 125 && region.height >= 18 && region.height <= 26 && region.count > 600).sort((a, b) => a.top - b.top)
+      : regions.filter(region => region.width > 80 && region.height > 80 && region.count > 2000).sort((a, b) => b.count - a.count);
+    return candidates[0] ?? null;
+  }, { encoded: png.toString("base64"), kind });
+}
+async function clickMatcap(page) {
+  if (page.viewportSize().width >= 500) { await page.mouse.move(12, 12); await paint(page); }
+  const button = await matcapVisual(page, "button");
+  assert.ok(button, "The grey matcap toggle must actually be visible inside the viewport");
+  const x = (button.left + button.right) / 2, y = (button.top + button.bottom) / 2;
+  if (page.viewportSize().width < 500) await page.touchscreen.tap(x, y);
+  else { await page.mouse.click(x, y, { delay: 50 }); await page.mouse.move(12, 12); }
+  await paint(page);
+}
+async function curvedFront(page) {
+  await page.locator("#jig-stl-import").setInputFiles({ name: "Sample-grooved-greyball.stl", mimeType: "model/stl", buffer: greyball() });
+  await page.waitForTimeout(1300);
+  await paint(page);
+  await control(page, 5); // Iso restores orthographic projection.
+  await control(page, 6); // Front looks directly onto the XZ plane.
+}
+async function assertMatcap(page) {
+  const body = await matcapVisual(page, "body");
+  assert.ok(body, "The curved model must render a substantial neutral-grey surface");
+  assert.ok(body.maximum - body.minimum >= 35 && body.shades >= 6, `The greyball must show its changing surface normals through varied studio shading, not a flat grey fill: ${JSON.stringify(body)}`);
+}
+
 try {
   progress("switch orthographic and perspective views without changing physical geometry");
   current = await open("camera-desktop");
@@ -248,6 +349,27 @@ try {
   progress("keep camera changes out of exported STL vertices and persistent state");
   assert.deepEqual(await exported(current.page), initialExport, "Projection and orientation must never bake into exported geometry");
   assert.equal(await current.page.evaluate(key => localStorage.getItem(key), storageKey), rawFixture);
+
+  progress("inspect a curved front-facing object with neutral grey matcap and Undo");
+  await curvedFront(current.page);
+  const warmReport = await report(current.page);
+  assert.match(warmReport, /^Viewport material: Warm clay$/m);
+  assert.deepEqual(camera(warmReport), { yaw: 0, pitch: 0, projection: "Orthographic" });
+  const warmPixels = await modelPixels(current.page);
+  const curvedExport = await exported(current.page);
+  await clickMatcap(current.page);
+  const greyReport = await report(current.page);
+  assert.match(greyReport, /^Viewport material: Grey matcap$/m);
+  assert.deepEqual(camera(greyReport), camera(warmReport), "Changing viewport material must keep the front view");
+  assert.deepEqual(measurements(greyReport), measurements(warmReport), "Matcap must not change any physical measurements");
+  await assertMatcap(current.page);
+  assert.notDeepEqual(await modelPixels(current.page), warmPixels, "Neutral matcap must visibly replace the warm material");
+  await capture(current.page, "camera-matcap");
+  assert.deepEqual(await exported(current.page), curvedExport, "A viewport material must never change exported STL bytes");
+  await key(current.page, "Control+z");
+  assert.match(await report(current.page), /^Viewport material: Warm clay$/m, "One Undo restores the previous viewport material");
+  assert.deepEqual(await modelPixels(current.page), warmPixels, "Material Undo restores the warm render exactly");
+  assert.equal(await current.page.evaluate(key => localStorage.getItem(key), storageKey), rawFixture);
   await current.context.close();
 
   progress("tap a visible axis on a touch viewport");
@@ -259,8 +381,24 @@ try {
   assert.deepEqual(measurements(mobile), measurements(baseline));
   await capture(current.page, "camera-mobile");
   assert.equal(await current.page.evaluate(key => localStorage.getItem(key), storageKey), rawFixture);
+
+  progress("tap the grey matcap toggle on a phone and use its keyboard shortcut");
+  await curvedFront(current.page);
+  const mobileWarm = await report(current.page);
+  await clickMatcap(current.page);
+  const mobileGrey = await report(current.page);
+  assert.match(mobileGrey, /^Viewport material: Grey matcap$/m);
+  assert.deepEqual(measurements(mobileGrey), measurements(mobileWarm));
+  assert.deepEqual(camera(mobileGrey), camera(mobileWarm));
+  await assertMatcap(current.page);
+  await key(current.page, "Control+Alt+g");
+  assert.match(await report(current.page), /^Viewport material: Warm clay$/m, "The material shortcut must also work without a pointer");
+  await key(current.page, "Control+z");
+  assert.match(await report(current.page), /^Viewport material: Grey matcap$/m, "Undo restores the material changed by keyboard");
+  await capture(current.page, "camera-matcap-mobile");
+  assert.equal(await current.page.evaluate(key => localStorage.getItem(key), storageKey), rawFixture);
   assert.deepEqual(issues, [], "Camera interactions must not emit app errors or contact remote services");
-  console.log("Camera browser checks passed: real orthographic/perspective45 controls, visible XYZ label mouse/touch snaps, camera Undo, invariant physical measurements and exported vertices, asymmetric geometry, and saved-data isolation.");
+  console.log("Camera browser checks passed: real orthographic/perspective45 controls, visible XYZ label mouse/touch snaps, camera Undo, curved front-view grey matcap mouse/touch/keyboard controls with neutral varied shading and Undo, invariant physical measurements and exported vertices, asymmetric geometry, and saved-data isolation.");
 } catch (error) {
   originalError = error;
   console.error(`Camera browser failed during: ${phase}`);

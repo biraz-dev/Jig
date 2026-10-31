@@ -168,6 +168,11 @@ an orthographic front XZ view with Z up. The silhouette's feet align with the
 model's lowest Z level. Both use the same physical scale; resizing the model
 changes its relationship to the person. The reference is excluded from STL
 exports and from object measurements.
+**Grey matcap** in the viewport (or **Ctrl-Alt-G**) switches to a neutral grey
+studio material for inspecting surface shape. Its broad, camera-relative
+lighting makes details readable in front and axis-aligned views. Toggle it off
+to return to warm clay. This appearance setting is session-only and undoable;
+it does not affect measurements, clay shrinkage settings or exported geometry.
 The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
 one another correctly. Other workbench tools continue to use the existing layout.
 

@@ -1541,6 +1541,19 @@ impl eframe::App for BrowserApp {
             self.stl.toggle_human_comparison();
             ctx.request_repaint();
         }
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::G)) {
+            self.focus = 4;
+            self.focus_calculator = false;
+            self.focus_task_date = false;
+            self.scroll_selected = true;
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+            self.stl.toggle_grey_matcap();
+            ctx.request_repaint();
+        }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::D)) {
             self.data_open = !self.data_open;
             ctx.request_repaint();

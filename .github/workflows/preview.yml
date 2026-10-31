@@ -60,7 +60,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-small,stl-tiny,stl-failure,stl-failure-canvas,stl-focus-open,stl-focus-tab1,stl-focus-tab2,stl-focus-tab3,undo-desktop,undo-failure,scale-axes,scale-target,scale-mobile,scale-failure,camera-orthographic,camera-perspective,camera-axis-x,camera-axis-y,camera-axis-z,camera-mobile,camera-failure,human-equal-height,human-half-height,human-centimeters,human-mobile,human-failure' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-small,stl-tiny,stl-failure,stl-failure-canvas,stl-focus-open,stl-focus-tab1,stl-focus-tab2,stl-focus-tab3,undo-desktop,undo-failure,scale-axes,scale-target,scale-mobile,scale-failure,camera-orthographic,camera-perspective,camera-axis-x,camera-axis-y,camera-axis-z,camera-mobile,camera-matcap,camera-matcap-mobile,camera-failure,human-equal-height,human-half-height,human-centimeters,human-mobile,human-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"

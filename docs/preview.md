@@ -21,6 +21,11 @@ The gnomon supports axis-aligned snaps. A 45° perspective mode shares the same
 Z-up camera basis as orthographic rendering. The Human scale overlay uses a
 fixed 1752.6 mm silhouette and a common XZ baseline; it never enters the mesh or
 exported STL. Camera and comparison settings are session-only and undoable.
+The optional **Grey matcap** viewport control (Ctrl-Alt-G) samples a procedural
+grey studio sphere using view-space normals. It needs no texture download or new
+dependency. Its broad lighting stays relative to the camera, with restrained
+highlights for surface inspection. Appearance participates in the scene's Undo
+and renderer cache, while physical measurements and STL exports stay unchanged.
 
 `src/stl.rs` parses bounded binary/ASCII STL and computes bounds, area, topology
 diagnostics and conditional volume without terminal, DOM or GPU dependencies.

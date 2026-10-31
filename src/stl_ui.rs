@@ -517,17 +517,12 @@ impl StlPanel {
                         .color(MUTED)
                         .size(11.0),
                 );
-                if let Some(volume) = measurements.volume_mm3 {
-                    ui.label(
-                        RichText::new(format!("{:.2} cm³", volume / 1000.0))
-                            .color(CREAM)
-                            .size(24.0),
-                    );
+                if let Some(volume) = measurements.volume_label() {
+                    ui.label(RichText::new(volume).color(CREAM).size(24.0));
                     ui.label(
                         RichText::new(format!(
-                            "Total volume · {:.2} mL · {:.2} in³",
-                            volume / 1000.0,
-                            volume / 25.4_f64.powi(3)
+                            "Total volume · {}",
+                            measurements.volume_alternatives_label().unwrap_or_default()
                         ))
                         .color(MUTED)
                         .size(11.0),
@@ -545,16 +540,12 @@ impl StlPanel {
                     );
                 }
                 ui.label(
-                    RichText::new(format!(
-                        "Area {:.2} cm²",
-                        measurements.surface_area_mm2 / 100.0
-                    ))
-                    .color(CREAM)
-                    .size(12.0),
+                    RichText::new(format!("Area {}", measurements.area_label()))
+                        .color(CREAM)
+                        .size(12.0),
                 );
-                let [x, y, z] = measurements.dimensions_mm;
                 ui.label(
-                    RichText::new(format!("{x:.2} × {y:.2} × {z:.2} mm"))
+                    RichText::new(measurements.dimensions_label())
                         .color(CREAM)
                         .size(12.0),
                 );
@@ -564,9 +555,9 @@ impl StlPanel {
                         .as_ref()
                         .map(|mesh| mesh.measure(self.unit, self.scale_percent / 100.0))
                     {
-                        if let Some(volume) = base.volume_mm3 {
+                        if let Some(volume) = base.volume_label() {
                             ui.label(
-                                RichText::new(format!("Base model {:.2} cm³", volume / 1000.0))
+                                RichText::new(format!("Base model {volume}"))
                                     .color(MUTED)
                                     .size(11.0),
                             );

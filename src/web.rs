@@ -1582,7 +1582,18 @@ impl eframe::App for BrowserApp {
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
-            let height = ui.available_height().max(500.0);
+            let available_height = ui.available_height();
+            if self.expanded
+                && self.focus == 4
+                && ui.available_width() >= 760.0
+                && available_height >= 500.0
+            {
+                // The wide viewer already scrolls its settings internally.
+                // Keep its toolbar outside the dashboard's focus-driven scroll.
+                self.tool(ui, 4, available_height - 8.0);
+                return;
+            }
+            let height = available_height.max(500.0);
             egui::ScrollArea::vertical()
                 .id_salt("dashboard")
                 .show(ui, |ui| {

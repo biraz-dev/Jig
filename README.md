@@ -179,6 +179,11 @@ volume, including cm³ (equivalent to mL) and in³. Length changes by the scale
 factor, area by its square and volume by its cube. Measurements use every
 accepted triangle. Models are limited to **20 MiB and 200,000 triangles**.
 
+Small volume and area displays switch to mm³ and mm² when needed. Positive
+measurements below two-decimal display precision show `<0.01` rather than zero.
+Reports and scaled STL exports keep their existing precision. On larger screens,
+maximizing the STL applet keeps its action row visible while its settings scroll.
+
 Surface area is the sum of triangle areas. Volume requires closed, consistently
 oriented, nondegenerate faces. Holes, inconsistent edges, non-manifold edges or
 mixed component winding make volume unavailable. The check does not detect

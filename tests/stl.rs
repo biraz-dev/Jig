@@ -97,6 +97,77 @@ fn cube_geometry_matches_analytic_measurements() {
 }
 
 #[test]
+fn small_models_have_readable_measurements_without_losing_precision() {
+    let mesh = Mesh::from_triangles(cube()).unwrap();
+    let one_mm = mesh.measure(LengthUnit::Millimeters, 1.0).unwrap();
+    assert_eq!(one_mm.volume_label().as_deref(), Some("1.00 mm³"));
+    assert_eq!(one_mm.area_label(), "0.06 cm²");
+    assert_eq!(one_mm.dimensions_label(), "1.00 × 1.00 × 1.00 mm");
+    assert_eq!(
+        one_mm.volume_alternatives_label().as_deref(),
+        Some("<0.01 mL · <0.01 in³")
+    );
+    close(one_mm.volume_mm3.unwrap(), 1.0);
+
+    let tiny = mesh.measure(LengthUnit::Millimeters, 0.1).unwrap();
+    assert_eq!(tiny.volume_label().as_deref(), Some("<0.01 mm³"));
+    assert_eq!(tiny.area_label(), "0.06 mm²");
+    assert_eq!(tiny.dimensions_label(), "0.10 × 0.10 × 0.10 mm");
+    close(tiny.volume_mm3.unwrap(), 0.001);
+
+    let smaller = mesh.measure(LengthUnit::Millimeters, 0.001).unwrap();
+    assert_eq!(smaller.area_label(), "<0.01 mm²");
+    assert_eq!(smaller.dimensions_label(), "<0.01 × <0.01 × <0.01 mm");
+}
+
+#[test]
+fn measurement_labels_keep_normal_units_and_distinguish_zero_from_unavailable() {
+    let mesh = Mesh::from_triangles(cube()).unwrap();
+    let centimeter = mesh.measure(LengthUnit::Centimeters, 1.0).unwrap();
+    assert_eq!(centimeter.volume_label().as_deref(), Some("1.00 cm³"));
+    assert_eq!(centimeter.area_label(), "6.00 cm²");
+    assert_eq!(
+        centimeter.volume_alternatives_label().as_deref(),
+        Some("1.00 mL · 0.06 in³")
+    );
+    let threshold = stl::Measurements {
+        dimensions_mm: [0.0, 0.01, 1.0],
+        surface_area_mm2: 1.0,
+        volume_mm3: Some(10.0),
+    };
+    assert_eq!(threshold.volume_label().as_deref(), Some("0.01 cm³"));
+    assert_eq!(threshold.area_label(), "0.01 cm²");
+    assert_eq!(threshold.dimensions_label(), "0.00 × 0.01 × 1.00 mm");
+
+    let empty = stl::Measurements {
+        dimensions_mm: [0.0; 3],
+        surface_area_mm2: 0.0,
+        volume_mm3: None,
+    };
+    assert_eq!(empty.volume_label(), None);
+    assert_eq!(empty.volume_alternatives_label(), None);
+    assert_eq!(empty.area_label(), "0.00 cm²");
+    let zero = stl::Measurements {
+        volume_mm3: Some(0.0),
+        ..empty
+    };
+    assert_eq!(zero.volume_label().as_deref(), Some("0.00 cm³"));
+    assert_eq!(
+        zero.volume_alternatives_label().as_deref(),
+        Some("0.00 mL · 0.00 in³")
+    );
+    let subnormal = stl::Measurements {
+        volume_mm3: Some(f64::from_bits(1)),
+        ..empty
+    };
+    assert_eq!(subnormal.volume_label().as_deref(), Some("<0.01 mm³"));
+    assert_eq!(
+        subnormal.volume_alternatives_label().as_deref(),
+        Some("<0.01 mL · <0.01 in³")
+    );
+}
+
+#[test]
 fn tetrahedron_and_globally_reversed_winding_have_correct_volume() {
     let a = [0.0, 0.0, 0.0];
     let b = [1.0, 0.0, 0.0];

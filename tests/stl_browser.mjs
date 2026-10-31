@@ -20,12 +20,12 @@ const fixture = {
 const fixtureRaw = JSON.stringify(fixture);
 const vertices = [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 10], [10, 0, 10], [10, 10, 10], [0, 10, 10]];
 const faces = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2], [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]];
-function binaryCube() {
+function binaryCube(scale = 1) {
   const bytes = Buffer.alloc(84 + faces.length * 50);
   bytes.write("solid Sample: local-only cube; binary despite its header");
   bytes.writeUInt32LE(faces.length, 80);
   faces.forEach((face, index) => face.forEach((vertex, point) => vertices[vertex].forEach((coordinate, axis) => {
-    bytes.writeFloatLE(coordinate, 84 + index * 50 + 12 + point * 12 + axis * 4);
+    bytes.writeFloatLE(coordinate * scale, 84 + index * 50 + 12 + point * 12 + axis * 4);
   })));
   return bytes;
 }
@@ -68,7 +68,7 @@ async function bounded(promise, milliseconds, description) {
 }
 function renderLog(name, png) {
   const allow = new Set([
-    "stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-failure", "stl-failure-canvas", "stl-reloaded", "stl-open-mesh",
+    "stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-small", "stl-tiny", "stl-failure", "stl-failure-canvas", "stl-reloaded", "stl-open-mesh",
     "stl-focus-open", "stl-focus-tab1", "stl-focus-tab2", "stl-focus-tab3",
   ]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
@@ -541,6 +541,18 @@ try {
   assert.equal(await saved(current.page), fixtureRaw);
   await current.context.close();
 
+  progress("keep small and subprecision mesh measurements readable");
+  current = await newPage("stl-small");
+  await boot(current.page);
+  await upload(current.page, binaryCube(0.1), "Sample-one-mm-cube.stl");
+  assert.deepEqual(measurements(await copyReport(current.page)), { area: 6, volume: 1, dimensions: [1, 1, 1] });
+  await capture(current.page, "stl-small");
+  await upload(current.page, binaryCube(0.01), "Sample-tiny-cube.stl");
+  assert.deepEqual(measurements(await copyReport(current.page)), { area: 0.06, volume: 0.001, dimensions: [0.1, 0.1, 0.1] });
+  await capture(current.page, "stl-tiny");
+  assert.equal(await saved(current.page), fixtureRaw, "Measurement labels must not change saved data");
+  await current.context.close();
+
   progress("keep model proportions on a large high-DPI drawing surface");
   current = await newPage("stl-hidpi", { width: 2200, height: 1000 }, true, 2);
   await boot(current.page);
@@ -550,6 +562,12 @@ try {
   await tab(current.page, 3); // Copy report -> Export, Iso, Front.
   await key(current.page, "Space");
   await capture(current.page, "stl-hidpi");
+  // The first action row used to scroll above the maximized panel after Tab
+  // navigation. Activate its visible position without reanchoring the view.
+  const visibleOpenEvent = current.page.waitForEvent("filechooser", { timeout: 5000 });
+  await current.page.locator("#jig_canvas").click({ position: { x: 80, y: 64 }, delay: 50 });
+  const visibleOpen = await visibleOpenEvent;
+  await visibleOpen.setFiles([]);
   assert.equal(await saved(current.page), fixtureRaw);
 
   assert.deepEqual(issues, [], "STL errors or unexpected requests");

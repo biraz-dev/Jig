@@ -158,6 +158,10 @@ locally to request named scenes; personal workbench data is never used.
 synthetic cube/open meshes and the real local file picker bridge, exercises
 measurement reports and downloads, and checks camera/scale controls, file error
 preservation and reload privacy. The public demo never embeds a private STL.
+It also covers small-mesh measurements and checks that the maximized STL action
+row remains clickable after keyboard navigation on a high-DPI display. Compact
+measurement labels live with the portable geometry measurements; raw report and
+export values retain their precision.
 
 The header Undo and Ctrl-Z share one chronological journal for workbench data and
 viewer actions. Workbench snapshots retain the validated `State`; STL snapshots

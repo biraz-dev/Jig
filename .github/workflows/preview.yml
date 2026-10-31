@@ -39,7 +39,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-failure,stl-failure-canvas,stl-focus-open,stl-focus-tab1,stl-focus-tab2,stl-focus-tab3,undo-desktop,undo-failure' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-small,stl-tiny,stl-failure,stl-failure-canvas,stl-focus-open,stl-focus-tab1,stl-focus-tab2,stl-focus-tab3,undo-desktop,undo-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"

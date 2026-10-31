@@ -75,6 +75,51 @@ pub struct Measurements {
     pub volume_mm3: Option<f64>,
 }
 
+impl Measurements {
+    /// Compact labels keep two decimals while preserving the measured values.
+    /// Small positive quantities use smaller units or a bound instead of zero.
+    pub fn volume_label(&self) -> Option<String> {
+        self.volume_mm3.map(|volume| {
+            if volume > 0.0 && volume < 10.0 {
+                format!("{} mm³", measurement_number(volume, 1.0))
+            } else {
+                format!("{} cm³", measurement_number(volume, 1000.0))
+            }
+        })
+    }
+
+    pub fn area_label(&self) -> String {
+        if self.surface_area_mm2 > 0.0 && self.surface_area_mm2 < 1.0 {
+            format!("{} mm²", measurement_number(self.surface_area_mm2, 1.0))
+        } else {
+            format!("{} cm²", measurement_number(self.surface_area_mm2, 100.0))
+        }
+    }
+
+    pub fn dimensions_label(&self) -> String {
+        let [x, y, z] = self.dimensions_mm.map(|value| measurement_number(value, 1.0));
+        format!("{x} × {y} × {z} mm")
+    }
+
+    pub fn volume_alternatives_label(&self) -> Option<String> {
+        self.volume_mm3.map(|volume| {
+            format!(
+                "{} mL · {} in³",
+                measurement_number(volume, 1000.0),
+                measurement_number(volume, 25.4_f64.powi(3))
+            )
+        })
+    }
+}
+
+fn measurement_number(value: f64, divisor: f64) -> String {
+    if value > 0.0 && value < 0.01 * divisor {
+        "<0.01".into()
+    } else {
+        format!("{:.2}", value / divisor)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Shrinkage {
     pub remaining: f64,

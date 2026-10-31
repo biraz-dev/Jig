@@ -214,6 +214,20 @@ async function visual(page, kind) {
         region.height = region.bottom - region.top + 1;
         components.push(region);
       }
+      if (name === "person") {
+        // The silhouette is assembled from separate convex pieces. On a small
+        // display, anti-aliasing can disconnect head/feet from the torso. Read
+        // every visible sage piece beside the model, not just its largest part.
+        const pieces = components.filter(region => region.count >= 2 && region.left > (answer.model?.right ?? bounds.left) + 3);
+        if (pieces.length) {
+          const union = pieces.reduce((result, region) => ({
+            left: Math.min(result.left, region.left), right: Math.max(result.right, region.right),
+            top: Math.min(result.top, region.top), bottom: Math.max(result.bottom, region.bottom), count: result.count + region.count,
+          }), { left: image.width, right: -1, top: image.height, bottom: -1, count: 0 });
+          answer.person = { ...union, width: union.right - union.left + 1, height: union.bottom - union.top + 1 };
+        } else answer.person = null;
+        continue;
+      }
       const candidates = name === "button"
         ? components.filter(region => region.width >= 90 && region.width <= 125 && region.height >= 14 && region.height <= 28 && region.count > 450)
         : components.filter(region => region.count > 300 && region.height > 50);

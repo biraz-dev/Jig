@@ -1122,13 +1122,13 @@ impl StlPanel {
         let comparison = self.comparison_layout(ui, rect, settings);
         let now = ui.input(|input| input.time);
         if response.drag_started() {
-            self.orbit_allowed = ui
-                .input(|input| input.pointer.press_origin())
-                .is_none_or(|position| {
-                    !gnomon_rect(ui, rect).contains(position)
-                        && !viewport_toggle_rect(ui, rect, false).contains(position)
-                        && !viewport_toggle_rect(ui, rect, true).contains(position)
-                });
+            self.orbit_allowed =
+                ui.input(|input| input.pointer.press_origin())
+                    .is_none_or(|position| {
+                        !gnomon_rect(ui, rect).contains(position)
+                            && !viewport_toggle_rect(ui, rect, false).contains(position)
+                            && !viewport_toggle_rect(ui, rect, true).contains(position)
+                    });
         }
         if response.dragged() && self.orbit_allowed && !self.human_comparison {
             let motion = response.drag_motion();
@@ -1575,10 +1575,7 @@ fn viewport_toggle_rect(ui: &Ui, viewport: egui::Rect, left: bool) -> egui::Rect
     } else {
         visible.right() - 120.0
     };
-    egui::Rect::from_min_size(
-        egui::pos2(x, visible.top() + 8.0),
-        egui::vec2(112.0, 22.0),
-    )
+    egui::Rect::from_min_size(egui::pos2(x, visible.top() + 8.0), egui::vec2(112.0, 22.0))
 }
 
 fn gnomon_rect(ui: &Ui, viewport: egui::Rect) -> egui::Rect {

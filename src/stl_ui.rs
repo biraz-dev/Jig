@@ -359,9 +359,8 @@ impl StlPanel {
             ui.label(RichText::new("STL").color(PINK));
             let open = ui.button("Open STL");
             if self.focus_open {
-                let acknowledged = open.has_focus();
                 open.request_focus();
-                self.focus_open = !acknowledged;
+                self.focus_open = false;
                 self.focused = true;
                 ui.ctx().request_repaint();
             }

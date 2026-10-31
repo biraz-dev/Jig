@@ -600,6 +600,7 @@ impl BrowserApp {
         }
         for row in rows {
             ui.push_id(("checklist-row", row.task, row.deadline), |ui| {
+                let mut color_control = None;
                 ui.horizontal_wrapped(|ui| {
                     let featured = row.deadline.is_some() && row.deadline == self.state.featured;
                     if ui
@@ -648,6 +649,7 @@ impl BrowserApp {
                                 .selected(self.task_color_edit == Some(deadline))
                                 .min_size(egui::vec2(30.0, 30.0)),
                         );
+                        color_control = Some(response.id);
                         let label =
                             format!("Color: {}", row.color.map_or("None", TaskColor::label));
                         response.widget_info(|| {
@@ -775,6 +777,10 @@ impl BrowserApp {
                                     .and_then(|id| self.state.set_task_color(id, color));
                                 if result.is_ok() {
                                     self.task_color_edit = None;
+                                    if let Some(id) = color_control {
+                                        ui.memory_mut(|memory| memory.request_focus(id));
+                                    }
+                                    ui.ctx().request_repaint();
                                 }
                                 self.apply(result);
                             }
@@ -853,6 +859,11 @@ impl BrowserApp {
                             .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
                         {
                             self.task_date_edit = None;
+                        }
+                        if self.task_color_edit.is_some_and(|id| {
+                            !self.state.deadlines.iter().any(|deadline| deadline.id == id)
+                        }) {
+                            self.task_color_edit = None;
                         }
                         self.confirm_clear_completed = false;
                         self.changed();
@@ -1203,18 +1214,18 @@ impl BrowserApp {
             ui.label(
                 RichText::new(self.selected_date.format("%a %d %b").to_string())
                     .color(BLUE)
-                    .small(),
+                    .size(12.0),
             );
             if !tasks.is_empty() {
                 ui.label(
                     RichText::new(format!("{} due", tasks.len()))
                         .color(BLUE)
-                        .small(),
+                        .size(12.0),
                 );
             }
         });
         if tasks.is_empty() {
-            ui.label(RichText::new("No tasks due").color(BLUE).small());
+            ui.label(RichText::new("No tasks due").color(BLUE).size(12.0));
             return;
         }
         egui::ScrollArea::vertical()
@@ -1231,11 +1242,11 @@ impl BrowserApp {
                             ui.label(
                                 RichText::new(if task.complete { "Done" } else { "Open" })
                                     .color(BLUE)
-                                    .small(),
+                                    .size(11.0),
                             );
                             let text = RichText::new(task.title)
                                 .color(if task.complete { BLUE } else { CREAM })
-                                .small();
+                                .size(12.0);
                             ui.add(
                                 egui::Label::new(if task.complete {
                                     text.strikethrough()

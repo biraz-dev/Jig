@@ -38,7 +38,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'task-colors-desktop,task-colors-mobile,task-colors-mobile-touch,task-colors-six-weeks' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'task-colors-desktop,task-colors-mobile,task-colors-mobile-touch,task-colors-six-weeks,task-colors-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"

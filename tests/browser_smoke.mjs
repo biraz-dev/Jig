@@ -68,6 +68,7 @@ async function capture(page, name) {
     "task-colors-desktop", "task-colors-mobile", "task-colors-six-weeks",
     "task-colors-calendar-empty", "task-colors-mobile-touch",
     "task-colors-list-scroll",
+    "task-colors-date-focus", "task-colors-failure",
   ]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
@@ -211,6 +212,7 @@ async function maximizeApplet(page, applet) {
   await paint(page);
   await page.keyboard.press("Control+Alt+4");
   await paint(page);
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await page.keyboard.press("Escape");
   await paint(page);
   for (let index = 0; index < (applet === "calendar" ? 2 : 1); index++) {
@@ -580,10 +582,14 @@ try {
   assert.equal(coloredState.featured, 109, "Color changes must not feature another task");
 
   progress("move a colored task to another due date using its date editor");
-  await maximizeApplet(colored.page, "checklist");
-  await tab(colored.page, 6); // First row date, after its swatch.
+  // A palette choice restores focus to that row's swatch. The next control is
+  // its date button; continue from this known focus instead of rebuilding the
+  // maximized view and depending on a now-removed palette button's focus order.
+  await paint(colored.page);
+  await tab(colored.page);
+  await capture(colored.page, "task-colors-date-focus");
   await colored.page.keyboard.press("Space");
-  await colored.page.waitForTimeout(250);
+  await colored.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await colored.page.keyboard.press("Control+a");
   await colored.page.keyboard.type("2026-10-31T18:00:00Z", { delay: 10 });
   await colored.page.keyboard.press("Enter");
@@ -593,6 +599,8 @@ try {
   assert.equal(coloredState.tasks[0].color, "amber");
   assert.equal(coloredState.deadlines.length, 9);
   assert.equal(coloredState.featured, 109, "Editing a different deadline must preserve the starred task");
+  await boot(colored.page, true);
+  assert.deepEqual(JSON.parse(await saved(colored.page)), coloredState, "An edited date and its task color must survive restart together");
 
   progress("complete a colored dated task, then reload its saved state");
   await maximizeApplet(colored.page, "checklist");
@@ -827,6 +835,9 @@ try {
     if (!page.isClosed()) {
       // Preserve the failed scene before diagnostic keyboard focus changes it.
       await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});
+      if (label === "task-colors-desktop" || label === "task-colors-mobile") {
+        await capture(page, "task-colors-failure").catch(() => {});
+      }
       const diagnostics = await bounded(page.evaluate(key => ({
         // These contexts contain only the explicit synthetic fixtures above.
         saved: localStorage.getItem(key),

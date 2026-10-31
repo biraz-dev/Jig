@@ -159,6 +159,20 @@ synthetic cube/open meshes and the real local file picker bridge, exercises
 measurement reports and downloads, and checks camera/scale controls, file error
 preservation and reload privacy. The public demo never embeds a private STL.
 
+The header Undo and Ctrl-Z share one chronological journal for workbench data and
+viewer actions. Workbench snapshots retain the validated `State`; STL snapshots
+share geometry through `Arc`, so camera changes do not clone triangle buffers.
+Twenty steps and a combined 64 MiB budget (serialized state sizes plus unique
+mesh allocations, including the current model) bound the history. Rotations and
+scale drags coalesce into one step; wheel bursts coalesce before undo. A viewer
+restore cancels pending file reads and uploads geometry only when the model
+changes. Persistent clay changes are ordinary state actions, preventing duplicate
+undo steps. Data restores use the normal safe-save path and update the weather
+adapter when its preference changes. Files and undo snapshots remain outside
+JSON. Dataset switches clear the journal and its baseline. Ctrl-Z stays native
+inside text editors. `tests/undo_browser.mjs` exercises cross-applet history and
+the dataset/save protections alongside the STL-specific undo checks.
+
 Deployment runs only after a push to `main`; pull requests build and test without
 publishing. To activate the public preview:
 

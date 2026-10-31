@@ -161,6 +161,16 @@ gnomon follows the camera. **Ctrl-Alt-5** selects the viewer; **Ctrl-M** maximiz
 or restores it. The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
 one another correctly. Other workbench tools continue to use the existing layout.
 
+The header's **Undo** button, or **Ctrl-Z** outside text fields, reverses the most
+recent workbench or STL change. That includes calculations, tasks, dates, colors,
+completion, deletion, preferences and material settings, as well as model
+opening/clearing, orientation, zoom, source units, scale and shrinkage mode.
+An STL drag or wheel burst is one step. Text fields keep their normal typing
+undo. The single session history holds up to 20 steps within a 64 MiB budget for
+data snapshots and shared geometry. It is cleared when switching datasets or
+reloading, and is never saved in JSON. Restoring saved work uses the same safe
+save guards as ordinary edits.
+
 STL files do not contain units. Choose **mm**, **cm** or **in** for the source
 coordinates before interpreting the numbers. Physical scale is independent of
 camera zoom. The applet reports dimensions, surface area and total enclosed

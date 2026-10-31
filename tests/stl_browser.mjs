@@ -103,17 +103,43 @@ async function copyReport(page) {
   const sentinel = "Jig STL report pending";
   await page.evaluate(value => navigator.clipboard.writeText(value), sentinel);
   await maximize(page);
-  // Data, Source, Open STL, Sample cube, Clear, then Copy report.
-  await tab(page, 6);
+  // With a committed file in history: Data, global Undo, Source, Open STL,
+  // Sample cube, Clear, then Copy report. Reload clears the global history.
+  await tab(page, 7);
   await key(page, "Space");
-  await page.waitForFunction(async value => (await navigator.clipboard.readText()) !== value, sentinel, { timeout: 3000 });
-  return page.evaluate(() => navigator.clipboard.readText());
+  const deadline = Date.now() + 3000;
+  let copied = "";
+  while (Date.now() < deadline) {
+    copied = await page.evaluate(() => navigator.clipboard.readText());
+    if (copied.startsWith("Jig STL report\n")) return copied;
+    await page.waitForTimeout(50);
+  }
+  assert.fail(`Copy report did not produce a Jig STL report within 3 seconds; clipboard began ${JSON.stringify(copied.slice(0, 180))}`);
 }
 
 async function control(page, position) {
   await maximize(page);
   await tab(page, position);
   await key(page, "Space");
+}
+
+async function undo(page) { await key(page, "Control+z"); }
+
+async function modelView(page) {
+  // The maximized desktop viewport's interior excludes control focus outlines,
+  // footer text and the fixed axis widget. A restored camera must draw the same
+  // cube pixels here; the supplied clock is fixed for deterministic captures.
+  return page.screenshot({ clip: { x: 50, y: 180, width: 700, height: 600 } });
+}
+
+async function setScale(page, percent) {
+  await maximize(page);
+  await tab(page, 20); // Physical scale after Undo, view controls and source units.
+  await key(page, "Enter");
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.keyboard.press("Control+a");
+  await page.keyboard.type(String(percent), { delay: 30 });
+  await key(page, "Enter");
 }
 
 function measurements(report) {
@@ -249,49 +275,64 @@ try {
   assert.deepEqual(measurements(preservedReport), measurements(asciiReport), "Rejected STL must keep the last usable geometry");
   assert.equal(await saved(current.page), fixtureRaw);
 
+  progress("reject invalid STL without inserting an undo step");
+  await undo(current.page);
+  const beforeAsciiReport = await copyReport(current.page);
+  assert.match(beforeAsciiReport, /Sample-local-cube\.stl/, "One Undo must skip the failed import and restore the preceding valid model");
+  assert.deepEqual(measurements(beforeAsciiReport), measurements(binaryReport));
+  await upload(current.page, asciiCube, "Sample-ASCII-cube.stl");
+  assert.deepEqual(measurements(await copyReport(current.page)), measurements(asciiReport));
+
   progress("change view without changing physical measurements");
   // From Copy report: Export STL, Iso, Front. The cube's front projection is
   // visibly different from its initial isometric view while measurements agree.
-  const beforeView = await current.page.screenshot();
+  const beforeView = await modelView(current.page);
   await tab(current.page, 3);
   await key(current.page, "Space");
-  assert.notDeepEqual(await current.page.screenshot(), beforeView, "A view preset must visibly rotate the model");
+  assert.notDeepEqual(await modelView(current.page), beforeView, "A view preset must visibly rotate the model");
   assert.deepEqual(measurements(await copyReport(current.page)), measurements(asciiReport));
+  await undo(current.page);
+  assert.deepEqual(measurements(await copyReport(current.page)), measurements(asciiReport));
+  assert.deepEqual(await modelView(current.page), beforeView, "Undo must restore the preceding camera view");
 
   progress("orbit by dragging without changing geometry measurements");
-  const beforeOrbit = await current.page.screenshot();
+  const beforeOrbit = await modelView(current.page);
   await current.page.mouse.move(400, 400);
   await current.page.mouse.down();
   await current.page.mouse.move(470, 430, { steps: 8 });
   await current.page.mouse.up();
   await paint(current.page);
-  assert.notDeepEqual(await current.page.screenshot(), beforeOrbit, "Dragging the model viewport must change its view");
+  assert.notDeepEqual(await modelView(current.page), beforeOrbit, "Dragging the model viewport must change its view");
   assert.deepEqual(measurements(await copyReport(current.page)), measurements(asciiReport));
+  await undo(current.page);
+  assert.deepEqual(measurements(await copyReport(current.page)), measurements(asciiReport));
+  assert.deepEqual(await modelView(current.page), beforeOrbit, "One Undo must restore an entire orbit gesture");
 
   progress("interpret unitless STL coordinates using explicit source units");
-  await control(current.page, 17); // Source units: cm.
+  await control(current.page, 18); // Source units: cm.
   const centimeterReport = await copyReport(current.page);
   assert.match(centimeterReport, /Source units: cm/);
   assert.deepEqual(measurements(centimeterReport), { area: 60000, volume: 1000000, dimensions: [100, 100, 100] });
-  await control(current.page, 16); // Restore mm.
-  assert.deepEqual(measurements(await copyReport(current.page)), measurements(asciiReport));
+  await undo(current.page);
+  const restoredUnits = await copyReport(current.page);
+  assert.match(restoredUnits, /Source units: mm/);
+  assert.deepEqual(measurements(restoredUnits), measurements(asciiReport), "Undo must restore the former source unit");
 
   progress("scale the actual model and distinguish that from camera zoom");
-  await maximize(current.page);
-  await tab(current.page, 19); // Physical scale DragValue, after source units.
-  await key(current.page, "Enter");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
-  await current.page.keyboard.press("Control+a");
-  await current.page.keyboard.type("200", { delay: 30 });
-  await key(current.page, "Enter");
+  await setScale(current.page, 200);
   const scaledReport = await copyReport(current.page);
   assert.match(scaledReport, /Model scale: 200\.00%/);
   assert.deepEqual(measurements(scaledReport), { area: 2400, volume: 8000, dimensions: [20, 20, 20] });
-  await control(current.page, 12); // Fit reframes without changing physical scale.
+  await undo(current.page);
+  const unscaledReport = await copyReport(current.page);
+  assert.match(unscaledReport, /Model scale: 100\.00%/);
+  assert.deepEqual(measurements(unscaledReport), measurements(asciiReport), "One Undo must restore a whole physical-scale edit");
+  await setScale(current.page, 200);
+  await control(current.page, 13); // Fit reframes without changing physical scale.
   assert.deepEqual(measurements(await copyReport(current.page)), measurements(scaledReport));
 
   progress("apply Standard 104 cone 06 linear shrinkage and compensation");
-  await control(current.page, 21); // Estimate.
+  await control(current.page, 22); // Estimate.
   const estimatedReport = await copyReport(current.page);
   assert.match(estimatedReport, /Standard #104/);
   assert.match(estimatedReport, /Cone: 06\b/);
@@ -301,13 +342,24 @@ try {
   estimated.dimensions.forEach(value => close(value, 20 * 0.94, "Estimated length"));
   close(estimated.area, 2400 * 0.94 ** 2, "Estimated surface area");
   close(estimated.volume, 8000 * 0.94 ** 3, "Estimated enclosed volume");
-  await control(current.page, 22); // Compensate.
+  await undo(current.page);
+  const beforeEstimateReport = await copyReport(current.page);
+  assert.match(beforeEstimateReport, /Mode: Off/);
+  assert.deepEqual(measurements(beforeEstimateReport), measurements(scaledReport), "Undo must restore the former shrinkage mode");
+  await control(current.page, 22); // Reapply Estimate.
+  await control(current.page, 23); // Compensate.
   const compensatedReport = await copyReport(current.page);
   assert.match(compensatedReport, /Mode: Compensate/);
   const compensated = measurements(compensatedReport);
   compensated.dimensions.forEach(value => close(value, 20 / 0.94, "Compensated length"));
   close(compensated.area, 2400 / 0.94 ** 2, "Compensated surface area");
   close(compensated.volume, 8000 / 0.94 ** 3, "Compensated enclosed volume");
+  await undo(current.page);
+  const beforeCompensationReport = await copyReport(current.page);
+  assert.match(beforeCompensationReport, /Mode: Estimate/);
+  assert.deepEqual(measurements(beforeCompensationReport), estimated, "Undo must restore the former estimate");
+  await control(current.page, 23); // Reapply Compensate for the local export.
+  assert.deepEqual(measurements(await copyReport(current.page)), compensated);
   assert.equal(await saved(current.page), fixtureRaw, "Mesh transforms and camera changes must not save model data");
 
   progress("export compensated geometry using the selected source units");
@@ -321,8 +373,17 @@ try {
   await capture(current.page, "stl-desktop");
   assert.equal(await saved(current.page), fixtureRaw);
 
+  progress("clear and restore a model using the visible Undo button");
+  await control(current.page, 6); // Clear drops the current model.
+  // The global header Undo remains available after the applet is empty.
+  await control(current.page, 2);
+  const restoredAfterClear = await copyReport(current.page);
+  assert.match(restoredAfterClear, /Sample-ASCII-cube\.stl/);
+  assert.deepEqual(measurements(restoredAfterClear), compensated, "Undo Clear must restore the model and its physical transforms");
+  assert.equal(await saved(current.page), fixtureRaw);
+
   progress("select an exact manufacturer cone point and save only preferences");
-  await control(current.page, 23); // Material opens its inline choices.
+  await control(current.page, 24); // Material opens its inline choices.
   // Manufacturer data link, Standard 104/cone06, Standard 104/cone4.
   await tab(current.page, 3);
   await key(current.page, "Space");
@@ -334,6 +395,30 @@ try {
   coneFour.dimensions.forEach(value => close(value, 20 / 0.89, "Cone4 compensated length"));
   close(coneFour.area, 2400 / 0.89 ** 2, "Cone4 compensated area");
   close(coneFour.volume, 8000 / 0.89 ** 3, "Cone4 compensated volume");
+
+  progress("undo globally in order across camera and saved clay preferences");
+  const materialCamera = await modelView(current.page);
+  await control(current.page, 10); // Front view is newer than the cone4 choice.
+  await undo(current.page);
+  const stillConeFourReport = await copyReport(current.page);
+  assert.match(stillConeFourReport, /Cone: 4\b/);
+  assert.deepEqual(measurements(stillConeFourReport), coneFour, "Undoing a camera edit must preserve the selected material");
+  assert.deepEqual(await modelView(current.page), materialCamera, "The first global Undo must restore only the camera");
+  assert.equal(JSON.parse(await saved(current.page)).preferences.clay?.selected, "standard-104-4");
+
+  progress("undo a material selection and restore its saved cone preference");
+  await undo(current.page);
+  const restoredMaterialReport = await copyReport(current.page);
+  assert.match(restoredMaterialReport, /Cone: 06\b/);
+  assert.match(restoredMaterialReport, /Linear shrinkage: 6\.000000%/);
+  assert.deepEqual(measurements(restoredMaterialReport), compensated);
+  await current.page.waitForFunction(key => (JSON.parse(localStorage.getItem(key)).preferences.clay?.selected ?? "standard-104-06") === "standard-104-06", storageKey);
+  const materialUndoState = JSON.parse(await saved(current.page));
+  for (const field of ["tasks", "deadlines", "entries", "history", "featured"]) assert.deepEqual(materialUndoState[field], fixture[field]);
+  // The inline material list remains open; choose the second published point
+  // again so restart testing covers an explicitly saved, nondefault selection.
+  await control(current.page, 27);
+  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).preferences.clay?.selected === "standard-104-4", storageKey);
   const savedWithClay = await saved(current.page);
   const clayState = JSON.parse(savedWithClay);
   for (const field of ["tasks", "deadlines", "entries", "history", "featured"]) assert.deepEqual(clayState[field], fixture[field]);
@@ -387,7 +472,7 @@ try {
   assert.equal(await saved(current.page), fixtureRaw);
 
   assert.deepEqual(issues, [], "STL errors or unexpected requests");
-  console.log("STL browser checks passed: local bridge bounds/races/clear, binary/ASCII cube measurements, unit interpretation, physical scale versus camera, Standard104/cone06 estimate and compensation, compensated local export, cone4 preference persistence, invalid replacement preservation, unavailable volume for open surfaces, memory-only models on restart, desktop/mobile/high-DPI layouts, and workbench data isolation.");
+  console.log("STL browser checks passed: local bridge bounds/races/clear, binary/ASCII cube measurements, unit interpretation, physical scale versus camera, Standard104/cone06 estimate and compensation, compensated local export, cone4 preference persistence, Undo for files/clear/camera gestures/units/scale/shrinkage/material settings, invalid replacement preservation, unavailable volume for open surfaces, memory-only models on restart, desktop/mobile/high-DPI layouts, and workbench data isolation.");
 } catch (error) {
   console.error(`STL browser failed during: ${phase}`);
   if (current?.page && !current.page.isClosed()) await capture(current.page, "stl-failure").catch(() => {});

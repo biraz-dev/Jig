@@ -9,7 +9,7 @@ use jig::{
     clay::{Basis, Settings},
     stl::{self, LengthUnit, Measurements, Mesh},
 };
-use std::{f32::consts::FRAC_PI_2, sync::Arc};
+use std::{f32::consts::FRAC_PI_2, sync::Arc, time::Duration};
 use wasm_bindgen::prelude::*;
 
 const BG: Color32 = Color32::from_rgb(12, 19, 27);
@@ -34,7 +34,7 @@ extern "C" {
     fn export_file(bytes: &[u8], name: &str);
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum ShrinkMode {
     Off,
     Estimate,
@@ -57,10 +57,44 @@ impl ShrinkMode {
     }
 }
 
+/// Session-only scene state. Arc shares unchanged geometry across camera/control
+/// edits; material preferences belong to the ordinary application-state journal.
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    mesh: Option<Arc<Mesh>>,
+    name: String,
+    unit: LengthUnit,
+    scale_percent: f64,
+    mode: ShrinkMode,
+    yaw: f32,
+    pitch: f32,
+    zoom: f32,
+}
+
+impl Snapshot {
+    /// Identity and allocated geometry bytes, for the dashboard's shared budget.
+    pub fn mesh_identity(&self) -> Option<(usize, usize)> {
+        self.mesh.as_ref().map(mesh_identity)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Gesture {
+    Orbit,
+    Scale,
+    Wheel,
+}
+
+struct PendingGesture {
+    before: Snapshot,
+    kind: Gesture,
+    last_input: f64,
+}
+
 pub struct StlPanel {
     gl: Option<Arc<glow::Context>>,
     renderer: Option<Arc<egui::mutex::Mutex<Renderer>>>,
-    mesh: Option<Mesh>,
+    mesh: Option<Arc<Mesh>>,
     name: String,
     error: Option<String>,
     graphics_error: Option<String>,
@@ -76,6 +110,8 @@ pub struct StlPanel {
     custom_cone: String,
     custom_shrinkage: f64,
     custom_basis: Basis,
+    undo_records: Vec<Snapshot>,
+    pending_gesture: Option<PendingGesture>,
     /// Lets the dashboard retain its ordinary selected-applet keyboard behavior.
     pub focused: bool,
 }
@@ -101,6 +137,8 @@ impl StlPanel {
             custom_cone: "06".into(),
             custom_shrinkage: 6.0,
             custom_basis: Basis::WetToFired,
+            undo_records: Vec::new(),
+            pending_gesture: None,
             focused: false,
         }
     }
@@ -126,6 +164,7 @@ impl StlPanel {
     }
 
     fn load(&mut self, mesh: Mesh, name: String) {
+        let before = self.prepare_snapshot();
         self.error = None;
         self.graphics_error = None;
         self.name = name;
@@ -135,6 +174,17 @@ impl StlPanel {
         self.yaw = 0.65;
         self.pitch = 0.55;
         self.zoom = 1.0;
+        self.mesh = Some(Arc::new(mesh));
+        self.upload_current();
+        self.push_snapshot(before);
+    }
+
+    fn upload_current(&mut self) {
+        self.graphics_error = None;
+        let Some(mesh) = self.mesh.as_ref().cloned() else {
+            self.destroy();
+            return;
+        };
         if let Some(gl) = &self.gl {
             if self.renderer.is_none() {
                 match Renderer::new(gl) {
@@ -152,7 +202,107 @@ impl StlPanel {
         } else {
             self.graphics_error = Some("3D rendering needs a WebGL context.".into());
         }
-        self.mesh = Some(mesh);
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            mesh: self.mesh.clone(),
+            name: self.name.clone(),
+            unit: self.unit,
+            scale_percent: self.scale_percent,
+            mode: self.mode,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            zoom: self.zoom,
+        }
+    }
+
+    fn differs(&self, before: &Snapshot) -> bool {
+        !same_mesh(&self.mesh, &before.mesh)
+            || self.name != before.name
+            || self.unit != before.unit
+            || self.scale_percent.to_bits() != before.scale_percent.to_bits()
+            || self.mode != before.mode
+            || self.yaw.to_bits() != before.yaw.to_bits()
+            || self.pitch.to_bits() != before.pitch.to_bits()
+            || self.zoom.to_bits() != before.zoom.to_bits()
+    }
+
+    fn prepare_snapshot(&mut self) -> Snapshot {
+        self.finish_gesture();
+        self.snapshot()
+    }
+
+    fn push_snapshot(&mut self, before: Snapshot) {
+        if self.differs(&before) {
+            self.undo_records.push(before);
+        }
+    }
+
+    fn begin_gesture(&mut self, kind: Gesture, before: Snapshot, now: f64) {
+        if self.pending_gesture.as_ref().is_some_and(|pending| pending.kind != kind) {
+            self.finish_gesture();
+        }
+        if let Some(pending) = &mut self.pending_gesture {
+            pending.last_input = now;
+        } else {
+            self.pending_gesture = Some(PendingGesture { before, kind, last_input: now });
+        }
+    }
+
+    fn finish_gesture(&mut self) {
+        if let Some(pending) = self.pending_gesture.take() {
+            self.push_snapshot(pending.before);
+        }
+    }
+
+    /// Drain completed actions into the dashboard's single chronological journal.
+    pub fn take_undo_records(&mut self) -> Vec<Snapshot> {
+        std::mem::take(&mut self.undo_records)
+    }
+
+    pub fn has_pending_undo(&self) -> bool {
+        !self.undo_records.is_empty()
+            || self
+                .pending_gesture
+                .as_ref()
+                .is_some_and(|pending| self.differs(&pending.before))
+    }
+
+    /// Finish a drag/edit before the dashboard records another applet's action
+    /// or handles Undo. Restoring a snapshot itself never emits an action.
+    pub fn finish_undo_gesture(&mut self) {
+        self.finish_gesture();
+    }
+
+    pub fn mesh_identity(&self) -> Option<(usize, usize)> {
+        self.mesh.as_ref().map(mesh_identity)
+    }
+
+    /// Restore one instrument action. Drain records first; any pending gesture
+    /// or undelivered records are cancelled rather than recording Undo itself.
+    pub fn restore(&mut self, before: Snapshot) {
+        self.clear_undo();
+        clear_file();
+        let mesh_changed = !same_mesh(&self.mesh, &before.mesh);
+        self.mesh = before.mesh;
+        self.name = before.name;
+        self.unit = before.unit;
+        self.scale_percent = before.scale_percent;
+        self.mode = before.mode;
+        self.yaw = before.yaw;
+        self.pitch = before.pitch;
+        self.zoom = before.zoom;
+        self.error = None;
+        if mesh_changed {
+            self.upload_current();
+        }
+    }
+
+    /// Dataset replacement must not bring profiles from another dataset back.
+    pub fn clear_undo(&mut self) {
+        self.pending_gesture = None;
+        self.undo_records.clear();
     }
 
     fn effective_scale(&self, settings: &Settings) -> f64 {
@@ -175,6 +325,14 @@ impl StlPanel {
 
     /// Returns true only when portable material preferences change.
     pub fn ui(&mut self, ui: &mut Ui, height: f32, settings: &mut Settings) -> bool {
+        let top = ui.cursor().top();
+        let now = ui.input(|input| input.time);
+        if self.pending_gesture.as_ref().is_some_and(|pending| {
+            pending.kind == Gesture::Wheel && now - pending.last_input >= 0.25
+        }) {
+            self.finish_gesture();
+        }
+        let mut changed = false;
         self.focused = false;
         if let Some(renderer) = &self.renderer {
             if let Some(error) = &renderer.lock().error {
@@ -200,12 +358,14 @@ impl StlPanel {
             let clear = ui.add_enabled(self.mesh.is_some(), egui::Button::new("Clear"));
             self.focused |= clear.has_focus();
             if clear.clicked() {
+                let before = self.prepare_snapshot();
                 clear_file();
                 self.destroy();
                 self.mesh = None;
                 self.name.clear();
                 self.error = None;
                 self.graphics_error = None;
+                self.push_snapshot(before);
             }
             let copy = ui.add_enabled(self.mesh.is_some(), egui::Button::new("Copy report"));
             self.focused |= copy.has_focus();
@@ -237,7 +397,7 @@ impl StlPanel {
                     .color(MUTED)
                     .size(11.0),
             );
-            return false;
+            return changed;
         }
         ui.label(
             RichText::new(format!(
@@ -258,26 +418,33 @@ impl StlPanel {
                 let response = ui.button(label);
                 self.focused |= response.has_focus();
                 if response.clicked() {
+                    let before = self.prepare_snapshot();
                     self.yaw = yaw;
                     self.pitch = pitch;
+                    self.push_snapshot(before);
                 }
             }
             let fit = ui.button("Fit");
             self.focused |= fit.has_focus();
             if fit.clicked() {
+                let before = self.prepare_snapshot();
                 self.zoom = (1.0 / self.effective_scale(settings)) as f32;
+                self.push_snapshot(before);
             }
             for (label, factor) in [("−", 0.8), ("+", 1.25)] {
                 let response = ui.button(label);
                 self.focused |= response.has_focus();
                 if response.clicked() {
+                    let before = self.prepare_snapshot();
                     self.zoom = (self.zoom * factor).clamp(0.0001, 10000.0);
+                    self.push_snapshot(before);
                 }
             }
         });
-        let mut changed = false;
         let width = ui.available_width();
-        let content_height = (height - 92.0).max(170.0);
+        let header_height = ui.cursor().top() - top;
+        let graphics_reserve = if self.graphics_error.is_some() { 24.0 } else { 0.0 };
+        let content_height = (height - header_height - graphics_reserve - 8.0).max(170.0);
         if width >= 620.0 {
             let viewer_width = (width * 0.58).max(310.0);
             ui.horizontal_top(|ui| {
@@ -411,13 +578,16 @@ impl StlPanel {
             for unit in LengthUnit::ALL {
                 let response = ui.selectable_label(self.unit == unit, unit.label());
                 self.focused |= response.has_focus();
-                if response.clicked() {
+                if response.clicked() && self.unit != unit {
+                    let before = self.prepare_snapshot();
                     self.unit = unit;
+                    self.push_snapshot(before);
                 }
             }
         });
         ui.horizontal_wrapped(|ui| {
             ui.label("Scale");
+            let before = self.snapshot();
             let response = ui
                 .push_id("stl-scale", |ui| {
                     ui.add(
@@ -429,6 +599,16 @@ impl StlPanel {
                 })
                 .inner;
             self.focused |= response.has_focus();
+            if response.changed() {
+                let now = ui.input(|input| input.time);
+                self.begin_gesture(Gesture::Scale, before, now);
+            }
+            let finish = response.drag_stopped()
+                || response.lost_focus()
+                || ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if finish && self.pending_gesture.as_ref().is_some_and(|pending| pending.kind == Gesture::Scale) {
+                self.finish_gesture();
+            }
         });
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("Shrink").color(MUTED).size(12.0));
@@ -439,8 +619,10 @@ impl StlPanel {
             ] {
                 let response = ui.selectable_label(self.mode == mode, mode.label());
                 self.focused |= response.has_focus();
-                if response.clicked() {
+                if response.clicked() && self.mode != mode {
+                    let before = self.prepare_snapshot();
                     self.mode = mode;
+                    self.push_snapshot(before);
                 }
             }
         });
@@ -492,6 +674,7 @@ impl StlPanel {
                         );
                         self.focused |= response.has_focus();
                         if response.clicked() && settings.selected != profile.id {
+                            self.finish_gesture();
                             settings.selected = profile.id.clone();
                             changed = true;
                         }
@@ -501,8 +684,11 @@ impl StlPanel {
                             .any(|item| item.id == profile.id)
                             && ui.small_button("del").clicked()
                         {
+                            self.finish_gesture();
                             match settings.remove_custom(&profile.id) {
-                                Ok(()) => changed = true,
+                                Ok(()) => {
+                                    changed = true;
+                                }
                                 Err(error) => self.error = Some(error),
                             }
                         }
@@ -548,6 +734,7 @@ impl StlPanel {
                     let response = ui.button("Save test profile");
                     self.focused |= response.has_focus();
                     if response.clicked() {
+                        self.finish_gesture();
                         match settings.add_custom(
                             &self.custom_name,
                             &self.custom_cone,
@@ -574,19 +761,36 @@ impl StlPanel {
             egui::Sense::click_and_drag(),
         );
         self.focused |= response.has_focus();
+        let now = ui.input(|input| input.time);
         if response.dragged() {
             let motion = response.drag_motion();
-            self.yaw += motion.x * 0.012;
-            self.pitch = (self.pitch + motion.y * 0.012).clamp(-3.0, 3.0);
+            if motion != egui::Vec2::ZERO {
+                let before = self.snapshot();
+                self.begin_gesture(Gesture::Orbit, before, now);
+                self.yaw += motion.x * 0.012;
+                self.pitch = (self.pitch + motion.y * 0.012).clamp(-3.0, 3.0);
+            }
+        }
+        if response.drag_stopped()
+            && self.pending_gesture.as_ref().is_some_and(|pending| pending.kind == Gesture::Orbit)
+        {
+            self.finish_gesture();
         }
         if response.hovered() {
             let scroll = ui.input_mut(|input| {
-                let scroll = input.smooth_scroll_delta.y;
+                let scroll = input.raw_scroll_delta.y;
+                input.raw_scroll_delta.y = 0.0;
                 input.smooth_scroll_delta.y = 0.0;
                 scroll
             });
             let pinch = ui.input(|input| input.zoom_delta());
-            self.zoom = (self.zoom * (scroll * 0.002).exp() * pinch).clamp(0.0001, 10000.0);
+            let zoom = (self.zoom * (scroll * 0.002).exp() * pinch).clamp(0.0001, 10000.0);
+            if zoom.to_bits() != self.zoom.to_bits() {
+                let before = self.snapshot();
+                self.begin_gesture(Gesture::Wheel, before, now);
+                self.zoom = zoom;
+                ui.ctx().request_repaint_after(Duration::from_millis(250));
+            }
         }
         response.on_hover_text("Drag to rotate · wheel or +/− to zoom · Fit reframes the model");
         ui.painter().rect_filled(rect, 0.0, BG);
@@ -713,6 +917,22 @@ impl StlPanel {
         }
         self.renderer = None;
     }
+}
+
+fn same_mesh(a: &Option<Arc<Mesh>>, b: &Option<Arc<Mesh>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn mesh_identity(mesh: &Arc<Mesh>) -> (usize, usize) {
+    (
+        Arc::as_ptr(mesh) as usize,
+        std::mem::size_of::<Mesh>()
+            + mesh.triangles.capacity() * std::mem::size_of::<stl::Triangle>(),
+    )
 }
 
 fn sample_cube() -> Result<Mesh, String> {

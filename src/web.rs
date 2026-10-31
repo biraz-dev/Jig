@@ -1,5 +1,9 @@
 //! egui adapter for the same local utility model used by the CLI and terminal.
-use crate::{browser_storage, stl_ui::StlPanel, weather_ui::WeatherPanel};
+use crate::{
+    browser_storage,
+    stl_ui::{Snapshot as StlSnapshot, StlPanel},
+    weather_ui::WeatherPanel,
+};
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Utc};
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
@@ -15,6 +19,16 @@ const BLUE: Color32 = Color32::from_rgb(144, 161, 202);
 const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
 const GREEN: Color32 = Color32::from_rgb(164, 223, 144);
 const RULE: Color32 = Color32::from_rgb(49, 65, 83);
+const UNDO_STEPS: usize = 20;
+const UNDO_BYTES: usize = 64 * 1024 * 1024;
+
+enum UndoEntry {
+    Data {
+        state: Box<State>,
+        bytes: usize,
+    },
+    Viewer(StlSnapshot),
+}
 
 fn task_color(color: Option<TaskColor>, complete: bool) -> Color32 {
     let color = match color {
@@ -61,6 +75,9 @@ pub struct BrowserApp {
     state: State,
     weather: WeatherPanel,
     stl: StlPanel,
+    undo_history: Vec<UndoEntry>,
+    undo_baseline: State,
+    undo_baseline_json: Vec<u8>,
     demo: bool,
     dirty: bool,
     storage_error: bool,
@@ -134,10 +151,15 @@ impl BrowserApp {
         let today = Local::now().date_naive();
         let weather = WeatherPanel::new(state.preferences.weather.clone());
         state.preferences.weather = weather.config().cloned();
+        let undo_baseline = state.clone();
+        let undo_baseline_json = serde_json::to_vec(&state).unwrap_or_default();
         Self {
             state,
             weather,
             stl: StlPanel::new(cc),
+            undo_history: Vec::new(),
+            undo_baseline,
+            undo_baseline_json,
             demo,
             dirty: false,
             storage_error,
@@ -165,6 +187,24 @@ impl BrowserApp {
     }
 
     fn changed(&mut self) {
+        // Finish an earlier viewer gesture before recording this data action.
+        self.stl.finish_undo_gesture();
+        self.collect_viewer_undo();
+        if let Ok(json) = serde_json::to_vec(&self.state) {
+            if json != self.undo_baseline_json {
+                let previous = std::mem::replace(&mut self.undo_baseline, self.state.clone());
+                let bytes = self.undo_baseline_json.len();
+                self.undo_baseline_json = json;
+                self.push_undo(UndoEntry::Data {
+                    state: Box::new(previous),
+                    bytes,
+                });
+            }
+        }
+        self.save_current();
+    }
+
+    fn save_current(&mut self) {
         if self.demo {
             self.status =
                 "Sample edit applied; demo data is temporary. Export JSON to keep a copy.".into();
@@ -188,6 +228,77 @@ impl BrowserApp {
                 }
             }
         }
+    }
+
+    fn push_undo(&mut self, entry: UndoEntry) {
+        self.undo_history.push(entry);
+        while self.undo_history.len() > UNDO_STEPS || self.undo_bytes() > UNDO_BYTES {
+            if self.undo_history.is_empty() {
+                break;
+            }
+            self.undo_history.remove(0);
+        }
+    }
+
+    fn undo_bytes(&self) -> usize {
+        let mut bytes = 0_usize;
+        let mut meshes = std::collections::HashSet::new();
+        if let Some((identity, size)) = self.stl.mesh_identity() {
+            meshes.insert(identity);
+            bytes = bytes.saturating_add(size);
+        }
+        for entry in &self.undo_history {
+            match entry {
+                UndoEntry::Data { bytes: size, .. } => bytes = bytes.saturating_add(*size),
+                UndoEntry::Viewer(snapshot) => {
+                    if let Some((identity, size)) = snapshot.mesh_identity() {
+                        if meshes.insert(identity) {
+                            bytes = bytes.saturating_add(size);
+                        }
+                    }
+                }
+            }
+        }
+        bytes
+    }
+
+    fn collect_viewer_undo(&mut self) -> bool {
+        let records = self.stl.take_undo_records();
+        let changed = !records.is_empty();
+        for snapshot in records {
+            self.push_undo(UndoEntry::Viewer(snapshot));
+        }
+        changed
+    }
+
+    fn reset_undo(&mut self) {
+        self.undo_history.clear();
+        self.stl.clear_undo();
+        self.undo_baseline = self.state.clone();
+        self.undo_baseline_json = serde_json::to_vec(&self.state).unwrap_or_default();
+    }
+
+    fn undo_last(&mut self, ctx: &egui::Context) {
+        self.stl.finish_undo_gesture();
+        self.collect_viewer_undo();
+        let Some(entry) = self.undo_history.pop() else {
+            return;
+        };
+        match entry {
+            UndoEntry::Data { state, .. } => {
+                self.state = *state;
+                if self.weather.config() != self.state.preferences.weather.as_ref() {
+                    self.weather.replace_config(self.state.preferences.weather.clone());
+                }
+                self.reset_editors();
+                // Reuse save guards: a stale tab or corrupt raw file stays preserved.
+                self.save_current();
+            }
+            UndoEntry::Viewer(snapshot) => self.stl.restore(snapshot),
+        }
+        self.undo_baseline = self.state.clone();
+        self.undo_baseline_json = serde_json::to_vec(&self.state).unwrap_or_default();
+        ctx.request_repaint();
     }
 
     fn apply(&mut self, result: Result<(), String>) {
@@ -223,7 +334,8 @@ impl BrowserApp {
         // This path is reached only after explicit replacement confirmation.
         self.storage_error = false;
         self.reset_editors();
-        self.changed();
+        self.reset_undo();
+        self.save_current();
     }
 
     fn open_local(&mut self) {
@@ -239,6 +351,7 @@ impl BrowserApp {
                     self.demo = false;
                     self.storage_error = false;
                     self.reset_editors();
+                    self.reset_undo();
                     self.status = "Opened your browser-local data.".into();
                 }
                 Err(error) => {
@@ -264,6 +377,16 @@ impl BrowserApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.selectable_label(self.data_open, "Data").clicked() {
                     self.data_open = !self.data_open;
+                }
+                if ui
+                    .add_enabled(
+                        !self.undo_history.is_empty() || self.stl.has_pending_undo(),
+                        egui::Button::new("Undo"),
+                    )
+                    .on_hover_text("Undo the most recent workbench or STL change (Ctrl-Z)")
+                    .clicked()
+                {
+                    self.undo_last(ui.ctx());
                 }
                 ui.label(RichText::new("• local").color(GREEN).small());
                 ui.label(
@@ -307,6 +430,7 @@ impl BrowserApp {
                         self.restore_weather();
                         self.demo = true;
                         self.reset_editors();
+                        self.reset_undo();
                         self.status = "Sample mode. Your saved personal data has not changed.".into();
                     }
                 }
@@ -337,7 +461,7 @@ impl BrowserApp {
                     match confirm {
                         Confirm::Empty => self.replace_personal(State::default()),
                         Confirm::Clear => match browser_storage::clear() {
-                            Ok(()) => { self.weather.disable(); self.state = jig::sample::state(Utc::now()); self.demo = true; self.dirty = false; self.storage_error = false; self.reset_editors(); self.status = "Browser-local data cleared. Displaying temporary sample data.".into(); }
+                            Ok(()) => { self.weather.disable(); self.state = jig::sample::state(Utc::now()); self.demo = true; self.dirty = false; self.storage_error = false; self.reset_editors(); self.reset_undo(); self.status = "Browser-local data cleared. Displaying temporary sample data.".into(); }
                             Err(error) => self.status = error,
                         },
                     }
@@ -391,6 +515,9 @@ impl BrowserApp {
                         }
                         if self.stl.focused {
                             self.focus = 4;
+                        }
+                        if self.collect_viewer_undo() {
+                            ui.ctx().request_repaint();
                         }
                     }
                 }
@@ -1338,6 +1465,9 @@ impl eframe::App for BrowserApp {
             });
             ctx.request_repaint();
         }
+        if self.collect_viewer_undo() {
+            ctx.request_repaint();
+        }
         if ctx.input(|input| input.pointer.any_pressed()) {
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1404,6 +1534,9 @@ impl eframe::App for BrowserApp {
             .memory(|memory| memory.focused())
             .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
         if !editing_text {
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
+                self.undo_last(ctx);
+            }
             let previous = ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
@@ -1520,6 +1653,9 @@ impl eframe::App for BrowserApp {
                     }
                 });
         });
+        if self.collect_viewer_undo() {
+            ctx.request_repaint();
+        }
         browser_storage::set_unsaved(self.dirty);
     }
 }

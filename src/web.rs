@@ -1517,7 +1517,9 @@ impl eframe::App for BrowserApp {
             self.focus = 4;
             self.focus_calculator = false;
             self.focus_task_date = false;
-            self.scroll_selected = true;
+            // The sizing fields choose their own scroll target, including on
+            // narrow displays where the section is below the model viewport.
+            self.scroll_selected = false;
             ctx.memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
                     memory.surrender_focus(id);

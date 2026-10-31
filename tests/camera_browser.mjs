@@ -175,11 +175,13 @@ async function clickAxis(page, axis) {
     context.drawImage(bitmap, 0, 0);
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
     const colors = { X: [234, 133, 173], Y: [148, 188, 160], Z: [109, 185, 238] };
-    const near = (offset, target) => target.every((value, index) => Math.abs(pixels[offset + index] - value) <= 4);
+    const near = (offset, target, tolerance = 4) => target.every((value, index) => Math.abs(pixels[offset + index] - value) <= tolerance);
     const colored = { X: [], Y: [], Z: [] };
     for (let y = 200; y < bitmap.height - 45; y++) for (let x = 15; x < Math.min(130, bitmap.width); x++) {
       const offset = (y * bitmap.width + x) * 4;
-      for (const [name, color] of Object.entries(colors)) if (near(offset, color)) colored[name].push({ x, y });
+      // Thin font strokes blend with the dark plate. Keep the pivot strict,
+      // but include the visible anti-aliased axis glyph as well as its line.
+      for (const [name, color] of Object.entries(colors)) if (near(offset, color, 20)) colored[name].push({ x, y });
     }
     const all = Object.values(colored).flat();
     if (!all.length || !colored[axis].length) return { error: `Visible ${axis} axis color was absent` };

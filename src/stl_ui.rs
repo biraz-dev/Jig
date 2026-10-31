@@ -1019,7 +1019,8 @@ impl StlPanel {
             return;
         }
         ui.indent("stl-size-export", |ui| {
-            if self.focus_size {
+            let focus_size = self.focus_size;
+            if focus_size {
                 let id = ui.next_auto_id();
                 ui.memory_mut(|memory| memory.request_focus(id));
                 self.focus_size = false;
@@ -1029,6 +1030,9 @@ impl StlPanel {
             let before = self.snapshot();
             let link = ui.checkbox(&mut self.linked, "Linked axes").on_hover_text("Linked edits preserve the object's current proportions. Uncheck to resize X, Y and Z independently.");
             self.focused |= link.has_focus();
+            if focus_size {
+                link.scroll_to_me(Some(egui::Align::Min));
+            }
             if link.changed() {
                 self.finish_gesture();
                 self.push_snapshot(before);

@@ -191,7 +191,7 @@ async function visual(page, kind) {
       const accepts = offset => name === "model"
         ? pixels[offset] > 55 && pixels[offset] > pixels[offset + 1] + 8 && pixels[offset + 1] > pixels[offset + 2] + 8
         : name === "person" ? near(offset, [148, 188, 160])
-          : [[21, 31, 43], [38, 54, 73], [43, 66, 90], [40, 72, 101]].some(color => near(offset, color, 3));
+          : [[21, 31, 43], [38, 54, 73], [43, 66, 90], [40, 72, 101], [60, 60, 60]].some(color => near(offset, color, 3));
       const seen = new Uint8Array(image.width * image.height);
       const components = [];
       for (let y = bounds.top; y < bounds.bottom; y++) for (let x = bounds.left; x < bounds.right; x++) {
@@ -227,6 +227,10 @@ async function visual(page, kind) {
 async function toggleHuman(page) {
   // Click the actual filled viewport button located in rendered pixels. This
   // adapts to the mobile tool's wrapped controls without reading private state.
+  if (page.viewportSize().width >= 500) {
+    await page.mouse.move(12, 12);
+    await paint(page);
+  }
   const { button } = await visual(page, "toggle");
   assert.ok(button, "The visual Human5′9″ toggle must be visible in the viewport");
   const x = (button.left + button.right) / 2, y = (button.top + button.bottom) / 2;

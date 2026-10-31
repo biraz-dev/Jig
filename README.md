@@ -5,6 +5,8 @@ You are a small Small Giant Psionicist.
 A small, local artist's workbench in Rust:
 calculator, length conversion, tasks, deadlines and calendar. The Rust CLI,
 terminal dashboard and egui browser preview share the same utility logic.
+The browser also includes a local STL viewer; mesh measurements are available
+through the CLI using the same Rust core.
 No accounts, telemetry, database, backend or background service. The CLI and
 terminal run offline; the browser loads static application assets and processes
 task and calculation data on your device. Weather is optional and contacts
@@ -150,6 +152,59 @@ is labelled stale when old or offline. Relative humidity means are calculated
 from available hourly values grouped by the forecast's local date. Forecasts
 cover up to 16 days; longer-range values are less certain. The forecast timezone
 is shown. Weather requires a connection for fresh data; other tools work locally.
+
+## STL viewer and clay estimates
+
+Open a local binary or ASCII STL in the browser applet. Drag to rotate, use the
+zoom controls, and choose front, side, top or isometric views. The corner X/Y/Z
+gnomon follows the camera. **Ctrl-Alt-5** selects the viewer; **Ctrl-M** maximizes
+or restores it. The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
+one another correctly. Other workbench tools continue to use the existing layout.
+
+STL files do not contain units. Choose **mm**, **cm** or **in** for the source
+coordinates before interpreting the numbers. Physical scale is independent of
+camera zoom. The applet reports dimensions, surface area and total enclosed
+volume, including cm³ (equivalent to mL) and in³. Length changes by the scale
+factor, area by its square and volume by its cube. Measurements use every
+accepted triangle. Models are limited to **20 MiB and 200,000 triangles**.
+
+Surface area is the sum of triangle areas. Volume requires closed, consistently
+oriented, nondegenerate faces. Holes, inconsistent edges, non-manifold edges or
+mixed component winding make volume unavailable. The check does not detect
+self-intersections, overlapping or nested shells; a closed mesh is not a
+certificate of a valid solid. Mixed-winding cavity meshes need inspection or
+repair in a modeling application. Jig does not repair geometry.
+
+Shrinkage is an explicitly chosen **uniform linear estimate**. Forecast applies
+`1 - shrinkage / 100`; compensation applies its reciprocal. For example, 6%
+linear shrinkage retains 94% of each length and about 83.06% of volume.
+Compensation requires about **106.38%** of the target length. These calculations
+do not predict warping, cracking, anisotropy or a particular kiln's firing result.
+
+The initial material is **Standard #104 Red with Grog**. Its
+[manufacturer's page](https://www.standardclay.com/products/104-red-clay-w-grog)
+publishes average shrinkage of **6% at cone 06** and **11% at cone 4**, within a
+listed cone 06–4 firing range (reviewed 2026-10-30). Only those two exact points
+are presets. Cone **06 differs from 6**; Jig does not infer other cones or
+interpolate shrinkage between them. The source does not specify the starting
+moisture stage, so the presets display that uncertainty. Save your own test-bar
+values with a clay name, cone and wet-to-fired or dry-to-fired basis for a more
+useful estimate of your process.
+
+Clay profile selection and custom values travel in the existing portable JSON.
+Older files remain valid. Loaded mesh bytes, filenames, camera, source units and
+per-model scale remain in memory and are discarded on reload. Reopen the STL to
+continue; it is never uploaded or included in workbench JSON. Scaled STL export
+is a local download in the original source units; STL still carries no unit tag.
+
+The CLI reads a model without changing it or the saved workbench:
+
+```sh
+jig stl sculpture.stl --units mm
+jig stl sculpture.stl --units in --scale 150
+jig stl sculpture.stl --shrinkage 6
+jig stl sculpture.stl --shrinkage 11 --compensate
+```
 
 ## CLI
 

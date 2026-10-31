@@ -86,6 +86,8 @@ pub struct Preferences {
     pub decimals: usize,
     pub focus: usize,
     pub weather: Option<WeatherConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clay: Option<crate::clay::Settings>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -93,6 +95,7 @@ impl Default for Preferences {
             decimals: 2,
             focus: 3,
             weather: None,
+            clay: None,
         }
     }
 }
@@ -177,6 +180,9 @@ impl State {
         }
         if let Some(config) = &self.preferences.weather {
             config.validate()?;
+        }
+        if let Some(settings) = &self.preferences.clay {
+            settings.validate()?;
         }
         if self.history.iter().any(|h| {
             !h.result.is_finite()

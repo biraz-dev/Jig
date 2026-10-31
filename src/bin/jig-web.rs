@@ -6,6 +6,10 @@ mod browser_storage;
 mod web;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../stl_ui.rs"]
+mod stl_ui;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../weather_client.rs"]
 mod weather_client;
 #[cfg(target_arch = "wasm32")]

@@ -10,6 +10,30 @@ Forms and Data controls stay inline. There is no
 application backend, account or telemetry. Optional weather uses Open-Meteo;
 only the chosen location and weather query are sent, never workbench records.
 
+The STL applet adds a local 3D instrument beside math on larger screens and below
+it on smaller screens. **Ctrl-Alt-5** selects it; the existing highlight, arrow
+navigation and Ctrl-M maximize behavior apply. Its GPU renderer uses an offscreen
+WebGL 2 color/depth framebuffer, then composites into the applet's clipped egui
+rectangle. A corner X/Y/Z gnomon tracks orientation. Camera zoom is separate from
+physical scale, and the viewer does not animate while idle. Its depth-buffered
+texture is reused until the model, camera or viewport size changes.
+
+`src/stl.rs` parses bounded binary/ASCII STL and computes bounds, area, topology
+diagnostics and conditional volume without terminal, DOM or GPU dependencies.
+`src/stl_ui.rs` handles the browser camera, renderer and measurement controls;
+`web/stl.js` reads chosen files into memory and prepares local downloads. STL
+bytes and filenames never enter browser storage, workbench JSON or a network
+request. A bad replacement file preserves the current model. The CLI's `stl`
+command uses the same geometry and scale calculations.
+
+`src/clay.rs` contains the two exact published Standard #104 cone points and
+validates user test profiles. Optional `Preferences.clay` stores only profile
+selection and custom values in existing version-1 JSON. The manufacturer's
+starting stage is unspecified and remains labelled as such. The estimate applies
+uniform linear scaling; it does not model a kiln or interpolate cones. See the
+README for the source, formulas and mesh-validity limits. No dependencies were
+added for this applet.
+
 A single crate remains sufficient. Default Cargo features build the native
 `jig` binary. The `web` feature builds `jig-web`; terminal dependencies are
 excluded on WASM. `src/web.rs` contains the egui adapter, while
@@ -129,6 +153,11 @@ Screenshots normally stay in the test artifact. A push whose commit message
 contains `[render]` also prints allowlisted synthetic screenshots as
 bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
 locally to request named scenes; personal workbench data is never used.
+
+`tests/stl_browser.mjs` runs separately from the general dashboard suite. It uses
+synthetic cube/open meshes and the real local file picker bridge, exercises
+measurement reports and downloads, and checks camera/scale controls, file error
+preservation and reload privacy. The public demo never embeds a private STL.
 
 Deployment runs only after a push to `main`; pull requests build and test without
 publishing. To activate the public preview:

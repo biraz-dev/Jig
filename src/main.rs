@@ -3,14 +3,14 @@ mod tui;
 
 use chrono::{Datelike, Local, Utc};
 use clap::{Parser, Subcommand};
-use jig::{calendar, model::State, units};
-use std::path::PathBuf;
+use jig::{calendar, model::State, stl, units};
+use std::{io::Read, path::PathBuf};
 
 #[derive(Parser)]
 #[command(
     version,
     about = "Jig — a local artist's utility workbench",
-    after_help = "No command opens the dashboard. All data stays in the selected JSON file."
+    after_help = "No command opens the dashboard. Workbench state stays in the selected JSON file; STL files are read locally."
 )]
 struct Cli {
     /// Portable state file (default: $XDG_DATA_HOME/jig/jig.json or ~/.local/share/jig/jig.json)
@@ -27,6 +27,21 @@ enum Command {
     History,
     /// Convert a length, e.g. units '1 1/2in' mm
     Units { input: String, target: String },
+    /// Inspect a local STL; source units must be chosen because STL does not store them
+    Stl {
+        file: PathBuf,
+        #[arg(long, default_value = "mm", value_parser = ["mm", "cm", "in"])]
+        units: String,
+        /// Uniform size as a percentage of the original model
+        #[arg(long, default_value_t = 100.0)]
+        scale: f64,
+        /// Estimated linear shrinkage percentage; not a prediction of warping
+        #[arg(long)]
+        shrinkage: Option<f64>,
+        /// Enlarge to offset shrinkage instead of showing the smaller result
+        #[arg(long, requires = "shrinkage")]
+        compensate: bool,
+    },
     /// A simple ordered checklist with optional due dates
     Tasks {
         #[command(subcommand)]
@@ -168,6 +183,16 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
             );
             return Ok(false);
         }
+        Command::Stl {
+            file,
+            units,
+            scale,
+            shrinkage,
+            compensate,
+        } => {
+            inspect_stl(&file, &units, scale, shrinkage, compensate, state)?;
+            return Ok(false);
+        }
         Command::Precision { decimals } => state.preferences.decimals = decimals as usize,
         Command::Tasks { action } => match action.unwrap_or(TaskAction::List) {
             TaskAction::List => {
@@ -292,4 +317,90 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
         },
     }
     Ok(true)
+}
+
+fn inspect_stl(
+    path: &std::path::Path,
+    units: &str,
+    scale_percent: f64,
+    shrink_percent: Option<f64>,
+    compensate: bool,
+    state: &State,
+) -> Result<(), String> {
+    if !scale_percent.is_finite() || scale_percent <= 0.0 {
+        return Err("Scale must be a finite percentage greater than zero".into());
+    }
+    let unit = match units {
+        "mm" => stl::LengthUnit::Millimeters,
+        "cm" => stl::LengthUnit::Centimeters,
+        "in" => stl::LengthUnit::Inches,
+        _ => return Err("Use mm, cm or in for STL source units".into()),
+    };
+    let shrink = shrink_percent.map(stl::shrinkage).transpose()?;
+    let factor = shrink.map_or(1.0, |shrink| {
+        if compensate {
+            shrink.compensation
+        } else {
+            shrink.remaining
+        }
+    });
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("Could not read STL {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect STL {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err("The STL path must refer to a file".into());
+    }
+    if metadata.len() > stl::MAX_FILE_BYTES as u64 {
+        return Err("STL exceeds the 20 MiB file limit".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(stl::MAX_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read STL {}: {error}", path.display()))?;
+    if bytes.len() > stl::MAX_FILE_BYTES {
+        return Err("STL exceeds the 20 MiB file limit".into());
+    }
+    let mesh = stl::parse(&bytes)?;
+    let measurements = mesh.measure(unit, scale_percent / 100.0 * factor)?;
+    println!("STL: {} triangles", mesh.triangles.len());
+    println!("Source units: {units} (STL carries no unit metadata)");
+    println!("Scale: {}%", state.number(scale_percent));
+    if let Some(percent) = shrink_percent {
+        println!(
+            "Linear shrinkage estimate: {}% ({})",
+            state.number(percent),
+            if compensate { "compensated" } else { "forecast" }
+        );
+    }
+    let [x, y, z] = measurements.dimensions_mm;
+    println!(
+        "Dimensions: {} x {} x {} mm",
+        state.number(x),
+        state.number(y),
+        state.number(z)
+    );
+    println!(
+        "Surface area: {} mm^2",
+        state.number(measurements.surface_area_mm2)
+    );
+    if let Some(volume) = measurements.volume_mm3 {
+        println!(
+            "Volume: {} mm^3 ({} cm^3)",
+            state.number(volume),
+            state.number(volume / 1000.0)
+        );
+        println!("Volume assumes non-intersecting closed shells.");
+    } else {
+        println!("Volume: unavailable; mesh is not a verified closed, consistently oriented solid");
+    }
+    println!(
+        "Mesh check: {} boundary edges, {} non-manifold edges, {} inconsistent edges, {} degenerate triangles",
+        mesh.metrics.boundary_edges,
+        mesh.metrics.non_manifold_edges,
+        mesh.metrics.inconsistent_edges,
+        mesh.metrics.degenerate_triangles
+    );
+    Ok(())
 }

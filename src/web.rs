@@ -1,5 +1,5 @@
 //! egui adapter for the same local utility model used by the CLI and terminal.
-use crate::{browser_storage, weather_ui::WeatherPanel};
+use crate::{browser_storage, stl_ui::StlPanel, weather_ui::WeatherPanel};
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Utc};
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
@@ -60,6 +60,7 @@ struct ChecklistRow {
 pub struct BrowserApp {
     state: State,
     weather: WeatherPanel,
+    stl: StlPanel,
     demo: bool,
     dirty: bool,
     storage_error: bool,
@@ -136,6 +137,7 @@ impl BrowserApp {
         Self {
             state,
             weather,
+            stl: StlPanel::new(cc),
             demo,
             dirty: false,
             storage_error,
@@ -380,7 +382,17 @@ impl BrowserApp {
                             .show(ui, |ui| self.tasks(ui));
                     }
                     2 => self.calendar(ui),
-                    _ => self.workbench(ui, (height - 18.0).max(120.0)),
+                    3 => self.workbench(ui, (height - 18.0).max(120.0)),
+                    _ => {
+                        let mut settings = self.state.preferences.clay.clone().unwrap_or_default();
+                        if self.stl.ui(ui, (height - 18.0).max(180.0), &mut settings) {
+                            self.state.preferences.clay = Some(settings);
+                            self.changed();
+                        }
+                        if self.stl.focused {
+                            self.focus = 4;
+                        }
+                    }
                 }
             });
         if self.scroll_selected && self.focus == index {
@@ -432,11 +444,13 @@ impl BrowserApp {
                 );
             });
         } else {
+            let top = ui.cursor().top();
             self.workbench_input(ui);
             ui.separator();
+            let used = ui.cursor().top() - top;
             egui::ScrollArea::vertical()
                 .id_salt("math-history")
-                .max_height(height.max(100.0))
+                .max_height((height - used).max(70.0))
                 .show(ui, |ui| self.workbench_history(ui));
         }
     }
@@ -1302,12 +1316,28 @@ impl BrowserApp {
 }
 
 impl eframe::App for BrowserApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.stl.destroy();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !ctx.style().visuals.dark_mode {
             ctx.set_theme(egui::ThemePreference::Dark);
         }
         ctx.request_repaint_after(Duration::from_secs(1));
         self.weather.update();
+        if self.stl.update() {
+            self.focus = 4;
+            self.focus_calculator = false;
+            self.focus_task_date = false;
+            self.scroll_selected = true;
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+            ctx.request_repaint();
+        }
         if ctx.input(|input| input.pointer.any_pressed()) {
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1333,6 +1363,18 @@ impl eframe::App for BrowserApp {
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
             self.focus = 3;
             self.focus_calculator = true;
+            ctx.request_repaint();
+        }
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num5)) {
+            self.focus = 4;
+            self.focus_calculator = false;
+            self.focus_task_date = false;
+            self.scroll_selected = true;
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
             ctx.request_repaint();
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::D)) {
@@ -1371,12 +1413,12 @@ impl eframe::App for BrowserApp {
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
             });
             if previous || next {
-                let order = [0, 2, 1, 3];
+                let order = [0, 2, 1, 3, 4];
                 let current = order
                     .iter()
                     .position(|index| *index == self.focus)
                     .unwrap_or(0);
-                self.focus = order[(current + if previous { 3 } else { 1 }) % 4];
+                self.focus = order[(current + if previous { order.len() - 1 } else { 1 }) % order.len()];
                 self.focus_calculator = false;
                 self.focus_task_date = false;
                 self.scroll_selected = true;
@@ -1437,7 +1479,26 @@ impl eframe::App for BrowserApp {
                             );
                         });
                         ui.add_space(8.0);
-                        self.tool(ui, 3, 180.0);
+                        if width >= 1120.0 {
+                            let math_width = (width * 0.35).max(380.0);
+                            ui.horizontal_top(|ui| {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(math_width, 380.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| self.tool(ui, 3, 380.0),
+                                );
+                                ui.add_space(12.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2((width - math_width - 20.0).max(620.0), 380.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| self.tool(ui, 4, 380.0),
+                                );
+                            });
+                        } else {
+                            self.tool(ui, 3, 180.0);
+                            ui.add_space(8.0);
+                            self.tool(ui, 4, 380.0);
+                        }
                     } else {
                         let featured = self
                             .state
@@ -1453,6 +1514,8 @@ impl eframe::App for BrowserApp {
                         self.tool(ui, 1, 300.0);
                         ui.add_space(8.0);
                         self.tool(ui, 3, 220.0);
+                        ui.add_space(8.0);
+                        self.tool(ui, 4, 520.0);
                     }
                 });
         });

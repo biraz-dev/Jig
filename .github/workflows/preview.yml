@@ -29,6 +29,7 @@ jobs:
           test -f dist/index.html
           test -f dist/bridge.js
           test -f dist/weather.js
+          test -f dist/stl.js
           test -f dist/preview.css
           test -n "$(find dist -name '*.wasm' -print -quit)"
           if find dist -type f \( -name 'jig.json' -o -name '*.md' -o -name '*.lock' -o -name '.env*' \) | grep .; then exit 1; fi
@@ -38,12 +39,13 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'task-colors-desktop,task-colors-calendar-empty,task-colors-calendar-selected,task-colors-list-scroll,task-colors-mobile,task-colors-mobile-touch,task-colors-six-weeks,task-colors-failure' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'stl-desktop,stl-maximized,stl-mobile,stl-hidpi,stl-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"
           python3 -m http.server 4173 --directory "$RUNNER_TEMP/jig-site" > "$RUNNER_TEMP/jig-http.log" 2>&1 &
           node tests/browser_smoke.mjs
+          node tests/stl_browser.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

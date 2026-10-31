@@ -1503,6 +1503,7 @@ impl eframe::App for BrowserApp {
                     memory.surrender_focus(id);
                 }
             });
+            self.stl.request_open_focus();
             ctx.request_repaint();
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::D)) {

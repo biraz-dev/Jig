@@ -157,8 +157,9 @@ is shown. Weather requires a connection for fresh data; other tools work locally
 
 Open a local binary or ASCII STL in the browser applet. Drag to rotate, use the
 zoom controls, and choose front, side, top or isometric views. The corner X/Y/Z
-gnomon follows the camera. **Ctrl-Alt-5** selects the viewer; **Ctrl-M** maximizes
-or restores it. The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
+gnomon follows the camera. **Ctrl-Alt-5** selects the viewer and focuses **Open
+STL**; Enter opens the file picker. **Ctrl-M** maximizes or restores the applet.
+The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
 one another correctly. Other workbench tools continue to use the existing layout.
 
 The header's **Undo** button, or **Ctrl-Z** outside text fields, reverses the most

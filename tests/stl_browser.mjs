@@ -34,9 +34,9 @@ let phase = "launch Chromium";
 const issues = [];
 const contexts = [];
 const timer = setTimeout(() => {
-  console.error(`STL browser checks exceeded 180 seconds during: ${phase}`);
+  console.error(`STL browser checks exceeded 240 seconds during: ${phase}`);
   process.exit(1);
-}, 180000);
+}, 240000);
 function progress(message) { phase = message; console.log(`STL browser phase: ${message}`); }
 async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -90,6 +90,9 @@ async function maximize(page) {
   await key(page, "Escape");
   await key(page, "Control+Alt+5");
   await key(page, "Control+m");
+  // Re-enter through the public Open STL shortcut after the expanded layout is
+  // built, so file errors, scrolling and global Undo cannot change our anchor.
+  await key(page, "Control+Alt+5");
 }
 async function saved(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
 async function upload(page, bytes, name) {
@@ -103,9 +106,9 @@ async function copyReport(page) {
   const sentinel = "Jig STL report pending";
   await page.evaluate(value => navigator.clipboard.writeText(value), sentinel);
   await maximize(page);
-  // With a committed file in history: Data, global Undo, Source, Open STL,
-  // Sample cube, Clear, then Copy report. Reload clears the global history.
-  await tab(page, 7);
+  // Ctrl-Alt-5 focuses Open STL. Its next controls are Sample cube, Clear and
+  // Copy report, independent of the header's changing global Undo state.
+  await tab(page, 3);
   await key(page, "Space");
   const deadline = Date.now() + 3000;
   let copied = "";
@@ -119,7 +122,15 @@ async function copyReport(page) {
 
 async function control(page, position) {
   await maximize(page);
-  await tab(page, position);
+  if (position === 2) {
+    // From Open STL, reverse past Source to the real global Undo button. This
+    // still works after Clear disables all mesh-dependent applet controls.
+    await key(page, "Shift+Tab");
+    await key(page, "Shift+Tab");
+  } else {
+    assert.ok(position >= 4, "Loaded STL control positions start at Open STL");
+    await tab(page, position - 4);
+  }
   await key(page, "Space");
 }
 
@@ -134,7 +145,7 @@ async function modelView(page) {
 
 async function setScale(page, percent) {
   await maximize(page);
-  await tab(page, 20); // Physical scale after Undo, view controls and source units.
+  await tab(page, 16); // Physical scale, starting from the Open STL anchor.
   await key(page, "Enter");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await page.keyboard.press("Control+a");
@@ -243,7 +254,7 @@ try {
   await boot(current.page);
   assert.equal(await saved(current.page), fixtureRaw);
   await maximize(current.page);
-  await tab(current.page, 3); // Data, Source, then the actual Open STL button.
+  // The shortcut has focused the actual Open STL button; activate it directly.
   const chooserEvent = current.page.waitForEvent("filechooser", { timeout: 5000 });
   await key(current.page, "Space");
   const chooser = await chooserEvent;

@@ -122,12 +122,13 @@ async function stl(page) {
   await resetFocus(page);
   await key(page, "Control+Alt+5");
   await key(page, "Control+m");
+  await key(page, "Control+Alt+5");
 }
 async function readReport(page) {
   await page.evaluate(() => navigator.clipboard.writeText("Undo report pending"));
   await stl(page);
-  // With a loaded file in the journal: Data, Undo, Source, Open, Sample, Clear, Copy.
-  await tab(page, 7);
+  // The shortcut focuses Open STL; Sample, Clear, then Copy follow it.
+  await tab(page, 3);
   await key(page, "Space");
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
@@ -253,7 +254,7 @@ try {
   await current.page.waitForTimeout(1300);
   assert.match(await readReport(current.page), /Total volume: 1000\.000000 mm³/);
   await stl(current.page);
-  await tab(current.page, 20); // Scale with the enabled global Undo header control.
+  await tab(current.page, 16); // Open STL -> physical scale, independent of header controls.
   await key(current.page, "Enter");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await current.page.keyboard.press("Control+a");

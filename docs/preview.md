@@ -11,7 +11,7 @@ application backend, account or telemetry. Optional weather uses Open-Meteo;
 only the chosen location and weather query are sent, never workbench records.
 
 The STL applet adds a local 3D instrument beside math on larger screens and below
-it on smaller screens. **Ctrl-Alt-5** selects it; the existing highlight, arrow
+it on smaller screens. **Ctrl-Alt-5** selects it and focuses Open STL; the existing highlight, arrow
 navigation and Ctrl-M maximize behavior apply. Its GPU renderer uses an offscreen
 WebGL 2 color/depth framebuffer, then composites into the applet's clipped egui
 rectangle. A corner X/Y/Z gnomon tracks orientation. Camera zoom is separate from

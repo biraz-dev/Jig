@@ -112,6 +112,7 @@ pub struct StlPanel {
     custom_basis: Basis,
     undo_records: Vec<Snapshot>,
     pending_gesture: Option<PendingGesture>,
+    focus_open: bool,
     /// Lets the dashboard retain its ordinary selected-applet keyboard behavior.
     pub focused: bool,
 }
@@ -139,6 +140,7 @@ impl StlPanel {
             custom_basis: Basis::WetToFired,
             undo_records: Vec::new(),
             pending_gesture: None,
+            focus_open: false,
             focused: false,
         }
     }
@@ -277,6 +279,12 @@ impl StlPanel {
                 .is_some_and(|pending| self.differs(&pending.before))
     }
 
+    /// Give the applet shortcut a predictable keyboard entry point, including
+    /// after maximizing changes the control's layout identity.
+    pub fn request_open_focus(&mut self) {
+        self.focus_open = true;
+    }
+
     /// Finish a drag/edit before the dashboard records another applet's action
     /// or handles Undo. Restoring a snapshot itself never emits an action.
     pub fn finish_undo_gesture(&mut self) {
@@ -350,6 +358,13 @@ impl StlPanel {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("STL").color(PINK));
             let open = ui.button("Open STL");
+            if self.focus_open {
+                let acknowledged = open.has_focus();
+                open.request_focus();
+                self.focus_open = !acknowledged;
+                self.focused = true;
+                ui.ctx().request_repaint();
+            }
             self.focused |= open.has_focus();
             if open.clicked() {
                 open_file();

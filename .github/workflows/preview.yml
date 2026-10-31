@@ -44,9 +44,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"
           python3 -m http.server 4173 --directory "$RUNNER_TEMP/jig-site" > "$RUNNER_TEMP/jig-http.log" 2>&1 &
-          node tests/browser_smoke.mjs
-          node tests/stl_browser.mjs
-          node tests/undo_browser.mjs
+          jig_browser_result=0
+          node tests/browser_smoke.mjs || jig_browser_result=1
+          node tests/stl_browser.mjs || jig_browser_result=1
+          node tests/undo_browser.mjs || jig_browser_result=1
+          exit "$jig_browser_result"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

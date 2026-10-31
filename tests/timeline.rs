@@ -41,7 +41,10 @@ fn schedule_edits_are_atomic_and_reuse_the_existing_records() {
         )
         .unwrap();
     assert_eq!(state.task_deadline(task).unwrap().id, deadline);
-    assert_eq!(state.task_deadline(task).unwrap().title, "Pack installation");
+    assert_eq!(
+        state.task_deadline(task).unwrap().title,
+        "Pack installation"
+    );
     assert_eq!(state.tasks.len(), 1);
     assert_eq!(state.deadlines.len(), 1);
     assert_eq!(state.featured, Some(deadline));
@@ -49,10 +52,7 @@ fn schedule_edits_are_atomic_and_reuse_the_existing_records() {
     for (start, due) in [
         (Some("not a date"), Some("2026-11-10T18:00:00Z")),
         (Some("2026-11-03T00:00:00Z"), Some("not a date")),
-        (
-            Some("2026-11-10T18:00:00Z"),
-            Some("2026-11-09T18:00:00Z"),
-        ),
+        (Some("2026-11-10T18:00:00Z"), Some("2026-11-09T18:00:00Z")),
         (Some("2026-11-03T00:00:00Z"), None),
     ] {
         assert!(state.set_task_schedule(task, start, due).is_err());
@@ -177,7 +177,10 @@ fn starts_roundtrip_in_version_one_json_and_old_files_still_load() {
     invalid["tasks"][0]["start"] = "2026-11-09T00:00:00Z".into();
     assert!(State::from_json(&invalid.to_string()).is_err());
     invalid["tasks"][0]["start"] = "2026-11-05T00:00:00Z".into();
-    invalid["tasks"][0].as_object_mut().unwrap().remove("deadline");
+    invalid["tasks"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("deadline");
     assert!(State::from_json(&invalid.to_string()).is_err());
     invalid["tasks"][0]["start"] = "not a date".into();
     assert!(State::from_json(&invalid.to_string()).is_err());

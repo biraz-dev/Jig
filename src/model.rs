@@ -389,7 +389,9 @@ impl State {
         if !self.tasks.iter().any(|task| task.id == id) {
             return Err("Task not found".into());
         }
-        let due = self.task_deadline(id).map(|deadline| deadline.at.to_rfc3339());
+        let due = self
+            .task_deadline(id)
+            .map(|deadline| deadline.at.to_rfc3339());
         self.set_task_schedule(id, start, due.as_deref())
     }
     /// Validate both instants before changing either part of a task's schedule.

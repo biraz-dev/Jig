@@ -201,10 +201,8 @@ impl TimelinePanel {
             FontId::monospace(9.0),
             MUTED,
         );
-        let lane = egui::Rect::from_min_max(
-            egui::pos2(rect.left() + label_width, rect.top()),
-            rect.max,
-        );
+        let lane =
+            egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
         self.grid(ui, lane, window, today);
         let cell = lane.width() / window.days() as f32;
         let stride = if cell >= 15.0 {
@@ -215,7 +213,10 @@ impl TimelinePanel {
             7
         };
         for offset in 0..window.days() {
-            let Some(day) = window.start.checked_add_days(chrono::Days::new(offset.into())) else {
+            let Some(day) = window
+                .start
+                .checked_add_days(chrono::Days::new(offset.into()))
+            else {
                 continue;
             };
             let x = lane.left() + (offset as f32 + 0.5) * cell;
@@ -246,7 +247,10 @@ impl TimelinePanel {
         painter.rect_filled(rect, 0.0, BG);
         let cell = rect.width() / window.days() as f32;
         for offset in 0..window.days() {
-            let Some(day) = window.start.checked_add_days(chrono::Days::new(offset.into())) else {
+            let Some(day) = window
+                .start
+                .checked_add_days(chrono::Days::new(offset.into()))
+            else {
                 continue;
             };
             let x = rect.left() + offset as f32 * cell;
@@ -284,10 +288,8 @@ impl TimelinePanel {
         row: &TimelineRow<'_>,
         selected: bool,
     ) {
-        let lane = egui::Rect::from_min_max(
-            egui::pos2(rect.left() + label_width, rect.top()),
-            rect.max,
-        );
+        let lane =
+            egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
         self.grid(ui, lane, window, today);
         let painter = ui.painter();
         let color = task_color(row.color, row.complete);
@@ -428,11 +430,9 @@ fn status(row: &TimelineRow<'_>) -> &'static str {
 
 fn dates(row: &TimelineRow<'_>) -> String {
     match (row.start, row.due) {
-        (Some(start), Some(due)) => format!(
-            "{} → {}",
-            start.format("%d %b %Y"),
-            due.format("%d %b %Y")
-        ),
+        (Some(start), Some(due)) => {
+            format!("{} → {}", start.format("%d %b %Y"), due.format("%d %b %Y"))
+        }
         (_, Some(due)) => format!("Due {}", due.format("%d %b %Y")),
         _ => "No date".into(),
     }

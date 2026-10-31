@@ -730,7 +730,11 @@ impl BrowserApp {
         self.task_date = self.state.task_deadline(id).map_or_else(
             || self.selected_date.to_string(),
             |deadline| {
-                deadline.at.with_timezone(&Local).format("%Y-%m-%d").to_string()
+                deadline
+                    .at
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d")
+                    .to_string()
             },
         );
         self.task_date_edit = Some(id);
@@ -967,9 +971,9 @@ impl BrowserApp {
                         .find(|task| task.deadline == row.deadline)
                         .map(|task| task.id)
                 });
-                if let Some(id) = row_id.filter(|id| {
-                    self.task_date_edit == Some(*id) && !self.task_date_timeline
-                }) {
+                if let Some(id) =
+                    row_id.filter(|id| self.task_date_edit == Some(*id) && !self.task_date_timeline)
+                {
                     self.task_date_editor(ui, id);
                 }
             });
@@ -1077,9 +1081,9 @@ impl BrowserApp {
                 Some(deadline) => self.state.deadlines.iter().find(|item| item.id == deadline),
                 None => self.state.task_deadline(id),
             };
-            if let Some(existing) = existing.filter(|deadline| {
-                deadline.at.with_timezone(&Local).date_naive() == date
-            }) {
+            if let Some(existing) =
+                existing.filter(|deadline| deadline.at.with_timezone(&Local).date_naive() == date)
+            {
                 // A date-only edit must preserve an existing countdown's exact
                 // instant, including offset changes and repeated DST hours.
                 existing.at.to_rfc3339()
@@ -1103,7 +1107,11 @@ impl BrowserApp {
         } else {
             let date = NaiveDate::parse_from_str(self.task_start.trim(), "%Y-%m-%d")
                 .map_err(|_| "Start date must be YYYY-MM-DD")?;
-            let existing = self.state.tasks.iter().find(|task| task.id == id)
+            let existing = self
+                .state
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
                 .and_then(|task| task.start)
                 .filter(|start| start.with_timezone(&Local).date_naive() == date);
             if let Some(existing) = existing {
@@ -1306,13 +1314,19 @@ impl BrowserApp {
 
     fn calendar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            if ui.selectable_label(!self.timeline_view, "Calendar").clicked() {
+            if ui
+                .selectable_label(!self.timeline_view, "Calendar")
+                .clicked()
+            {
                 self.timeline_view = false;
                 if self.task_date_timeline {
                     self.close_task_dates();
                 }
             }
-            if ui.selectable_label(self.timeline_view, "Timeline").clicked() {
+            if ui
+                .selectable_label(self.timeline_view, "Timeline")
+                .clicked()
+            {
                 if !self.timeline_view {
                     self.timeline.reveal(self.selected_date);
                 }
@@ -1340,7 +1354,11 @@ impl BrowserApp {
             }
             Some(TimelineAction::EditDeadline(id)) => {
                 if let Some(deadline) = self.state.deadlines.iter().find(|item| item.id == id) {
-                    self.task_date = deadline.at.with_timezone(&Local).format("%Y-%m-%d").to_string();
+                    self.task_date = deadline
+                        .at
+                        .with_timezone(&Local)
+                        .format("%Y-%m-%d")
+                        .to_string();
                     self.selected_date = deadline.at.with_timezone(&Local).date_naive();
                     self.year = self.selected_date.year();
                     self.month = self.selected_date.month();
@@ -1772,8 +1790,10 @@ impl eframe::App for BrowserApp {
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M)) {
             self.expanded = !self.expanded;
-            if self.focus == 2 && self.timeline_view
-                && self.task_date_edit.is_none() && self.task_date_legacy.is_none()
+            if self.focus == 2
+                && self.timeline_view
+                && self.task_date_edit.is_none()
+                && self.task_date_legacy.is_none()
             {
                 self.timeline.request_focus();
             }
@@ -1781,8 +1801,10 @@ impl eframe::App for BrowserApp {
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
             self.expanded = !self.expanded;
-            if self.focus == 2 && self.timeline_view
-                && self.task_date_edit.is_none() && self.task_date_legacy.is_none()
+            if self.focus == 2
+                && self.timeline_view
+                && self.task_date_edit.is_none()
+                && self.task_date_legacy.is_none()
             {
                 self.timeline.request_focus();
             }

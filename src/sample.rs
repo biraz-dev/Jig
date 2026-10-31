@@ -113,7 +113,11 @@ mod tests {
         assert!(samples.entries.iter().all(|e| e.date == now.date_naive()));
         assert!(samples.deadlines.iter().all(|d| d.at > now));
         assert_eq!(
-            samples.tasks.iter().filter(|task| task.start.is_some()).count(),
+            samples
+                .tasks
+                .iter()
+                .filter(|task| task.start.is_some())
+                .count(),
             2
         );
         assert!(samples

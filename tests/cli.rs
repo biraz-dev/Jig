@@ -170,9 +170,11 @@ fn cli_task_starts_and_timeline_reuse_portable_task_records() {
     assert!(invoke(&["tasks", "due", "1", "2030-01-16T17:00:00Z"])
         .status
         .success());
-    assert!(invoke(&["tasks", "start", "1", "2030-01-14T03:00:00-05:00"])
-        .status
-        .success());
+    assert!(
+        invoke(&["tasks", "start", "1", "2030-01-14T03:00:00-05:00"])
+            .status
+            .success()
+    );
     assert!(invoke(&["tasks", "star", "1"]).status.success());
     assert!(invoke(&["tasks", "add", "Fire kiln"]).status.success());
     assert!(invoke(&["tasks", "due", "3", "2030-01-17T12:00:00Z"])
@@ -201,7 +203,11 @@ fn cli_task_starts_and_timeline_reuse_portable_task_records() {
     let month = invoke(&["timeline", "2030-01-15", "--month"]);
     assert!(month.status.success());
     assert!(String::from_utf8_lossy(&month.stdout).contains("2030-01-01 to 2030-01-31"));
-    assert_eq!(fs::read(&path).unwrap(), saved, "Timeline views are read-only");
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        saved,
+        "Timeline views are read-only"
+    );
     let invalid: &[&[&str]] = &[
         &["tasks", "start", "1", "not a date"],
         &["tasks", "start", "1", "2030-01-17T00:00:00Z"],
@@ -219,7 +225,11 @@ fn cli_task_starts_and_timeline_reuse_portable_task_records() {
     ];
     for args in invalid {
         assert!(!invoke(args).status.success());
-        assert_eq!(fs::read(&path).unwrap(), saved, "Invalid edits must not save");
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            saved,
+            "Invalid edits must not save"
+        );
     }
     let restored = jig::model::State::from_json(&serde_json::to_string(&state).unwrap()).unwrap();
     assert_eq!(restored.tasks[0].start, state.tasks[0].start);

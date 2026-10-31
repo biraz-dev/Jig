@@ -39,8 +39,8 @@ fn cube() -> Vec<Triangle> {
 fn translated(mut triangles: Vec<Triangle>, offset: Point) -> Vec<Triangle> {
     for triangle in &mut triangles {
         for point in triangle {
-            for axis in 0..3 {
-                point[axis] += offset[axis];
+            for (coordinate, delta) in point.iter_mut().zip(offset) {
+                *coordinate += delta;
             }
         }
     }

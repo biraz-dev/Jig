@@ -499,12 +499,11 @@ impl StlPanel {
                             .custom_profiles
                             .iter()
                             .any(|item| item.id == profile.id)
+                            && ui.small_button("del").clicked()
                         {
-                            if ui.small_button("del").clicked() {
-                                match settings.remove_custom(&profile.id) {
-                                    Ok(()) => changed = true,
-                                    Err(error) => self.error = Some(error),
-                                }
+                            match settings.remove_custom(&profile.id) {
+                                Ok(()) => changed = true,
+                                Err(error) => self.error = Some(error),
                             }
                         }
                     });

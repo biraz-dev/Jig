@@ -216,7 +216,14 @@ try {
   current = await newPage("stl-desktop");
   await boot(current.page);
   assert.equal(await saved(current.page), fixtureRaw);
-  await upload(current.page, binaryCube(), "Sample-local-cube.stl");
+  await maximize(current.page);
+  await tab(current.page, 3); // Data, Source, then the actual Open STL button.
+  const chooserEvent = current.page.waitForEvent("filechooser", { timeout: 5000 });
+  await key(current.page, "Space");
+  const chooser = await chooserEvent;
+  await chooser.setFiles({ name: "Sample-local-cube.stl", mimeType: "model/stl", buffer: binaryCube() });
+  await current.page.waitForTimeout(1300);
+  await paint(current.page);
   const binaryReport = await copyReport(current.page);
   assert.match(binaryReport, /Sample-local-cube\.stl/);
   assert.deepEqual(measurements(binaryReport), { area: 600, volume: 1000, dimensions: [10, 10, 10] });

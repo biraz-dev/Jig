@@ -861,7 +861,11 @@ impl BrowserApp {
                             self.task_date_edit = None;
                         }
                         if self.task_color_edit.is_some_and(|id| {
-                            !self.state.deadlines.iter().any(|deadline| deadline.id == id)
+                            !self
+                                .state
+                                .deadlines
+                                .iter()
+                                .any(|deadline| deadline.id == id)
                         }) {
                             self.task_color_edit = None;
                         }

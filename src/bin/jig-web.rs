@@ -10,6 +10,10 @@ mod web;
 mod stl_ui;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../timeline_ui.rs"]
+mod timeline_ui;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../weather_client.rs"]
 mod weather_client;
 #[cfg(target_arch = "wasm32")]

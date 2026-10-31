@@ -1,9 +1,9 @@
 mod storage;
 mod tui;
 
-use chrono::{Datelike, Local, Utc};
+use chrono::{Datelike, Local, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
-use jig::{calendar, model::State, stl, units};
+use jig::{calendar, model::State, stl, timeline, units};
 use std::{io::Read, path::PathBuf};
 
 #[derive(Parser)]
@@ -70,6 +70,13 @@ enum Command {
         #[command(subcommand)]
         action: Option<EntryAction>,
     },
+    /// Read-only task timeline around DATE (YYYY-MM-DD); defaults to this week
+    Timeline {
+        date: Option<NaiveDate>,
+        /// Show the calendar month rather than Monday through Sunday
+        #[arg(long)]
+        month: bool,
+    },
     /// Set displayed decimal places (internal precision is unchanged)
     Precision {
         #[arg(value_parser = clap::value_parser!(u8).range(0..=10))]
@@ -94,6 +101,11 @@ enum TaskAction {
     },
     /// Set a due date (RFC3339 with timezone), or omit AT to remove the date
     Due {
+        id: u64,
+        at: Option<String>,
+    },
+    /// Set a start (RFC3339 with timezone) on a dated task, or omit AT to clear it
+    Start {
         id: u64,
         at: Option<String>,
     },
@@ -230,12 +242,17 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
                     } else {
                         String::new()
                     };
+                    let start = t
+                        .start
+                        .map(|at| format!("  start {}", at.to_rfc3339()))
+                        .unwrap_or_default();
                     println!(
-                        "{} [{}] {}{}",
+                        "{} [{}] {}{}{}",
                         t.id,
                         if t.complete { "x" } else { " " },
                         t.text,
-                        due
+                        due,
+                        start
                     );
                 }
                 return Ok(false);
@@ -247,6 +264,7 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
             TaskAction::Edit { id, text } => state.edit_task(id, &text)?,
             TaskAction::Done { id } => state.toggle_task(id)?,
             TaskAction::Due { id, at } => state.set_task_deadline(id, at.as_deref())?,
+            TaskAction::Start { id, at } => state.set_task_start(id, at.as_deref())?,
             TaskAction::Star { id } => state.feature_task(id)?,
             TaskAction::Delete { id } => state.remove_task(id)?,
             TaskAction::Move { id, position } => state.move_task(id, position)?,
@@ -286,6 +304,38 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
                 return Ok(false);
             }
         },
+        Command::Timeline { date, month } => {
+            let scale = if month {
+                timeline::Scale::Month
+            } else {
+                timeline::Scale::Week
+            };
+            let range = timeline::window(date.unwrap_or_else(|| Local::now().date_naive()), scale)?;
+            println!("{} to {}", range.start, range.end);
+            for row in timeline::rows(state, &Local) {
+                let status = if row.complete { "Done" } else { "Open" };
+                let dates = match (row.start, row.due) {
+                    (Some(start), Some(due)) => format!("{start} to {due}"),
+                    (_, Some(due)) => format!("due {due}"),
+                    _ => "No date".to_owned(),
+                };
+                println!("{status}: {} · {dates}", row.title);
+                let mut bar = vec![' '; range.days() as usize];
+                if let Some(span) = timeline::clipped(&row, range) {
+                    let first = span.offset as usize;
+                    let last = first + span.days as usize - 1;
+                    bar[first..=last].fill(if span.milestone { '*' } else { '=' });
+                    if span.clipped_start {
+                        bar[first] = '<';
+                    }
+                    if span.clipped_end {
+                        bar[last] = '>';
+                    }
+                }
+                println!("|{}|", bar.into_iter().collect::<String>());
+            }
+            return Ok(false);
+        }
         Command::Calendar {
             year,
             month,

@@ -2,6 +2,7 @@
 use crate::{
     browser_storage,
     stl_ui::{Snapshot as StlSnapshot, StlPanel},
+    timeline_ui::{TimelineAction, TimelinePanel},
     weather_ui::WeatherPanel,
 };
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Utc};
@@ -27,7 +28,7 @@ enum UndoEntry {
     Viewer(StlSnapshot),
 }
 
-fn task_color(color: Option<TaskColor>, complete: bool) -> Color32 {
+pub(crate) fn task_color(color: Option<TaskColor>, complete: bool) -> Color32 {
     let color = match color {
         Some(TaskColor::Rose) => PINK,
         Some(TaskColor::Amber) => Color32::from_rgb(218, 185, 126),
@@ -93,11 +94,17 @@ pub struct BrowserApp {
     confirm_clear_completed: bool,
     task_date_edit: Option<u64>,
     task_date: String,
+    task_start: String,
+    task_date_timeline: bool,
+    task_date_legacy: Option<u64>,
+    task_date_error: Option<String>,
     feature_after_date: bool,
     focus_task_date: bool,
     year: i32,
     month: u32,
     selected_date: NaiveDate,
+    timeline_view: bool,
+    timeline: TimelinePanel,
 }
 
 impl BrowserApp {
@@ -175,11 +182,17 @@ impl BrowserApp {
             confirm_clear_completed: false,
             task_date_edit: None,
             task_date: String::new(),
+            task_start: String::new(),
+            task_date_timeline: false,
+            task_date_legacy: None,
+            task_date_error: None,
             feature_after_date: false,
             focus_task_date: false,
             year: today.year(),
             month: today.month(),
             selected_date: today,
+            timeline_view: false,
+            timeline: TimelinePanel::new(today),
         }
     }
 
@@ -269,6 +282,7 @@ impl BrowserApp {
     }
 
     fn reset_undo(&mut self) {
+        self.timeline = TimelinePanel::new(Local::now().date_naive());
         self.undo_history.clear();
         self.stl.clear_undo();
         self.undo_baseline = self.state.clone();
@@ -313,6 +327,10 @@ impl BrowserApp {
         self.confirm_clear_completed = false;
         self.task_date_edit = None;
         self.task_date.clear();
+        self.task_start.clear();
+        self.task_date_timeline = false;
+        self.task_date_legacy = None;
+        self.task_date_error = None;
         self.feature_after_date = false;
         self.focus_task_date = false;
         self.calculation.clear();
@@ -523,7 +541,7 @@ impl BrowserApp {
         if self.scroll_selected && self.focus == index {
             // An expanded viewer can be slightly taller than the visible area.
             // Align its top so selecting it never scrolls the file controls away.
-            let align = if self.expanded && index == 4 {
+            let align = if self.expanded && (index == 2 || index == 4) {
                 egui::Align::Min
             } else {
                 egui::Align::Center
@@ -697,14 +715,23 @@ impl BrowserApp {
     }
 
     fn begin_task_date(&mut self, id: u64, feature_after: bool) {
+        self.task_start = self
+            .state
+            .tasks
+            .iter()
+            .find(|task| task.id == id)
+            .and_then(|task| task.start)
+            .map_or_else(String::new, |start| {
+                start.with_timezone(&Local).format("%Y-%m-%d").to_string()
+            });
+        self.task_date_timeline = false;
+        self.task_date_legacy = None;
+        self.task_date_error = None;
         self.task_date = self.state.task_deadline(id).map_or_else(
-            || {
-                self.selected_date
-                    .and_hms_opt(9, 0, 0)
-                    .and_then(|date| Local.from_local_datetime(&date).single())
-                    .map_or_else(String::new, |date| date.to_rfc3339())
+            || self.selected_date.to_string(),
+            |deadline| {
+                deadline.at.with_timezone(&Local).format("%Y-%m-%d").to_string()
             },
-            |deadline| deadline.at.to_rfc3339(),
         );
         self.task_date_edit = Some(id);
         self.feature_after_date = feature_after;
@@ -940,7 +967,9 @@ impl BrowserApp {
                         .find(|task| task.deadline == row.deadline)
                         .map(|task| task.id)
                 });
-                if let Some(id) = row_id.filter(|id| self.task_date_edit == Some(*id)) {
+                if let Some(id) = row_id.filter(|id| {
+                    self.task_date_edit == Some(*id) && !self.task_date_timeline
+                }) {
                     self.task_date_editor(ui, id);
                 }
             });
@@ -1030,9 +1059,84 @@ impl BrowserApp {
         }
     }
 
+    fn close_task_dates(&mut self) {
+        self.task_date_edit = None;
+        self.task_date_legacy = None;
+        self.task_date_timeline = false;
+        self.task_date_error = None;
+        self.feature_after_date = false;
+        self.focus_task_date = false;
+    }
+
+    fn save_task_dates(&mut self, id: u64) -> Result<u64, String> {
+        let input = self.task_date.trim();
+        let due = if input.len() == 10 {
+            let date = NaiveDate::parse_from_str(input, "%Y-%m-%d")
+                .map_err(|_| "Due date must be YYYY-MM-DD")?;
+            let existing = match self.task_date_legacy {
+                Some(deadline) => self.state.deadlines.iter().find(|item| item.id == deadline),
+                None => self.state.task_deadline(id),
+            };
+            if let Some(existing) = existing.filter(|deadline| {
+                deadline.at.with_timezone(&Local).date_naive() == date
+            }) {
+                // A date-only edit must preserve an existing countdown's exact
+                // instant, including offset changes and repeated DST hours.
+                existing.at.to_rfc3339()
+            } else {
+                let time = existing.map_or_else(
+                    || chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                    |deadline| deadline.at.with_timezone(&Local).time(),
+                );
+                Local
+                    .from_local_datetime(&date.and_time(time))
+                    .earliest()
+                    .ok_or("That deadline time does not exist locally; enter a timestamp with a timezone")?
+                    .with_timezone(&Utc)
+                    .to_rfc3339()
+            }
+        } else {
+            input.to_owned()
+        };
+        let start = if self.task_start.trim().is_empty() {
+            None
+        } else {
+            let date = NaiveDate::parse_from_str(self.task_start.trim(), "%Y-%m-%d")
+                .map_err(|_| "Start date must be YYYY-MM-DD")?;
+            let existing = self.state.tasks.iter().find(|task| task.id == id)
+                .and_then(|task| task.start)
+                .filter(|start| start.with_timezone(&Local).date_naive() == date);
+            if let Some(existing) = existing {
+                Some(existing.to_rfc3339())
+            } else {
+                let midnight = date.and_hms_opt(0, 0, 0).ok_or("Invalid start date")?;
+                let start = Local
+                    .from_local_datetime(&midnight)
+                    .earliest()
+                    .ok_or("This start date does not exist in your local timezone")?;
+                Some(start.with_timezone(&Utc).to_rfc3339())
+            }
+        };
+        // Resolve a legacy deadline only when saving. Viewing or cancelling an
+        // editor must not migrate a record or consume an Undo step.
+        let mut next = self.state.clone();
+        let task = match self.task_date_legacy {
+            Some(deadline) => next.ensure_task_for_deadline(deadline)?,
+            None => id,
+        };
+        next.set_task_schedule(task, start.as_deref(), Some(&due))?;
+        if self.feature_after_date {
+            next.feature_task(task)?;
+        }
+        self.state = next;
+        Ok(task)
+    }
+
     fn task_date_editor(&mut self, ui: &mut Ui, id: u64) {
         ui.indent(("task-date-editor", id), |ui| {
+            let owner = if self.task_date_timeline { 2 } else { 1 };
             let field = egui::Id::new(("task-date-input", id));
+            ui.label(RichText::new("Due").color(BLUE).size(11.0));
             if self.focus_task_date {
                 ui.memory_mut(|memory| memory.request_focus(field));
             }
@@ -1040,19 +1144,37 @@ impl BrowserApp {
                 TextEdit::singleline(&mut self.task_date)
                     .id(field)
                     .return_key(None)
-                    .hint_text("2026-12-01T18:00:00-05:00")
+                    .hint_text("YYYY-MM-DD")
                     .desired_width(ui.available_width()),
-            );
+            ).on_hover_text("Enter a date, or an RFC3339 timestamp with a timezone. Date edits retain the existing deadline time; new deadlines use 09:00 local time.");
             if response.has_focus() {
-                self.focus = 1;
+                self.focus = owner;
             }
             if self.focus_task_date {
                 response.scroll_to_me(None);
                 self.focus_task_date = !response.has_focus();
                 ui.ctx().request_repaint();
             }
-            let enter = response.has_focus()
+            let mut enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            ui.label(RichText::new("Start · optional").color(BLUE).size(11.0));
+            let start = ui.add(
+                TextEdit::singleline(&mut self.task_start)
+                    .id(egui::Id::new(("task-start-input", id)))
+                    .return_key(None)
+                    .hint_text("YYYY-MM-DD")
+                    .desired_width(ui.available_width()),
+            );
+            if start.has_focus() {
+                self.focus = owner;
+                if start.gained_focus() {
+                    start.scroll_to_me(None);
+                    ui.ctx().request_repaint();
+                }
+                enter |= ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                });
+            }
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(if self.feature_after_date {
@@ -1063,39 +1185,41 @@ impl BrowserApp {
                     .clicked()
                     || enter
                 {
-                    let result = self.state.set_task_deadline(id, Some(&self.task_date));
-                    let result = result.and_then(|()| {
-                        if self.feature_after_date {
-                            self.state.feature_task(id)
-                        } else {
-                            Ok(())
+                    let result = self.save_task_dates(id);
+                    match result {
+                        Ok(task) => {
+                            if self.feature_after_date {
+                                self.reveal_task_date(task);
+                            }
+                            self.close_task_dates();
+                            self.focus = owner;
+                            self.changed();
                         }
-                    });
-                    if result.is_ok() {
-                        if self.feature_after_date {
-                            self.reveal_task_date(id);
+                        Err(error) => {
+                            self.status = error.clone();
+                            self.task_date_error = Some(error);
                         }
-                        self.task_date_edit = None;
-                        self.feature_after_date = false;
-                        self.focus = 1;
                     }
-                    self.apply(result);
                 }
-                if self.state.task_deadline(id).is_some()
-                    && ui.small_button("Remove date").clicked()
-                {
-                    let result = self.state.set_task_deadline(id, None);
+                let has_date = self.task_date_legacy.is_some()
+                    || self.state.task_deadline(id).is_some();
+                if has_date && ui.small_button("Remove date").clicked() {
+                    let result = match self.task_date_legacy {
+                        Some(deadline) => self.state.remove_deadline(deadline),
+                        None => self.state.set_task_deadline(id, None),
+                    };
                     if result.is_ok() {
-                        self.task_date_edit = None;
-                        self.feature_after_date = false;
+                        self.close_task_dates();
                     }
                     self.apply(result);
                 }
                 if ui.small_button("Cancel").clicked() {
-                    self.task_date_edit = None;
-                    self.feature_after_date = false;
+                    self.close_task_dates();
                 }
             });
+            if let Some(error) = &self.task_date_error {
+                ui.label(RichText::new(error).color(PINK).size(11.0));
+            }
         });
     }
 
@@ -1176,10 +1300,79 @@ impl BrowserApp {
             self.selected_date = date;
             self.year = date.year();
             self.month = date.month();
+            self.timeline.reveal(date);
         }
     }
 
     fn calendar(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            if ui.selectable_label(!self.timeline_view, "Calendar").clicked() {
+                self.timeline_view = false;
+                if self.task_date_timeline {
+                    self.close_task_dates();
+                }
+            }
+            if ui.selectable_label(self.timeline_view, "Timeline").clicked() {
+                if !self.timeline_view {
+                    self.timeline.reveal(self.selected_date);
+                }
+                self.timeline_view = true;
+            }
+        });
+        if !self.timeline_view {
+            self.calendar_month(ui);
+            return;
+        }
+        let today = Local::now().date_naive();
+        let action = self.timeline.ui(ui, &self.state, today);
+        if self.timeline.focused {
+            self.focus = 2;
+        }
+        match action {
+            Some(TimelineAction::EditTask(id)) => {
+                self.begin_task_date(id, false);
+                self.task_date_timeline = true;
+                if let Some(deadline) = self.state.task_deadline(id) {
+                    self.selected_date = deadline.at.with_timezone(&Local).date_naive();
+                    self.year = self.selected_date.year();
+                    self.month = self.selected_date.month();
+                }
+            }
+            Some(TimelineAction::EditDeadline(id)) => {
+                if let Some(deadline) = self.state.deadlines.iter().find(|item| item.id == id) {
+                    self.task_date = deadline.at.with_timezone(&Local).format("%Y-%m-%d").to_string();
+                    self.selected_date = deadline.at.with_timezone(&Local).date_naive();
+                    self.year = self.selected_date.year();
+                    self.month = self.selected_date.month();
+                    self.task_start.clear();
+                    self.task_date_edit = None;
+                    self.task_date_legacy = Some(id);
+                    self.task_date_timeline = true;
+                    self.task_date_error = None;
+                    self.feature_after_date = false;
+                    self.focus_task_date = true;
+                }
+            }
+            None => {}
+        }
+        if self.task_date_timeline {
+            let target = self.task_date_edit.or(self.task_date_legacy);
+            if let Some(id) = target {
+                ui.add_space(6.0);
+                self.task_date_editor(ui, id);
+            }
+        }
+        ui.add_space(6.0);
+        if self.weather.controls(ui) {
+            self.state.preferences.weather = self.weather.config().cloned();
+            if !self.demo {
+                self.changed();
+            }
+        }
+        self.weather.selected_day(ui, self.selected_date);
+    }
+
+    fn calendar_month(&mut self, ui: &mut Ui) {
         ui.spacing_mut().button_padding.x = 3.0;
         ui.horizontal(|ui| {
             if ui.button("‹").clicked() {
@@ -1554,16 +1747,45 @@ impl eframe::App for BrowserApp {
             self.stl.toggle_grey_matcap();
             ctx.request_repaint();
         }
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T)) {
+            self.focus = 2;
+            self.focus_calculator = false;
+            self.focus_task_date = false;
+            self.scroll_selected = true;
+            self.timeline_view = !self.timeline_view;
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+            if self.timeline_view {
+                self.timeline.reveal(self.selected_date);
+                self.timeline.request_focus();
+            } else if self.task_date_timeline {
+                self.close_task_dates();
+            }
+            ctx.request_repaint();
+        }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::D)) {
             self.data_open = !self.data_open;
             ctx.request_repaint();
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M)) {
             self.expanded = !self.expanded;
+            if self.focus == 2 && self.timeline_view
+                && self.task_date_edit.is_none() && self.task_date_legacy.is_none()
+            {
+                self.timeline.request_focus();
+            }
             ctx.request_repaint();
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
             self.expanded = !self.expanded;
+            if self.focus == 2 && self.timeline_view
+                && self.task_date_edit.is_none() && self.task_date_legacy.is_none()
+            {
+                self.timeline.request_focus();
+            }
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.expanded = false;

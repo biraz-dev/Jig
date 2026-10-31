@@ -153,6 +153,101 @@ fn cli_dated_tasks_share_the_countdown_and_calendar() {
 }
 
 #[test]
+fn cli_task_starts_and_timeline_reuse_portable_task_records() {
+    let dir = std::env::temp_dir().join(format!("jig-cli-timeline-test-{}", std::process::id()));
+    let path = dir.join("state.json");
+    let invoke = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_jig"))
+            .env("TZ", "UTC")
+            .arg("--state")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let load = || jig::model::State::from_json(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(invoke(&["tasks", "add", "Dry casting"]).status.success());
+    assert!(invoke(&["tasks", "due", "1", "2030-01-16T17:00:00Z"])
+        .status
+        .success());
+    assert!(invoke(&["tasks", "start", "1", "2030-01-14T03:00:00-05:00"])
+        .status
+        .success());
+    assert!(invoke(&["tasks", "star", "1"]).status.success());
+    assert!(invoke(&["tasks", "add", "Fire kiln"]).status.success());
+    assert!(invoke(&["tasks", "due", "3", "2030-01-17T12:00:00Z"])
+        .status
+        .success());
+    assert!(invoke(&["tasks", "add", "Order supplies"]).status.success());
+    let state = load();
+    let deadline = state.task_deadline(1).unwrap().id;
+    assert_eq!(state.tasks.len(), 3);
+    assert_eq!(state.deadlines.len(), 2);
+    assert_eq!(state.featured, Some(deadline));
+    assert_eq!(
+        state.tasks[0].start.unwrap().to_rfc3339(),
+        "2030-01-14T08:00:00+00:00"
+    );
+    let listed = invoke(&["tasks"]);
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("start 2030-01-14T08:00:00+00:00"));
+    let saved = fs::read(&path).unwrap();
+    let week = invoke(&["timeline", "2030-01-15"]);
+    assert!(week.status.success());
+    let week = String::from_utf8_lossy(&week.stdout);
+    assert!(week.contains("2030-01-14 to 2030-01-20"));
+    assert!(week.contains("Open: Dry casting · 2030-01-14 to 2030-01-16\n|===    |"));
+    assert!(week.contains("Open: Fire kiln · due 2030-01-17\n|   *   |"));
+    assert!(week.contains("Open: Order supplies · No date"));
+    let month = invoke(&["timeline", "2030-01-15", "--month"]);
+    assert!(month.status.success());
+    assert!(String::from_utf8_lossy(&month.stdout).contains("2030-01-01 to 2030-01-31"));
+    assert_eq!(fs::read(&path).unwrap(), saved, "Timeline views are read-only");
+    let invalid: &[&[&str]] = &[
+        &["tasks", "start", "1", "not a date"],
+        &["tasks", "start", "1", "2030-01-17T00:00:00Z"],
+        &["tasks", "due", "1", "2030-01-13T12:00:00Z"],
+        &[
+            "deadline",
+            "edit",
+            "2",
+            "Must not rename",
+            "2030-01-13T12:00:00Z",
+        ],
+        &["tasks", "start", "5", "2030-01-14T00:00:00Z"],
+        &["tasks", "start", "999999", "2030-01-14T00:00:00Z"],
+        &["timeline", "2030-02-30"],
+    ];
+    for args in invalid {
+        assert!(!invoke(args).status.success());
+        assert_eq!(fs::read(&path).unwrap(), saved, "Invalid edits must not save");
+    }
+    let restored = jig::model::State::from_json(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(restored.tasks[0].start, state.tasks[0].start);
+    assert_eq!(restored.task_deadline(1).unwrap().id, deadline);
+    assert_eq!(restored.featured, Some(deadline));
+    assert!(invoke(&["tasks", "done", "1"]).status.success());
+    assert!(
+        String::from_utf8_lossy(&invoke(&["timeline", "2030-01-15"]).stdout)
+            .contains("Done: Dry casting")
+    );
+    assert_eq!(load().tasks[0].start, state.tasks[0].start);
+    assert_eq!(load().featured, None);
+    assert!(invoke(&["tasks", "start", "1"]).status.success());
+    assert_eq!(load().tasks[0].start, None);
+    assert_eq!(load().task_deadline(1).unwrap().id, deadline);
+    assert!(invoke(&["tasks", "start", "1", "2030-01-14T08:00:00Z"])
+        .status
+        .success());
+    assert!(invoke(&["tasks", "due", "1"]).status.success());
+    let state = load();
+    assert_eq!(state.tasks[0].start, None);
+    assert!(state.task_deadline(1).is_none());
+    assert_eq!(state.tasks.len(), 3);
+    assert_eq!(state.deadlines.len(), 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn cli_stl_reports_geometry_and_shrinkage_without_changing_state() {
     let dir = std::env::temp_dir().join(format!("jig-cli-stl-test-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();

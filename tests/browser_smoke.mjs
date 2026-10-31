@@ -226,6 +226,30 @@ async function maximizeApplet(page, applet) {
   await navigateKey(page, "Control+m");
 }
 
+async function tapToday(page) {
+  // Locate the actual date button's distinctive background. This remains a
+  // touch interaction when an extra calendar control changes the grid's Y.
+  const png = await page.screenshot();
+  const point = await page.evaluate(async encoded => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const points = [];
+    for (let y = 100; y < Math.min(500, bitmap.height); y++) for (let x = 20; x < bitmap.width - 20; x++) {
+      const offset = (y * bitmap.width + x) * 4;
+      if ([28, 49, 66].every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 2)) points.push([x, y]);
+    }
+    bitmap.close();
+    if (points.length < 400) return null;
+    return { x: (Math.min(...points.map(point => point[0])) + Math.max(...points.map(point => point[0]))) / 2, y: (Math.min(...points.map(point => point[1])) + Math.max(...points.map(point => point[1]))) / 2 };
+  }, png.toString("base64"));
+  assert.ok(point, "Today's calendar button must be visibly present before touching it");
+  await page.touchscreen.tap(point.x, point.y);
+}
+
 function taskColorFixture(date = "2026-10-30") {
   const names = ["casting studies", "photograph sculptures", "glaze tests", "print labels", "pack studio tools", "clear workbench", "collect supplies", "review proofs"];
   const colors = ["rose", "amber", "sage", "blue", "lilac", undefined, "rose", "amber"];
@@ -549,8 +573,8 @@ try {
 
   progress("select calendar dates using keyboard without changing the featured task");
   await maximizeApplet(colored.page, "calendar");
-  // Data, Source, previous month, next month, Today, then October 1.
-  await tab(colored.page, 6);
+  // Data, Source, Calendar, Timeline, previous month, next month, Today, October 1.
+  await tab(colored.page, 8);
   await navigateKey(colored.page, "Space");
   await capture(colored.page, "task-colors-calendar-empty");
   const emptyDayRender = await colored.page.screenshot();
@@ -652,14 +676,13 @@ try {
   });
   await boot(coloredMobile.page);
   await maximizeApplet(coloredMobile.page, "calendar");
-  await tab(coloredMobile.page, 6);
+  await tab(coloredMobile.page, 8);
   await navigateKey(coloredMobile.page, "Space"); // October 1 is empty.
   await paint(coloredMobile.page);
   const beforeTouch = await coloredMobile.page.screenshot();
-  // In the fixed 390px maximized calendar, October 30 is Friday in row five.
-  // This canvas fixture coordinate is checked against the captured date header
-  // during visual review; no JavaScript hook selects or mutates application data.
-  await coloredMobile.page.touchscreen.tap(247, 303);
+  // October 30 is the frozen clock's today button. Find it in rendered pixels;
+  // no JavaScript hook selects or mutates application data.
+  await tapToday(coloredMobile.page);
   await paint(coloredMobile.page);
   await coloredMobile.page.waitForTimeout(100);
   assert.notDeepEqual(await coloredMobile.page.screenshot(), beforeTouch, "Touching another date must visibly update the calendar");

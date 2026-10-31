@@ -110,6 +110,41 @@ clearing site data or using another browser does not carry it over.
 Completed tasks can be removed together with **Delete all completed tasks** and
 an inline confirmation. Individual removal buttons use **del**.
 
+### Timeline
+
+Choose **Timeline** beside **Calendar**, or press **Ctrl-Alt-T**, for a compact
+Gantt view of the same tasks. **Week** and **Month** change the visible range;
+the arrows move through it and **Today** returns to the current period. A thin
+today line helps locate the present. **Ctrl-M** expands the selected applet.
+
+Tasks with a start and due date appear as colored bars; tasks with just a due
+date appear as diamonds. Completed work is subdued and labelled **Done**.
+Dated rows appear first, followed by editable **No date** tasks, preserving
+checklist order inside each group. Bars crossing a range boundary have small
+continuation marks. Calendar marks still represent due dates only.
+
+Click or tap a row, or use Tab and Enter/Space, to edit its dates inline. The
+optional start field uses **YYYY-MM-DD**. The due field accepts the same format
+or a timezone-qualified RFC3339 timestamp. Editing a start alone keeps the exact
+deadline time; changing the due day keeps its local time. New date-only
+deadlines use 09:00 local time. Saving validates the complete range as one
+undoable action. Removing a due date also clears its start date. Selecting rows
+or switching views leaves the starred countdown alone.
+
+Start instants are stored as optional UTC `Task.start` values alongside existing
+task data. JSON imports, exports and native state files use the same format;
+existing dated tasks without starts render as milestones. The view derives its rows from
+tasks and linked deadlines. Merely opening a legacy standalone deadline does
+not create or change a record. No new storage service or dependency is needed.
+
+For an already dated task, native commands share these records:
+
+```sh
+jig tasks start 1 "2026-11-01T00:00:00-04:00"
+jig timeline 2026-11-01 --month
+jig tasks start 1  # clear the start date
+```
+
 For a production build under the repository's Pages path:
 
 ```sh

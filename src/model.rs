@@ -57,6 +57,8 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<TaskColor>,
 }
 /// A read-only calendar view, derived from existing task/deadline records.
@@ -217,9 +219,21 @@ impl State {
             title(text)?;
         }
         let mut linked = std::collections::HashSet::new();
-        for deadline in self.tasks.iter().filter_map(|task| task.deadline) {
-            if !self.deadlines.iter().any(|item| item.id == deadline) || !linked.insert(deadline) {
-                return Err("Task deadline is missing or linked to more than one task".into());
+        for task in &self.tasks {
+            if let Some(deadline) = task.deadline {
+                let item = self
+                    .deadlines
+                    .iter()
+                    .find(|item| item.id == deadline)
+                    .ok_or("Task deadline is missing or linked to more than one task")?;
+                if !linked.insert(deadline) {
+                    return Err("Task deadline is missing or linked to more than one task".into());
+                }
+                if task.start.is_some_and(|start| start > item.at) {
+                    return Err("Task start must be on or before its deadline".into());
+                }
+            } else if task.start.is_some() {
+                return Err("Add a deadline before setting a task start".into());
             }
         }
         if self.featured.is_some_and(|id| !self.is_deadline_active(id)) {
@@ -258,6 +272,7 @@ impl State {
             text: title(text)?,
             complete: false,
             deadline: None,
+            start: None,
             color: None,
         });
         Ok(id)
@@ -361,7 +376,38 @@ impl State {
     }
     /// A date belongs to its checklist task; assigning one does not feature it.
     pub fn set_task_deadline(&mut self, id: u64, at: Option<&str>) -> Result<()> {
+        let task = self
+            .tasks
+            .iter()
+            .find(|task| task.id == id)
+            .ok_or("Task not found")?;
+        let start = at.and(task.start).map(|start| start.to_rfc3339());
+        self.set_task_schedule(id, start.as_deref(), at)
+    }
+    /// Set a start without replacing or copying the existing linked deadline.
+    pub fn set_task_start(&mut self, id: u64, start: Option<&str>) -> Result<()> {
+        if !self.tasks.iter().any(|task| task.id == id) {
+            return Err("Task not found".into());
+        }
+        let due = self.task_deadline(id).map(|deadline| deadline.at.to_rfc3339());
+        self.set_task_schedule(id, start, due.as_deref())
+    }
+    /// Validate both instants before changing either part of a task's schedule.
+    /// UI adapters can expose dates while retaining an existing deadline's time.
+    pub fn set_task_schedule(
+        &mut self,
+        id: u64,
+        start: Option<&str>,
+        at: Option<&str>,
+    ) -> Result<()> {
+        let start = start.map(parse_deadline).transpose()?;
         let at = at.map(parse_deadline).transpose()?;
+        if let Some(start) = start {
+            let due = at.ok_or("Add a deadline before setting a task start")?;
+            if start > due {
+                return Err("Task start must be on or before its deadline".into());
+            }
+        }
         let index = self
             .tasks
             .iter()
@@ -389,6 +435,7 @@ impl State {
         } else if let Some(deadline) = self.tasks[index].deadline {
             self.remove_deadline(deadline)?;
         }
+        self.tasks[index].start = start;
         Ok(())
     }
     pub fn feature_task(&mut self, id: u64) -> Result<()> {
@@ -445,6 +492,13 @@ impl State {
         let title = title(text)?;
         let at = parse_deadline(at)?;
         if let Some(id) = id {
+            if self
+                .tasks
+                .iter()
+                .any(|task| task.deadline == Some(id) && task.start.is_some_and(|start| start > at))
+            {
+                return Err("Task start must be on or before its deadline".into());
+            }
             let d = self
                 .deadlines
                 .iter_mut()
@@ -485,6 +539,7 @@ impl State {
         for task in &mut self.tasks {
             if task.deadline == Some(id) {
                 task.deadline = None;
+                task.start = None;
             }
         }
         if self.featured == Some(id) {

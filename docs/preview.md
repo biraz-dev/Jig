@@ -145,7 +145,24 @@ a read-only projection, not another persisted set of task records. Legacy
 standalone deadlines remain visible without creating tasks on load or selection.
 Entry forms and markers are hidden, while existing entries
 remain intact in stored state and JSON exports. Times display in the device's
-timezone; deadline input requires a qualified RFC3339 time.
+timezone; deadline input accepts calendar dates or qualified RFC3339 times.
+
+The **Calendar / Timeline** selector reuses this panel; Ctrl-Alt-T switches views
+and focuses Timeline's Week control when opening it. The compact Gantt adapter
+in `src/timeline_ui.rs` draws day-based Week/Month ranges from the portable
+`src/timeline.rs` projection. Existing task colors and completion status appear
+on bars, with deadline-only diamonds and explicit No date rows. Tab, Enter/Space,
+pointer and touch open an inline editor. Selection is independent of featuring.
+The checklist and timeline share the same date editor and global Undo journal.
+
+`Task.start` is an optional UTC instant, omitted when absent. The browser's start
+field converts YYYY-MM-DD to local midnight; date-only due edits retain the old
+local time or use 09:00 for a new deadline. An unchanged due day preserves the
+exact stored instant, including DST ambiguity. Whole-range validation precedes
+assignment. Legacy records are linked only on a successful explicit save, and
+passive views do not migrate state. JSON version remains 1, without added
+dependencies. Core tests cover atomic edits, timezone projection and clipping;
+the Timeline browser suite checks editing, Undo, persistence and mobile use.
 
 The hybrid input also accepts `72in to mm`, `72in -> mm`, `72in → mm`, and mixed
 fractions such as `1 1/2 in cm`. There is one saved record per successful
@@ -162,7 +179,7 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The six browser suites run against the same built artifact in separate jobs,
+The seven browser suites run against the same built artifact in separate jobs,
 with at most three runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message

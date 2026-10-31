@@ -7,6 +7,7 @@ pub mod sample;
 pub mod stl;
 pub mod stl_camera;
 pub mod stl_comparison;
+pub mod timeline;
 pub mod units;
 pub mod weather;
 pub mod workbench;

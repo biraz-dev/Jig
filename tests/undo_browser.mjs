@@ -23,6 +23,8 @@ let phase = "launch Chromium";
 let current;
 const contexts = [];
 const issues = [];
+// Track only layout shortcuts sent by this test driver, not private app state.
+const expanded = new WeakMap();
 const timer = setTimeout(() => {
   console.error(`Undo browser checks exceeded 240 seconds during: ${phase}`);
   process.exit(1);
@@ -32,7 +34,12 @@ async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.waitForTimeout(100);
 }
-async function key(page, value) { await page.keyboard.press(value); await paint(page); }
+async function key(page, value) {
+  await page.keyboard.press(value);
+  if (value === "Escape") expanded.set(page, false);
+  else if (value === "Control+m" || value === "F2") expanded.set(page, !expanded.get(page));
+  await paint(page);
+}
 async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`) });
@@ -69,6 +76,7 @@ async function open(label, state = fixture) {
   return { context, page };
 }
 async function boot(page, reload = false) {
+  expanded.set(page, false);
   if (reload) await page.reload({ waitUntil: "load" });
   else await page.goto(base, { waitUntil: "load" });
   await page.bringToFront();
@@ -119,10 +127,13 @@ async function tasks(page) {
   await key(page, "Control+m");
 }
 async function stl(page) {
-  await resetFocus(page);
+  if (!expanded.get(page)) {
+    await resetFocus(page);
+    await key(page, "Control+Alt+5");
+    await key(page, "Control+m");
+  }
   await key(page, "Control+Alt+5");
-  await key(page, "Control+m");
-  await key(page, "Control+Alt+5");
+  await page.waitForTimeout(250);
 }
 async function readReport(page) {
   await page.evaluate(() => navigator.clipboard.writeText("Undo report pending"));

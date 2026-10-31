@@ -357,13 +357,14 @@ impl StlPanel {
         }
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("STL").color(PINK));
-            let open = ui.button("Open STL");
             if self.focus_open {
-                open.request_focus();
+                let id = ui.next_auto_id();
+                ui.memory_mut(|memory| memory.request_focus(id));
                 self.focus_open = false;
                 self.focused = true;
                 ui.ctx().request_repaint();
             }
+            let open = ui.button("Open STL");
             self.focused |= open.has_focus();
             if open.clicked() {
                 open_file();

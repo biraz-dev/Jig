@@ -33,6 +33,9 @@ const asciiCube = Buffer.from(`solid Sample: ASCII cube\n${faces.map(face => `fa
 let phase = "launch Chromium";
 const issues = [];
 const contexts = [];
+// Track only the layout commands sent by this driver. No application state is
+// exposed: repeated report reads can keep the already maximized GPU view open.
+const expanded = new WeakMap();
 const timer = setTimeout(() => {
   console.error(`STL browser checks exceeded 240 seconds during: ${phase}`);
   process.exit(1);
@@ -42,11 +45,19 @@ async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.waitForTimeout(100);
 }
-async function key(page, value) { await page.keyboard.press(value); await paint(page); }
+async function key(page, value) {
+  await page.keyboard.press(value);
+  if (value === "Escape") expanded.set(page, false);
+  else if (value === "Control+m" || value === "F2") expanded.set(page, !expanded.get(page));
+  await paint(page);
+}
 async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`) });
-  const allow = new Set(["stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-failure", "stl-reloaded", "stl-open-mesh"]);
+  const allow = new Set([
+    "stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-failure", "stl-reloaded", "stl-open-mesh",
+    "stl-focus-open", "stl-focus-tab1", "stl-focus-tab2", "stl-focus-tab3",
+  ]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (allow.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
@@ -80,19 +91,23 @@ async function newPage(label, viewport = { width: 1440, height: 1000 }, seed = t
 async function boot(page, reload = false) {
   if (reload) await page.reload({ waitUntil: "load" });
   else await page.goto(base, { waitUntil: "load" });
+  expanded.set(page, false);
   await page.bringToFront();
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   await page.waitForTimeout(500);
 }
 async function maximize(page) {
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await key(page, "Escape");
-  await key(page, "Control+Alt+5");
-  await key(page, "Control+m");
+  if (!expanded.get(page)) {
+    await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+    await key(page, "Escape");
+    await key(page, "Control+Alt+5");
+    await key(page, "Control+m");
+  }
   // Re-enter through the public Open STL shortcut after the expanded layout is
   // built, so file errors, scrolling and global Undo cannot change our anchor.
   await key(page, "Control+Alt+5");
+  await page.waitForTimeout(250);
 }
 async function saved(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
 async function upload(page, bytes, name) {
@@ -102,13 +117,19 @@ async function upload(page, bytes, name) {
   await paint(page);
 }
 
-async function copyReport(page) {
+async function copyReport(page, captureFocus = false) {
   const sentinel = "Jig STL report pending";
   await page.evaluate(value => navigator.clipboard.writeText(value), sentinel);
   await maximize(page);
   // Ctrl-Alt-5 focuses Open STL. Its next controls are Sample cube, Clear and
   // Copy report, independent of the header's changing global Undo state.
-  await tab(page, 3);
+  if (captureFocus) {
+    await capture(page, "stl-focus-open");
+    for (let index = 1; index <= 3; index++) {
+      await key(page, "Tab");
+      await capture(page, `stl-focus-tab${index}`);
+    }
+  } else await tab(page, 3);
   await key(page, "Space");
   const deadline = Date.now() + 3000;
   let copied = "";
@@ -261,7 +282,7 @@ try {
   await chooser.setFiles({ name: "Sample-local-cube.stl", mimeType: "model/stl", buffer: binaryCube() });
   await current.page.waitForTimeout(1300);
   await paint(current.page);
-  const binaryReport = await copyReport(current.page);
+  const binaryReport = await copyReport(current.page, true);
   assert.match(binaryReport, /Sample-local-cube\.stl/);
   assert.deepEqual(measurements(binaryReport), { area: 600, volume: 1000, dimensions: [10, 10, 10] });
   await capture(current.page, "stl-maximized");

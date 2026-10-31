@@ -180,8 +180,10 @@ async function readReport(page) {
 async function editFocused(page, value) {
   // DragValue already enters text editing when it receives Tab focus.
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
-  await page.keyboard.press("Control+a");
+  await key(page, "Control+a");
   await page.keyboard.type(String(value), { delay: 30 });
+  // Commit only after WASM has consumed the selection and final typed digit.
+  await paint(page);
   await key(page, "Enter");
 }
 async function master(page, value) { await stl(page); await tab(page, 17); await editFocused(page, value); }

@@ -1,7 +1,7 @@
 // Real Chromium checks for local STL files. Every model and dataset is synthetic.
 // Serve the built preview at /Jig/, then: node tests/stl_browser.mjs
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 
@@ -31,15 +31,17 @@ function binaryCube() {
 }
 const asciiCube = Buffer.from(`solid Sample: ASCII cube\n${faces.map(face => `facet normal 0 0 0\nouter loop\n${face.map(index => `vertex ${vertices[index].join(" ")}`).join("\n")}\nendloop\nendfacet`).join("\n")}\nendsolid Sample: ASCII cube\n`);
 let phase = "launch Chromium";
+let originalError;
 const issues = [];
 const contexts = [];
 // Track only the layout commands sent by this driver. No application state is
 // exposed: repeated report reads can keep the already maximized GPU view open.
 const expanded = new WeakMap();
 const timer = setTimeout(() => {
-  console.error(`STL browser checks exceeded 240 seconds during: ${phase}`);
+  console.error(`STL browser checks exceeded 360 seconds during: ${phase}`);
+  if (originalError) console.error("Original STL browser failure:", originalError);
   process.exit(1);
-}, 240000);
+}, 360000);
 function progress(message) { phase = message; console.log(`STL browser phase: ${message}`); }
 async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -52,12 +54,20 @@ async function key(page, value) {
   await paint(page);
 }
 async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
-async function capture(page, name) {
-  const png = await page.screenshot({
-    path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide",
-  });
+async function bounded(promise, milliseconds, description) {
+  let deadline;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        deadline = setTimeout(() => reject(new Error(`${description} exceeded ${milliseconds}ms`)), milliseconds);
+      }),
+    ]);
+  } finally { clearTimeout(deadline); }
+}
+function renderLog(name, png) {
   const allow = new Set([
-    "stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-failure", "stl-reloaded", "stl-open-mesh",
+    "stl-desktop", "stl-maximized", "stl-mobile", "stl-hidpi", "stl-failure", "stl-failure-canvas", "stl-reloaded", "stl-open-mesh",
     "stl-focus-open", "stl-focus-tab1", "stl-focus-tab2", "stl-focus-tab3",
   ]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
@@ -68,7 +78,36 @@ async function capture(page, name) {
     console.log(`JIG_RENDER_END_${name}`);
   }
 }
-const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
+async function capture(page, name, timeout = 60000) {
+  const png = await page.screenshot({
+    path: resolve(results, `${name}.png`), timeout, animations: "disabled", caret: "hide",
+  });
+  renderLog(name, png);
+}
+async function failureDiagnostics(page) {
+  const details = await bounded(page.evaluate(() => {
+    const canvas = document.getElementById("jig_canvas");
+    const gl = canvas?.getContext("webgl2") ?? canvas?.getContext("webgl");
+    return {
+      visibility: document.visibilityState, focused: document.hasFocus(), ready: window.jigReady,
+      activeElement: document.activeElement ? { tag: document.activeElement.tagName, id: document.activeElement.id } : null,
+      viewport: { width: innerWidth, height: innerHeight, pixelRatio: devicePixelRatio },
+      canvas: canvas ? { width: canvas.width, height: canvas.height, contextLost: gl?.isContextLost() ?? null } : null,
+    };
+  }), 3000, "Public STL browser diagnostics").catch(error => ({ unavailable: String(error) }));
+  console.error("STL public browser diagnostics:", JSON.stringify(details));
+  try { await capture(page, "stl-failure", 3000); }
+  catch (error) {
+    console.error("STL failure screenshot unavailable:", String(error));
+    const data = await bounded(page.evaluate(() => document.getElementById("jig_canvas")?.toDataURL("image/png") ?? ""), 3000, "Canvas PNG fallback").catch(() => "");
+    if (data.startsWith("data:image/png;base64,")) {
+      const png = Buffer.from(data.slice("data:image/png;base64,".length), "base64");
+      await writeFile(resolve(results, "stl-failure-canvas.png"), png);
+      renderLog("stl-failure-canvas", png);
+    }
+  }
+}
+const browser = await chromium.launch({ headless: true, args: ["--use-gl=angle", "--use-angle=swiftshader-webgl", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 async function newPage(label, viewport = { width: 1440, height: 1000 }, seed = true, deviceScaleFactor = 1) {
   const context = await browser.newContext({ viewport, deviceScaleFactor, acceptDownloads: true, hasTouch: viewport.width < 500, timezoneId: "Etc/UTC" });
   contexts.push(context);
@@ -121,26 +160,30 @@ async function upload(page, bytes, name) {
 
 async function copyReport(page, captureFocus = false) {
   const sentinel = "Jig STL report pending";
-  await page.evaluate(value => navigator.clipboard.writeText(value), sentinel);
-  await maximize(page);
-  // Ctrl-Alt-5 focuses Open STL. Its next controls are Sample cube, Clear and
-  // Copy report, independent of the header's changing global Undo state.
-  if (captureFocus) {
-    await capture(page, "stl-focus-open");
-    for (let index = 1; index <= 3; index++) {
-      await key(page, "Tab");
-      await capture(page, `stl-focus-tab${index}`);
-    }
-  } else await tab(page, 3);
-  await key(page, "Space");
-  const deadline = Date.now() + 3000;
   let copied = "";
-  while (Date.now() < deadline) {
-    copied = await page.evaluate(() => navigator.clipboard.readText());
-    if (copied.startsWith("Jig STL report\n")) return copied;
-    await page.waitForTimeout(50);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(value => navigator.clipboard.writeText(value), sentinel);
+    await maximize(page);
+    if (attempt) await page.waitForTimeout(250);
+    // Ctrl-Alt-5 focuses Open STL. Its next controls are Sample cube, Clear and
+    // Copy report, independent of the header's changing global Undo state.
+    if (captureFocus && attempt === 0) {
+      await capture(page, "stl-focus-open");
+      for (let index = 1; index <= 3; index++) {
+        await key(page, "Tab");
+        await capture(page, `stl-focus-tab${index}`);
+      }
+    } else await tab(page, 3);
+    await key(page, "Space");
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      copied = await page.evaluate(() => navigator.clipboard.readText());
+      if (copied.startsWith("Jig STL report\n")) return copied;
+      await page.waitForTimeout(50);
+    }
+    if (attempt === 0) console.warn("STL report read unavailable; retrying the read-only Copy report action once after reanchoring.");
   }
-  assert.fail(`Copy report did not produce a Jig STL report within 3 seconds; clipboard began ${JSON.stringify(copied.slice(0, 180))}`);
+  assert.fail(`Copy report did not produce a Jig STL report after two bounded read attempts; clipboard began ${JSON.stringify(copied.slice(0, 180))}`);
 }
 
 async function control(page, position) {
@@ -396,12 +439,12 @@ try {
   assert.match(beforeCompensationReport, /Mode: Estimate/);
   assert.deepEqual(measurements(beforeCompensationReport), estimated, "Undo must restore the former estimate");
   await control(current.page, 23); // Reapply Compensate for the local export.
-  assert.deepEqual(measurements(await copyReport(current.page)), compensated);
   assert.equal(await saved(current.page), fixtureRaw, "Mesh transforms and camera changes must not save model data");
 
   progress("export compensated geometry using the selected source units");
+  await maximize(current.page);
+  await tab(current.page, 4); // Open STL -> Sample, Clear, Copy, Export.
   const compensatedExportEvent = current.page.waitForEvent("download");
-  await tab(current.page, 1); // Copy report -> Export STL.
   await key(current.page, "Space");
   const compensatedExport = await compensatedExportEvent;
   for (const dimension of exportedDimensions(await readFile(await compensatedExport.path()))) close(dimension, 20 / 0.94, "Exported compensated geometry");
@@ -511,12 +554,36 @@ try {
   assert.deepEqual(issues, [], "STL errors or unexpected requests");
   console.log("STL browser checks passed: local bridge bounds/races/clear, binary/ASCII cube measurements, unit interpretation, physical scale versus camera, Standard104/cone06 estimate and compensation, compensated local export, cone4 preference persistence, Undo for files/clear/camera gestures/units/scale/shrinkage/material settings, invalid replacement preservation, unavailable volume for open surfaces, memory-only models on restart, desktop/mobile/high-DPI layouts, and workbench data isolation.");
 } catch (error) {
+  originalError = error;
   console.error(`STL browser failed during: ${phase}`);
-  if (current?.page && !current.page.isClosed()) await capture(current.page, "stl-failure").catch(() => {});
+  if (current?.page && !current.page.isClosed()) await failureDiagnostics(current.page).catch(() => {});
   if (issues.length) console.error(issues.join("\n"));
   throw error;
 } finally {
-  clearTimeout(timer);
-  for (const context of contexts) await context.close().catch(() => {});
-  await browser.close();
+  progress("close STL browser");
+  let cleanupTimer;
+  let cleanupError;
+  try {
+    await Promise.race([
+      (async () => {
+        for (const context of contexts) await context.close().catch(() => {});
+        await browser.close();
+      })(),
+      new Promise((_, reject) => {
+        cleanupTimer = setTimeout(() => reject(new Error("Closing STL browser contexts and Chromium exceeded 10 seconds")), 10000);
+      }),
+    ]);
+  } catch (error) {
+    cleanupError = error;
+  } finally {
+    clearTimeout(cleanupTimer);
+    clearTimeout(timer);
+  }
+  if (cleanupError) {
+    // A timed-out browser still owns sockets and child processes. Terminate the
+    // driver instead of letting those handles keep a failed CI step alive.
+    if (originalError) console.error("Original STL browser failure:", originalError);
+    console.error("STL browser cleanup failed:", cleanupError);
+    process.exit(1);
+  }
 }

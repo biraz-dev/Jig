@@ -53,7 +53,7 @@ async function capture(page, name) {
     console.log(`JIG_RENDER_END_${name}`);
   }
 }
-const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
+const browser = await chromium.launch({ headless: true, args: ["--use-gl=angle", "--use-angle=swiftshader-webgl", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 async function open(label, state = fixture) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true, timezoneId: "Etc/UTC" });
   contexts.push(context);
@@ -331,7 +331,26 @@ try {
   if (current && !current.page.isClosed()) await capture(current.page, "undo-failure").catch(() => {});
   throw error;
 } finally {
-  clearTimeout(timer);
-  for (const context of contexts) await context.close().catch(() => {});
-  await browser.close();
+  progress("close undo contexts and Chromium");
+  let cleanupTimer;
+  let cleanupFailed = false;
+  try {
+    await Promise.race([
+      Promise.all([
+        ...contexts.map(context => context.close().catch(() => {})),
+        browser.close(),
+      ]),
+      new Promise((_, reject) => {
+        cleanupTimer = setTimeout(() => reject(new Error("Undo browser shutdown exceeded 10 seconds")), 10000);
+      }),
+    ]);
+  } catch (error) {
+    cleanupFailed = true;
+    console.error("Undo browser cleanup failed:", error);
+  } finally {
+    clearTimeout(cleanupTimer);
+    clearTimeout(timer);
+  }
+  // A stuck Chromium socket can keep Node alive after a rejected close promise.
+  if (cleanupFailed) process.exit(1);
 }

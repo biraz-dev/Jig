@@ -77,8 +77,12 @@
     const target = event.target;
     const app = target?.id === "jig_canvas" || (target instanceof HTMLInputElement
       && target.type === "text" && !target.id && target.parentElement === document.body);
-    if (!app || !["sheet", "tasks"].includes(workspace)) return;
+    if (!app) return;
     const control = (event.ctrlKey || event.metaKey) && !event.altKey;
+    // egui owns both text-edit undo and Jig's shared Undo. Native historyUndo
+    // can refocus the hidden IME input and replay text from a previous editor.
+    if (control && event.key.toLowerCase() === "z") event.preventDefault();
+    if (!["sheet", "tasks"].includes(workspace)) return;
     if ((control && ["s", "o", "p"].includes(event.key.toLowerCase()))
       || (workspace === "sheet" && ((control && event.key.toLowerCase() === "g")
         || (event.shiftKey && event.key === "F11")

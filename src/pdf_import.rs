@@ -410,10 +410,24 @@ fn bounded_streams(document: &mut Document) -> Result<()> {
 
 /// Imported statements are literal data even when a description begins '='.
 pub fn literal(text: &str) -> String {
-    if text.trim_start().starts_with('=') {
+    if text.starts_with('\'') || text.trim_start().starts_with('=') {
         format!("'{text}")
     } else {
         text.to_owned()
+    }
+}
+
+/// Keep identifiers and reviewed source text as text in the receiving sheet.
+pub fn literal_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if crate::spreadsheet::parse_number(text).is_some()
+        || crate::spreadsheet::parse_date(text).is_some()
+        || trimmed.eq_ignore_ascii_case("TRUE")
+        || trimmed.eq_ignore_ascii_case("FALSE")
+    {
+        format!("'{text}")
+    } else {
+        literal(text)
     }
 }
 

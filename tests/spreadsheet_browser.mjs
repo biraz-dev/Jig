@@ -130,6 +130,9 @@ async function select(page, address) {
   await nameFocus(page);
   await text(page, address);
   await key(page, "Enter");
+  // The same hidden input serves every editor. Wait for the address editor to
+  // close before F2 or later input can be delivered to the previously focused field.
+  await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 5000 });
 }
 async function enter(page, address, value, submit = true) {
   await select(page, address);
@@ -137,7 +140,10 @@ async function enter(page, address, value, submit = true) {
   await key(page, "F2");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
   await text(page, value);
-  if (submit) await key(page, "Enter");
+  if (submit) {
+    await key(page, "Enter");
+    await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 5000 });
+  }
 }
 async function copied(page, address) {
   if (address !== undefined) await select(page, address);

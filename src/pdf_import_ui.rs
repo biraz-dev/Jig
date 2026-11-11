@@ -330,7 +330,7 @@ impl PdfImportPanel {
             rows.push(
                 headers
                     .into_iter()
-                    .map(|text| pdf_import::literal(&text))
+                    .map(|text| pdf_import::literal_text(&text))
                     .collect(),
             );
         }
@@ -345,14 +345,25 @@ impl PdfImportPanel {
             }
             let mut fields: Vec<_> = columns
                 .iter()
-                .map(|(column, _)| pdf_import::literal(&checked.fields[*column]))
+                .map(|(column, role)| {
+                    let source = &row.fields[*column];
+                    let typed = (**role == Role::Date
+                        && pdf_import::parse_date(source, &self.date_order).is_some())
+                        || (role.is_amount()
+                            && pdf_import::parse_amount(source, self.decimal_mark).is_some());
+                    if typed {
+                        pdf_import::literal(&checked.fields[*column])
+                    } else {
+                        pdf_import::literal_text(&checked.fields[*column])
+                    }
+                })
                 .collect();
             if self.source_columns {
                 let page = &self.document.pages[row.page];
                 fields.extend([
-                    pdf_import::literal(&page.name),
+                    pdf_import::literal_text(&page.name),
                     page.page.to_string(),
-                    pdf_import::literal(&row.raw),
+                    pdf_import::literal_text(&row.raw),
                 ]);
             }
             rows.push(fields);

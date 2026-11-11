@@ -5,6 +5,39 @@ use lopdf::{
 };
 use std::io::Write;
 
+#[test]
+fn reviewed_text_preserves_identifiers_quotes_dates_and_boolean_words() {
+    use jig::spreadsheet::{CellAddr, CellValue, Workbook};
+    let originals = [
+        "00123",
+        "'manual",
+        "2026-11-11",
+        "TRUE",
+        "-19.99",
+        "=A1",
+        " 0012 ",
+    ];
+    let rows = originals
+        .iter()
+        .map(|text| vec![pdf_import::literal_text(text)])
+        .collect::<Vec<_>>();
+    let mut book = Workbook::default();
+    book.set_block(1, CellAddr::new(0, 0), &rows).unwrap();
+    let values = book.recalculate();
+    for (row, original) in originals.iter().enumerate() {
+        assert_eq!(
+            values.value(1, CellAddr::new(row, 0)),
+            CellValue::Text((*original).into())
+        );
+    }
+    book.set_cell(1, CellAddr::new(0, 1), &pdf_import::literal("-19.99"))
+        .unwrap();
+    assert_eq!(
+        book.recalculate().value(1, CellAddr::new(0, 1)),
+        CellValue::Number(-19.99)
+    );
+}
+
 fn document(lines: &[&str], pages: usize, oversized_stream: bool) -> Vec<u8> {
     let mut doc = Document::with_version("1.5");
     let page_tree = doc.new_object_id();

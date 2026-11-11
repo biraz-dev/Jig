@@ -17,6 +17,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features web --bin jig-web -- -D warnings
       - name: Install pinned Trunk
         run: |

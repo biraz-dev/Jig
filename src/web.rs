@@ -138,6 +138,7 @@ impl BrowserApp {
         style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(38, 54, 73);
         style.visuals.widgets.active.bg_fill = Color32::from_rgb(43, 66, 90);
         style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+        style.interaction.selectable_labels = false;
         style
             .text_styles
             .insert(egui::TextStyle::Body, FontId::monospace(14.0));
@@ -2720,6 +2721,12 @@ impl eframe::App for BrowserApp {
                 });
                 ctx.request_repaint();
             }
+        }
+        // Static label selection runs after app UI and can overwrite a cell's
+        // clipboard output. Sheet owns selection; TextEdit keeps normal copy.
+        let selectable_labels = !self.sheet_workspace;
+        if ctx.style().interaction.selectable_labels != selectable_labels {
+            ctx.style_mut(|style| style.interaction.selectable_labels = selectable_labels);
         }
         egui::TopBottomPanel::top("jig-header").show(ctx, |ui| self.toolbar(ui));
         egui::TopBottomPanel::bottom("jig-status").show(ctx, |ui| {

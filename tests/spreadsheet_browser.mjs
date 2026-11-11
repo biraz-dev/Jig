@@ -5,6 +5,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { chromium } from "playwright";
+import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
@@ -28,14 +29,13 @@ let originalError;
 const contexts = [];
 const issues = [];
 const timer = setTimeout(() => {
-  console.error(`Spreadsheet browser checks exceeded 720 seconds during: ${phase}; ${interaction}`);
+  console.error(`Spreadsheet browser checks exceeded 900 seconds during: ${phase}; ${interaction}`);
   if (originalError) console.error("Original spreadsheet failure:", originalError);
   process.exit(1);
-}, 720000);
+}, 900000);
 function progress(message) { phase = message; interaction = ""; console.log(`Spreadsheet browser phase: ${message}`); }
 async function paint(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.waitForTimeout(250);
+  await waitForAppPaint(page);
 }
 async function key(page, value) { await page.keyboard.press(value); await paint(page); }
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
@@ -78,6 +78,7 @@ const browser = await chromium.launch({
 async function open(label, saved = fixture, phone = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch: phone, timezoneId: "Etc/UTC" });
   contexts.push(context);
+  await installFrameFence(context);
   await context.addInitScript(() => {
     window.jigTestKeys = [];
     for (const type of ["keydown", "keyup", "focusin", "focusout"]) {

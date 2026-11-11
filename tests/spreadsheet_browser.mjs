@@ -530,7 +530,7 @@ try {
   await key(current.page, "Control+Alt+2");
   await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await key(current.page, "Escape");
-  await tab(current.page, 4); // Data, Undo, Source, then the task workspace's Gantt chart.
+  await tab(current.page, 5); // Data, Undo, Source, dashboard scroll area, then Gantt chart.
   await key(current.page, "Space");
   saved = await state(current.page);
   assert.equal(saved.workbook.charts.length, 2, "Existing tasks must be available as a live Gantt chart from the retained task workspace");

@@ -67,6 +67,17 @@ const browser = await chromium.launch({
 async function open(label, saved = fixture, phone = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch: phone, timezoneId: "Etc/UTC" });
   contexts.push(context);
+  await context.addInitScript(() => {
+    window.jigTestKeys = [];
+    for (const type of ["keydown", "keyup", "focusin", "focusout"]) {
+      document.addEventListener(type, event => {
+        const entry = { type, key: event.key, tag: event.target?.tagName, id: event.target?.id };
+        queueMicrotask(() => { entry.prevented = event.defaultPrevented; });
+        window.jigTestKeys.push(entry);
+        if (window.jigTestKeys.length > 16) window.jigTestKeys.shift();
+      }, true);
+    }
+  });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   if (saved !== null) await context.addInitScript(({ raw, storageKey, origin }) => {
     if (location.origin === origin && sessionStorage.getItem("jig-sheet-seeded") !== "yes") {
@@ -80,7 +91,8 @@ async function open(label, saved = fixture, phone = false) {
     else { issues.push(`${label}: unexpected remote request ${url.origin}${url.pathname}`); await route.abort(); }
   });
   const page = await context.newPage();
-  page.on("pageerror", error => issues.push(`${label}: ${error.message}`));
+  page.on("pageerror", error => { issues.push(`${label}: ${error.message}`); console.error("Sheet page error:", error.message); });
+  page.on("console", message => { if (message.type() === "error") console.error("Sheet browser console:", message.text().slice(0, 3000)); });
   page.setDefaultTimeout(15000);
   await page.clock.setFixedTime(new Date("2026-11-11T12:00:00Z"));
   await boot(page);
@@ -316,6 +328,7 @@ try {
   await key(current.page, "F2");
   await key(current.page, "Escape");
   assert.equal(await raw(current.page), fixtureRaw, "Selecting, opening, and cancelling an empty cell must not migrate older saved data");
+  await capture(current.page, "sheet-desktop", 10000);
 
   progress("edit real cells and recalculate formulas through references and ranges");
   for (const [address, contents] of [["A1", "2"], ["A2", "3"], ["B1", "=SUM(A1:A2)"], ["C1", "=B1*1.5"], ["C2", "=AVERAGE(A1:A2)"], ["C3", "=MIN(A1:A2)+MAX(A1:A2)"], ["D1", "Sample sculpture"], ["B2", "=1/0"]]) await enter(current.page, address, contents);
@@ -323,6 +336,7 @@ try {
   assert.deepEqual(toolsOnly(saved), fixture, "Spreadsheet edits must preserve tasks, deadlines, calendar notes, preferences, history, and the featured countdown");
   assert.equal(saved.workbook.version, 1);
   assert.equal(sheet(saved).cells.B1, "=SUM(A1:A2)", "Formulas must be saved as user-owned source text");
+  console.log("Sheet focus before copying:", await current.page.evaluate(() => ({ tag: document.activeElement?.tagName, id: document.activeElement?.id, focus: document.hasFocus(), keys: window.jigTestKeys })));
   await value(current.page, "B1", 5);
   await value(current.page, "C1", 7.5);
   await value(current.page, "C2", 2.5);
@@ -597,6 +611,15 @@ try {
 } catch (error) {
   originalError = error;
   console.error(`Spreadsheet browser failed during: ${phase}; ${interaction}`);
+  console.error("Sheet application issues:", JSON.stringify(issues));
+  if (current?.page && !current.page.isClosed()) {
+    let deadline;
+    await Promise.race([
+      current.page.evaluate(() => ({ tag: document.activeElement?.tagName, id: document.activeElement?.id, focus: document.hasFocus(), keys: window.jigTestKeys, bootError: window.jigBootError })).then(info => console.error("Sheet focus at failure:", JSON.stringify(info))),
+      new Promise(resolve => { deadline = setTimeout(resolve, 1500); }),
+    ]).catch(() => {});
+    clearTimeout(deadline);
+  }
   if (current?.page && !current.page.isClosed()) await capture(current.page, "sheet-failure", 3000).catch(() => {});
   throw error;
 } finally {

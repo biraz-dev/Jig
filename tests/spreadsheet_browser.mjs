@@ -46,6 +46,17 @@ async function text(page, value) {
   // Text must reach the WASM editor before focus or submission changes.
   await paint(page);
 }
+async function confirmDraft(page, expected) {
+  // A DOM animation frame need not include an egui update on a busy software
+  // renderer. Observe the editor's actual draft before clicking another field;
+  // coalescing typing and that click can deliver both to the new field.
+  await page.evaluate(() => navigator.clipboard.writeText("Jig draft pending"));
+  await key(page, "Control+a");
+  await key(page, "Control+c");
+  await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected,
+    expected, { timeout: 10000, polling: 50 });
+  await key(page, "ArrowRight");
+}
 async function capture(page, name, timeout = 60000) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout, animations: "disabled", caret: "hide" });
   const allowed = new Set(["sheet-desktop", "sheet-mobile", "sheet-edit", "sheet-chart", "sheet-formats", "sheet-import", "sheet-failure"]);
@@ -144,6 +155,8 @@ async function enter(page, address, value, submit = true) {
   if (submit) {
     await key(page, "Enter");
     await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 10000, polling: 50 });
+  } else {
+    await confirmDraft(page, value);
   }
 }
 async function copied(page, address) {
@@ -370,6 +383,7 @@ try {
   await current.page.mouse.click(220, 80); // The visible formula field.
   await paint(current.page);
   await pageTextInput(current.page, "55");
+  await confirmDraft(current.page, "55");
   await key(current.page, "Escape");
   await current.page.waitForFunction(() => document.activeElement?.id === "jig_canvas");
   assert.equal(sheet(await state(current.page)).cells.A10, "22", "Escape must cancel a formula-bar draft");

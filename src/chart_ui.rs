@@ -164,7 +164,7 @@ impl ChartPanel {
                                                     )
                                                 }));
                                         cancel = ui.small_button("Cancel").clicked()
-                                            || (response.has_focus()
+                                            || ((response.has_focus() || response.lost_focus())
                                                 && ui.input_mut(|input| {
                                                     input.consume_key(
                                                         egui::Modifiers::NONE,

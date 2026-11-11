@@ -1238,7 +1238,14 @@ impl SheetPanel {
                         .desired_width(76.0),
                 )
                 .on_hover_text("Go to a cell or range · Ctrl+G");
-            if address.has_focus()
+            let address_escape = (address.has_focus() || address.lost_focus())
+                && ui
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            if address_escape {
+                self.address = range_label(self.selection());
+                self.grid_focus = true;
+                ui.memory_mut(|memory| memory.surrender_focus(id));
+            } else if address.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
             {
                 match parse_range(&self.address) {
@@ -1279,7 +1286,7 @@ impl SheetPanel {
                     self.editing = Some(EditOrigin::Formula);
                     self.error = None;
                 }
-                let escape = response.has_focus()
+                let escape = (response.has_focus() || response.lost_focus())
                     && ui.input_mut(|input| {
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                     });
@@ -1379,7 +1386,7 @@ impl SheetPanel {
                                 horizontal_arrows: true,
                                 vertical_arrows: true,
                                 tab: true,
-                                ..Default::default()
+                                escape: true,
                             },
                         )
                     });
@@ -1492,10 +1499,14 @@ impl SheetPanel {
                         if self.show_gridlines {
                             painter.hline(
                                 cell.x_range(),
-                                cell.bottom(),
-                                Stroke::new(0.5_f32, RULE),
+                                cell.bottom() - 0.5,
+                                Stroke::new(1.0_f32, RULE),
                             );
-                            painter.vline(cell.right(), cell.y_range(), Stroke::new(0.5_f32, RULE));
+                            painter.vline(
+                                cell.right() - 0.5,
+                                cell.y_range(),
+                                Stroke::new(1.0_f32, RULE),
+                            );
                         }
                         let value = self
                             .values
@@ -1623,7 +1634,7 @@ impl SheetPanel {
                             .return_key(None)
                             .font(FontId::monospace(13.0)),
                     );
-                    let escape = response.has_focus()
+                    let escape = (response.has_focus() || response.lost_focus())
                         && ui.input_mut(|input| {
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                         });
@@ -1667,6 +1678,7 @@ impl SheetPanel {
                         );
                     } else if response.lost_focus() {
                         self.commit(actions);
+                        self.grid_focus = false;
                     }
                 }
             });
@@ -1813,7 +1825,7 @@ impl SheetPanel {
                     self.grid_focus = true;
                 }
                 if ui.button("Cancel").clicked()
-                    || response.has_focus()
+                    || (response.has_focus() || response.lost_focus())
                         && ui.input_mut(|input| {
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                         })

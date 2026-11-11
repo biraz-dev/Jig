@@ -349,6 +349,32 @@ try {
   await value(current.page, "C3", 5);
   await value(current.page, "D1", "Sample sculpture");
   await value(current.page, "B2", "#DIV/0!");
+
+  progress("preserve pointer-selected controls and cancel cell/formula drafts with Escape");
+  await enter(current.page, "A10", "11");
+  await enter(current.page, "A10", "22", false);
+  await current.page.mouse.click(40, 80); // The visible address field in the desktop formula bar.
+  await paint(current.page);
+  await text(current.page, "B10");
+  await key(current.page, "Enter");
+  await current.page.waitForFunction(() => document.activeElement?.id === "jig_canvas");
+  assert.equal(sheet(await state(current.page)).cells.A10, "22", "Leaving a cell must commit it while keeping the chosen address control focused");
+  assert.equal(sheet(await state(current.page)).cells.B10, undefined, "Typing a destination address must not become cell content");
+  await enter(current.page, "B10", "33");
+  await enter(current.page, "A10", "44", false);
+  await key(current.page, "Escape");
+  await current.page.waitForFunction(() => document.activeElement?.id === "jig_canvas");
+  assert.equal(sheet(await state(current.page)).cells.A10, "22", "Escape must cancel an in-cell draft");
+  await select(current.page, "A10");
+  await current.page.mouse.click(220, 80); // The visible formula field.
+  await paint(current.page);
+  await pageTextInput(current.page, "55");
+  await key(current.page, "Escape");
+  await current.page.waitForFunction(() => document.activeElement?.id === "jig_canvas");
+  assert.equal(sheet(await state(current.page)).cells.A10, "22", "Escape must cancel a formula-bar draft");
+  await value(current.page, "A10", 22);
+
+  progress("recalculate edits and restore their values with Undo");
   await enter(current.page, "A1", "4");
   await value(current.page, "B1", 7);
   await value(current.page, "C1", 10.5);

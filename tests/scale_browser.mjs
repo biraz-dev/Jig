@@ -183,7 +183,7 @@ async function readReport(page) {
 }
 async function editFocused(page, value) {
   // DragValue already enters text editing when it receives Tab focus.
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await key(page, "Control+a");
   await page.keyboard.type(String(value), { delay: 30 });
   // Commit only after WASM has consumed the selection and final typed digit.

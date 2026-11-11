@@ -136,7 +136,7 @@ async function timeline(page) {
 async function tasks(page) {
   await resetFocus(page);
   await key(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await key(page, "Escape");
   await key(page, "ArrowLeft");
   await key(page, "Control+m");
@@ -179,7 +179,7 @@ async function openFirstRow(page, touch = false) {
   if (touch) await page.touchscreen.tap(x, y);
   else await page.mouse.click(x, y, { delay: 50 });
   await paint(page);
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
 }
 async function assertMilestone(page, firstBar) {
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
@@ -321,7 +321,7 @@ try {
   await timeline(current.page);
   await tab(current.page, 5);
   await key(current.page, "Enter");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await schedule(current.page, "2026-11-02", "2026-10-26");
   const dueOnly = structuredClone(fixture);
   dueOnly.deadlines[0].at = "2026-11-02T18:00:00Z";
@@ -335,7 +335,7 @@ try {
   await timeline(current.page);
   await tab(current.page, 5); // Week, Month, Previous, Next, Today, then first row.
   await key(current.page, "Enter");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   assert.equal(await raw(current.page), beforeOpening, "Opening the inline editor must not edit or star the task");
   await schedule(current.page, "2026-11-02", "2026-10-27", false);
   await capture(current.page, "timeline-edit");
@@ -417,7 +417,7 @@ try {
   assert.equal(await raw(current.page), JSON.stringify(old), "Older records without starts must open unchanged");
   await tab(current.page, 10); // The sixth dated row is the standalone legacy deadline.
   await key(current.page, "Space");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   assert.equal(await raw(current.page), JSON.stringify(old), "Merely opening a legacy deadline editor must not create a linked task");
   await tab(current.page, 4); // Start, Save, Remove date, then Cancel.
   await key(current.page, "Space");
@@ -427,7 +427,7 @@ try {
   await timeline(current.page);
   await tab(current.page, 11); // The seventh row is the ordinary undated task.
   await key(current.page, "Enter");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await schedule(current.page, "2026-11-06", "2026-11-01");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.find(task => task.id === 6).deadline !== undefined, storageKey);
   const scheduled = await state(current.page);

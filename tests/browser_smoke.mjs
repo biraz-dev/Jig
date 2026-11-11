@@ -223,7 +223,7 @@ async function maximizeApplet(page, applet) {
   await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await navigateKey(page, "Escape");
   await navigateKey(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await navigateKey(page, "Escape");
   for (let index = 0; index < (applet === "calendar" ? 2 : 1); index++) {
     await navigateKey(page, "ArrowLeft");
@@ -619,7 +619,7 @@ try {
   await tab(colored.page);
   await capture(colored.page, "task-colors-date-focus");
   await navigateKey(colored.page, "Space");
-  await colored.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await colored.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await colored.page.keyboard.press("Control+a");
   await colored.page.keyboard.type("2026-10-31T18:00:00Z", { delay: 10 });
   await navigateKey(colored.page, "Enter");

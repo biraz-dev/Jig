@@ -108,7 +108,7 @@ async function resetFocus(page) {
 async function calculate(page, expression, expectedLength) {
   await resetFocus(page);
   await key(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await page.keyboard.press("Control+a");
   await page.keyboard.type(expression, { delay: 20 });
   await key(page, "Enter");
@@ -127,7 +127,7 @@ async function undoButton(page) {
 async function tasks(page) {
   await resetFocus(page);
   await key(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await key(page, "Escape");
   await key(page, "ArrowLeft");
   await key(page, "Control+m");
@@ -252,7 +252,7 @@ try {
   assert.equal((await state(current.page)).history.at(-1).result, 1 / 3);
   const beforeTyping = await state(current.page);
   await key(current.page, "Control+Alt+4");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await current.page.keyboard.type("12 + 3", { delay: 30 });
   await key(current.page, "Control+z");
   assert.deepEqual(await state(current.page), beforeTyping, "Ctrl-Z inside an editor must not pop global history");
@@ -279,7 +279,7 @@ try {
   await tasks(current.page);
   await tab(current.page, 6);
   await key(current.page, "Space");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await current.page.keyboard.press("Control+a");
   await current.page.keyboard.type("2030-01-16T18:00:00Z", { delay: 20 });
   await key(current.page, "Enter");
@@ -330,7 +330,7 @@ try {
   assert.match(await readReport(current.page), /Total volume: 1000\.000000 mm³/);
   await stl(current.page);
   await tab(current.page, 17); // Open STL -> physical scale, after projection.
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await current.page.keyboard.press("Control+a");
   await current.page.keyboard.type("200", { delay: 30 });
   await key(current.page, "Enter");

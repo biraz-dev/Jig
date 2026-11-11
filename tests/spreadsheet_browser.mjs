@@ -123,7 +123,8 @@ function toolsOnly(value) { const { workbook, ...tools } = value; return tools; 
 function sheet(value, id = 1) { return value.workbook.sheets.find(item => item.id === id); }
 async function nameFocus(page) {
   await key(page, "Control+g");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  // Native focus can change between software-rendered animation frames.
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
 }
 async function select(page, address) {
   interaction = `select ${address}`;
@@ -132,17 +133,17 @@ async function select(page, address) {
   await key(page, "Enter");
   // The same hidden input serves every editor. Wait for the address editor to
   // close before F2 or later input can be delivered to the previously focused field.
-  await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 5000 });
+  await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 10000, polling: 50 });
 }
 async function enter(page, address, value, submit = true) {
   await select(page, address);
   interaction = `edit ${address}: ${JSON.stringify(value)}`;
   await key(page, "F2");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await text(page, value);
   if (submit) {
     await key(page, "Enter");
-    await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 5000 });
+    await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 10000, polling: 50 });
   }
 }
 async function copied(page, address) {
@@ -292,10 +293,10 @@ async function showCharts(page) {
   await key(page, "Space");
 }
 async function backToCells(page) {
-  // Chart gallery controls follow the existing Data/Undo header controls.
+  // Chart gallery controls follow Data/Undo and the footer Source link.
   await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await key(page, "Escape");
-  await tab(page, 5); // Data, Undo, Save ODS, Export PDF, Back to cells.
+  await tab(page, 6); // Data, Undo, Source, Save ODS, Export PDF, Back to cells.
   await key(page, "Space");
 }
 async function renderedBarWidths(page) {
@@ -514,7 +515,7 @@ try {
   await key(current.page, "Control+Alt+2");
   await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await key(current.page, "Escape");
-  await tab(current.page, 3); // Data, Undo, then the task workspace's Gantt chart.
+  await tab(current.page, 4); // Data, Undo, Source, then the task workspace's Gantt chart.
   await key(current.page, "Space");
   saved = await state(current.page);
   assert.equal(saved.workbook.charts.length, 2, "Existing tasks must be available as a live Gantt chart from the retained task workspace");
@@ -589,23 +590,25 @@ try {
   await importStatementPdf(current.page);
   await expectState(current.page, beforeStatement, "Reading a PDF must preserve the entire workbook until reviewed rows are applied");
   await capture(current.page, "sheet-import");
-  await reviewControl(current.page, 2); // Data, then Cancel import; ODS restore starts a fresh Undo journal.
+  await reviewControl(current.page, 3); // Data, Source, then Cancel import; ODS restore starts a fresh Undo journal.
   await value(current.page, "M1", "");
   await expectState(current.page, beforeStatement, "Cancelling document review must preserve every original record");
   await select(current.page, "M1");
   await importStatementPdf(current.page);
-  await reviewControl(current.page, 14); // Apply reviewed rows, after the review options and Start cell.
+  await reviewControl(current.page, 15); // Apply reviewed rows, including the footer Source tab stop.
   saved = await state(current.page);
   assert.equal(sheet(saved).cells.M1, "Column 1");
   assert.equal(sheet(saved).cells.M2, "11/10/2026");
   assert.equal(sheet(saved).cells.N2, "Sample clay purchase");
-  assert.equal(sheet(saved).cells.O2, "25.40");
+  assert.equal(sheet(saved).cells.O2, "'25.40", "Keep text must preserve the statement amount's exact spelling");
   assert.equal(sheet(saved).cells.N3, "Sample tools");
-  assert.equal(sheet(saved).cells.O3, "-12.50", "Document import must preserve the original transaction signs");
+  assert.equal(sheet(saved).cells.O3, "'-12.50", "Keep text must preserve the original transaction signs and trailing zero");
   assert.equal(sheet(saved).cells.P2, "Sample-transactions.pdf", "Reviewed rows must retain their source filename");
   assert.equal(sheet(saved).cells.Q2, "1", "Reviewed rows must retain their PDF page number");
   assert.equal(sheet(saved).cells.R2, "11/10/2026  Sample clay purchase  25.40");
   assert.deepEqual(toolsOnly(saved), fixture);
+  await value(current.page, "O2", "25.40");
+  await value(current.page, "O3", "-12.50");
   await undo(current.page);
   await expectState(current.page, beforeStatement, "One global Undo must restore all cells and Jig data before a multirow PDF import");
   await current.context.close();
@@ -673,7 +676,7 @@ try {
 }
 
 async function pageTextInput(page, contents) {
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await text(page, contents);
 }
 async function pageImportCsv(page, contents) {

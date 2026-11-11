@@ -221,7 +221,7 @@ async function setScale(page, percent) {
   await tab(page, 17); // Physical scale, after the view projection toggle.
   // DragValue enters its text editor on Tab focus. Enter would commit and close
   // it before typing; wait for that real editor instead, then commit once below.
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await page.keyboard.press("Control+a");
   await page.keyboard.type(String(percent), { delay: 30 });
   await key(page, "Enter");

@@ -274,7 +274,7 @@ async function setZPercent(page, percent) {
   // Default Linked is on. Turn it off, then edit the Z total percentage.
   await key(page, "Space");
   await tab(page, 3);
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 3000 });
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await page.keyboard.press("Control+a");
   await page.keyboard.type(String(percent), { delay: 30 });
   await key(page, "Enter");

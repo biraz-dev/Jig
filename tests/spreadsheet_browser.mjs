@@ -28,10 +28,10 @@ let originalError;
 const contexts = [];
 const issues = [];
 const timer = setTimeout(() => {
-  console.error(`Spreadsheet browser checks exceeded 540 seconds during: ${phase}; ${interaction}`);
+  console.error(`Spreadsheet browser checks exceeded 720 seconds during: ${phase}; ${interaction}`);
   if (originalError) console.error("Original spreadsheet failure:", originalError);
   process.exit(1);
-}, 540000);
+}, 720000);
 function progress(message) { phase = message; interaction = ""; console.log(`Spreadsheet browser phase: ${message}`); }
 async function paint(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));

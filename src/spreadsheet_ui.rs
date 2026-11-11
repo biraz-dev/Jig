@@ -626,7 +626,6 @@ impl SheetPanel {
         {
             return;
         }
-        let shift = ui.input(|input| input.modifiers.shift);
         for (key, dr, dc) in [
             (egui::Key::ArrowUp, -1, 0),
             (egui::Key::ArrowDown, 1, 0),
@@ -635,17 +634,11 @@ impl SheetPanel {
             (egui::Key::PageUp, -15, 0),
             (egui::Key::PageDown, 15, 0),
         ] {
-            if ui.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, key)
-                    || input.consume_key(egui::Modifiers::SHIFT, key)
-            }) {
+            if let Some(shift) = consume_shift_key(ui, key) {
                 self.navigate(book, dr, dc, shift);
             }
         }
-        if ui.input_mut(|input| {
-            input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
-                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab)
-        }) {
+        if let Some(shift) = consume_shift_key(ui, egui::Key::Tab) {
             self.navigate(book, 0, if shift { -1 } else { 1 }, false);
         }
         if ui.input_mut(|input| {
@@ -1414,7 +1407,21 @@ impl SheetPanel {
                 if response.clicked() || response.double_clicked() || response.drag_started() {
                     if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
                         self.commit(actions);
-                        let extend = ui.input(|input| input.modifiers.shift);
+                        let extend = ui.input(|input| {
+                            input
+                                .events
+                                .iter()
+                                .rev()
+                                .find_map(|event| match event {
+                                    egui::Event::PointerButton {
+                                        button: egui::PointerButton::Primary,
+                                        modifiers,
+                                        ..
+                                    } => Some(modifiers.shift),
+                                    _ => None,
+                                })
+                                .unwrap_or(input.modifiers.shift)
+                        });
                         if pointer.y < body.top() && pointer.x >= body.left() {
                             let col = ((pointer.x - rect.left() - ROW_HEAD) / COL_WIDTH)
                                 .floor()
@@ -1638,42 +1645,23 @@ impl SheetPanel {
                         && ui.input_mut(|input| {
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                         });
-                    let shift = ui.input(|input| input.modifiers.shift);
-                    let enter = response.has_focus()
-                        && ui.input_mut(|input| {
-                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter)
-                        });
-                    let tab = response.has_focus()
-                        && ui.input_mut(|input| {
-                            input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
-                                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab)
-                        });
+                    let enter = response
+                        .has_focus()
+                        .then(|| consume_shift_key(ui, egui::Key::Enter))
+                        .flatten();
+                    let tab = response
+                        .has_focus()
+                        .then(|| consume_shift_key(ui, egui::Key::Tab))
+                        .flatten();
                     if escape {
                         self.cancel_edit();
                         ui.memory_mut(|memory| memory.surrender_focus(editor));
-                    } else if enter || tab {
+                    } else if enter.is_some() || tab.is_some() {
                         self.commit(actions);
                         self.navigate(
                             book,
-                            if enter {
-                                if shift {
-                                    -1
-                                } else {
-                                    1
-                                }
-                            } else {
-                                0
-                            },
-                            if tab {
-                                if shift {
-                                    -1
-                                } else {
-                                    1
-                                }
-                            } else {
-                                0
-                            },
+                            enter.map_or(0, |shift| if shift { -1 } else { 1 }),
+                            tab.map_or(0, |shift| if shift { -1 } else { 1 }),
                             false,
                         );
                     } else if response.lost_focus() {
@@ -1981,6 +1969,34 @@ impl SheetPanel {
         }
         spreadsheet::parse_delimited(text, '\t')
     }
+}
+
+// Use the modifier captured with the key press. Shift may already be released
+// by the time a browser frame processes its queued keyboard events.
+fn consume_shift_key(ui: &Ui, key: egui::Key) -> Option<bool> {
+    ui.input_mut(|input| {
+        let shift = input.events.iter().find_map(|event| match event {
+            egui::Event::Key {
+                key: pressed,
+                pressed: true,
+                modifiers,
+                ..
+            } if *pressed == key && !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
+                Some(modifiers.shift)
+            }
+            _ => None,
+        })?;
+        input
+            .consume_key(
+                if shift {
+                    egui::Modifiers::SHIFT
+                } else {
+                    egui::Modifiers::NONE
+                },
+                key,
+            )
+            .then_some(shift)
+    })
 }
 
 fn font_label(font: CellFont) -> &'static str {

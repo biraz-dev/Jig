@@ -14,6 +14,18 @@ mod stl_ui;
 mod timeline_ui;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../spreadsheet_ui.rs"]
+mod spreadsheet_ui;
+
+#[cfg(target_arch = "wasm32")]
+#[path = "../chart_ui.rs"]
+mod chart_ui;
+
+#[cfg(target_arch = "wasm32")]
+#[path = "../pdf_import_ui.rs"]
+mod pdf_import_ui;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../weather_client.rs"]
 mod weather_client;
 #[cfg(target_arch = "wasm32")]

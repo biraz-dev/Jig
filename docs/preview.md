@@ -1,6 +1,13 @@
 # Browser development preview
 
-The egui/eframe browser dashboard now uses the same Rust calculator, length,
+The egui/eframe browser application opens a dark spreadsheet workspace, with
+named tabs, formulas, formatting and charts. The top bar switches to the existing
+Tasks and Workbench views. Tasks and task Gantt charts read the same records;
+they are never copied into a second task store. ODS is the portable document,
+CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
+[spreadsheet guide](../README.md#spreadsheet) for controls and limits.
+
+The Workbench dashboard uses the same Rust calculator, length,
 task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows
 the approved dark terminal aesthetic with a compact featured countdown, one
 checklist of tasks with optional dates, a small month grid and a shared math

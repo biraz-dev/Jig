@@ -1,0 +1,2040 @@
+//! Spreadsheet presentation only. Workbook values and formulas live in the core.
+use chrono::{Local, NaiveDate};
+use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
+use jig::{
+    charts::{ChartKind, ChartSource},
+    sheet_formula,
+    spreadsheet::{
+        self, BorderPreset, CellAddr, CellFont, CellRange, CellStyle, CellValue, Evaluation,
+        NumberFormat, StylePatch, Workbook, MAX_COLS, MAX_ROWS, MAX_SHEETS,
+    },
+};
+
+const BG: Color32 = Color32::from_rgb(12, 19, 27);
+const HEADER: Color32 = Color32::from_rgb(17, 27, 39);
+const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
+const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
+const PINK: Color32 = Color32::from_rgb(234, 133, 173);
+const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
+const RULE: Color32 = Color32::from_rgb(36, 49, 64);
+const SELECTED: Color32 = Color32::from_rgb(27, 46, 64);
+const COL_WIDTH: f32 = 112.0;
+const ROW_HEIGHT: f32 = 27.0;
+const ROW_HEAD: f32 = 44.0;
+const COL_HEAD: f32 = 25.0;
+
+#[derive(Clone, Debug)]
+pub enum SheetAction {
+    SetCell {
+        sheet: u64,
+        addr: CellAddr,
+        raw: String,
+    },
+    SetBlock {
+        sheet: u64,
+        origin: CellAddr,
+        rows: Vec<Vec<String>>,
+    },
+    Clear {
+        sheet: u64,
+        range: CellRange,
+    },
+    AddSheet(String),
+    RenameSheet {
+        sheet: u64,
+        name: String,
+    },
+    RemoveSheet(u64),
+    ImportCsv(u64),
+    ExportCsv(u64),
+    Decimals(usize),
+    PatchStyle {
+        sheet: u64,
+        range: CellRange,
+        patch: StylePatch,
+    },
+    SetBorders {
+        sheet: u64,
+        range: CellRange,
+        preset: BorderPreset,
+    },
+    InsertRows {
+        sheet: u64,
+        at: usize,
+        count: usize,
+    },
+    DeleteRows {
+        sheet: u64,
+        at: usize,
+        count: usize,
+    },
+    InsertColumns {
+        sheet: u64,
+        at: usize,
+        count: usize,
+    },
+    DeleteColumns {
+        sheet: u64,
+        at: usize,
+        count: usize,
+    },
+    Merge {
+        sheet: u64,
+        range: CellRange,
+    },
+    Unmerge {
+        sheet: u64,
+        range: CellRange,
+    },
+    OpenOds,
+    SaveOds,
+    ExportPdf(u64),
+    ImportPdf(u64),
+    ImportJson,
+    ExportJson,
+    PasteClipboard {
+        sheet: u64,
+        origin: CellAddr,
+    },
+    AddChart {
+        kind: ChartKind,
+        source: ChartSource,
+        title: String,
+    },
+    ShowCharts,
+    ShowTasks,
+    ShowWorkbench,
+    Undo,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum EditOrigin {
+    Cell,
+    Formula,
+}
+
+struct CopiedCells {
+    text: String,
+    origin: CellAddr,
+    rows: Vec<Vec<String>>,
+}
+
+/// Selection, text drafts and cached results are transient. The application
+/// applies returned actions through its ordinary safe-save and Undo journal.
+pub struct SheetPanel {
+    active: u64,
+    cursor: CellAddr,
+    anchor: CellAddr,
+    address: String,
+    goto_focus: bool,
+    grid_focus: bool,
+    reveal: bool,
+    tab_reveal: bool,
+    draft: String,
+    original: String,
+    editing: Option<EditOrigin>,
+    editor_focus: bool,
+    renaming: bool,
+    rename_focus: bool,
+    name: String,
+    confirm_delete: bool,
+    delete_focus: bool,
+    pending_add: Option<usize>,
+    values: Option<Evaluation>,
+    copied: Option<CopiedCells>,
+    error: Option<String>,
+    row_offsets: Vec<f32>,
+    metrics_sheet: u64,
+    expanded_selection: CellRange,
+    pending_copy: bool,
+    color_menu_key: Option<(u64, CellAddr, CellAddr, bool)>,
+    text_color_draft: [u8; 3],
+    fill_color_draft: [u8; 3],
+    show_gridlines: bool,
+    calculated_day: Option<NaiveDate>,
+}
+
+impl Default for SheetPanel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SheetPanel {
+    pub fn new() -> Self {
+        Self {
+            active: 1,
+            cursor: CellAddr::new(0, 0),
+            anchor: CellAddr::new(0, 0),
+            address: "A1".into(),
+            goto_focus: false,
+            grid_focus: true,
+            reveal: true,
+            tab_reveal: true,
+            draft: String::new(),
+            original: String::new(),
+            editing: None,
+            editor_focus: false,
+            renaming: false,
+            rename_focus: false,
+            name: String::new(),
+            confirm_delete: false,
+            delete_focus: false,
+            pending_add: None,
+            values: None,
+            copied: None,
+            error: None,
+            row_offsets: (0..=MAX_ROWS).map(|row| row as f32 * ROW_HEIGHT).collect(),
+            metrics_sheet: 0,
+            expanded_selection: CellRange::new(CellAddr::new(0, 0), CellAddr::new(0, 0)),
+            pending_copy: false,
+            color_menu_key: None,
+            text_color_draft: [246, 218, 174],
+            fill_color_draft: [12, 19, 27],
+            show_gridlines: true,
+            calculated_day: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    pub fn invalidate(&mut self) {
+        self.values = None;
+        self.metrics_sheet = 0;
+        self.color_menu_key = None;
+    }
+
+    pub fn restore_data(&mut self) {
+        self.editing = None;
+        self.editor_focus = false;
+        self.renaming = false;
+        self.confirm_delete = false;
+        self.pending_add = None;
+        self.invalidate();
+        self.error = None;
+        self.grid_focus = true;
+    }
+
+    pub fn request_focus(&mut self) {
+        self.grid_focus = true;
+        self.reveal = true;
+    }
+
+    pub fn active_sheet(&self) -> u64 {
+        self.active
+    }
+
+    pub fn activate(&mut self, sheet: u64) {
+        self.active = sheet;
+        self.cursor = CellAddr::new(0, 0);
+        self.anchor = self.cursor;
+        self.expanded_selection = CellRange::new(self.cursor, self.cursor);
+        self.address = "A1".into();
+        self.draft.clear();
+        self.original.clear();
+        self.restore_data();
+        self.invalidate();
+        self.reveal = true;
+        self.tab_reveal = true;
+    }
+
+    pub fn selection(&self) -> CellRange {
+        self.expanded_selection
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.editing.is_some()
+    }
+
+    pub fn commit_pending(&mut self) -> Option<SheetAction> {
+        self.editing.take()?;
+        self.editor_focus = false;
+        self.grid_focus = true;
+        if self.draft == self.original {
+            return None;
+        }
+        let action = SheetAction::SetCell {
+            sheet: self.active,
+            addr: self.cursor,
+            raw: self.draft.clone(),
+        };
+        Some(action)
+    }
+
+    pub fn reject_action(&mut self, action: &SheetAction, error: String) {
+        self.error = Some(error);
+        self.pending_copy = false;
+        if let SheetAction::SetCell { sheet, addr, raw } = action {
+            self.active = *sheet;
+            self.cursor = *addr;
+            self.anchor = *addr;
+            self.draft = raw.clone();
+            self.editing = Some(EditOrigin::Cell);
+            self.editor_focus = true;
+            self.grid_focus = false;
+            self.reveal = true;
+        } else if let SheetAction::RenameSheet { sheet, name } = action {
+            self.active = *sheet;
+            self.name = name.clone();
+            self.renaming = true;
+            self.rename_focus = true;
+            self.grid_focus = false;
+        }
+    }
+
+    fn grid_id(&self) -> egui::Id {
+        egui::Id::new(("spreadsheet-grid", self.active))
+    }
+
+    fn editor_id(&self) -> egui::Id {
+        egui::Id::new(("spreadsheet-cell-input", self.active, self.cursor))
+    }
+
+    fn begin_edit(&mut self, book: &Workbook, origin: EditOrigin, replacement: Option<String>) {
+        self.original = book.raw(self.active, self.cursor).to_owned();
+        self.draft = replacement.unwrap_or_else(|| self.original.clone());
+        self.editing = Some(origin);
+        self.editor_focus = true;
+        self.grid_focus = false;
+        self.reveal = true;
+        self.error = None;
+    }
+
+    fn cancel_edit(&mut self) {
+        self.draft = self.original.clone();
+        self.editing = None;
+        self.editor_focus = false;
+        self.grid_focus = true;
+        self.error = None;
+    }
+
+    fn select(&mut self, addr: CellAddr, extend: bool) {
+        self.cursor = addr;
+        if !extend {
+            self.anchor = addr;
+        }
+        self.expanded_selection = CellRange::new(self.anchor, self.cursor);
+        self.address = range_label(self.selection());
+        self.reveal = true;
+        self.grid_focus = true;
+    }
+
+    fn navigate(&mut self, book: &Workbook, row_delta: i32, col_delta: i32, extend: bool) {
+        let merged = book.merge_at(self.active, self.cursor);
+        let base_row = merged.map_or(self.cursor.row, |range| {
+            if row_delta > 0 {
+                range.end.row
+            } else {
+                range.start.row
+            }
+        });
+        let base_col = merged.map_or(self.cursor.col, |range| {
+            if col_delta > 0 {
+                range.end.col
+            } else {
+                range.start.col
+            }
+        });
+        let row = (base_row as i32 + row_delta).clamp(0, MAX_ROWS as i32 - 1) as usize;
+        let col = (base_col as i32 + col_delta).clamp(0, MAX_COLS as i32 - 1) as usize;
+        self.select(CellAddr::new(row, col), extend);
+    }
+
+    fn sync_selection(&mut self, book: &Workbook) {
+        if let Some(merged) = book.merge_at(self.active, self.cursor) {
+            self.cursor = merged.start;
+        }
+        if let Some(merged) = book.merge_at(self.active, self.anchor) {
+            self.anchor = merged.start;
+        }
+        let mut range = CellRange::new(self.anchor, self.cursor);
+        if let Some(sheet) = book.sheet(self.active) {
+            loop {
+                let previous = range;
+                for merge in &sheet.merges {
+                    if ranges_intersect(range, *merge) {
+                        range = CellRange::new(
+                            CellAddr::new(
+                                range.start.row.min(merge.start.row),
+                                range.start.col.min(merge.start.col),
+                            ),
+                            CellAddr::new(
+                                range.end.row.max(merge.end.row),
+                                range.end.col.max(merge.end.col),
+                            ),
+                        );
+                    }
+                }
+                if range == previous {
+                    break;
+                }
+            }
+        }
+        self.expanded_selection = range;
+    }
+
+    fn geometry(&mut self, book: &Workbook) {
+        if self.metrics_sheet == self.active {
+            return;
+        }
+        let mut heights = vec![ROW_HEIGHT; MAX_ROWS];
+        if let Some(sheet) = book.sheet(self.active) {
+            for (address, style) in &sheet.styles {
+                if let Ok(addr) = CellAddr::parse(address) {
+                    heights[addr.row] = heights[addr.row].max(f32::from(style.font_size) + 10.0);
+                }
+            }
+        }
+        self.row_offsets.clear();
+        self.row_offsets.push(0.0);
+        for height in heights {
+            self.row_offsets
+                .push(self.row_offsets.last().copied().unwrap_or(0.0) + height);
+        }
+        self.metrics_sheet = self.active;
+    }
+
+    fn row_at(&self, y: f32) -> usize {
+        self.row_offsets
+            .partition_point(|offset| *offset <= y.max(0.0))
+            .saturating_sub(1)
+            .min(MAX_ROWS - 1)
+    }
+
+    fn cell_rect(&self, rect: egui::Rect, addr: CellAddr) -> egui::Rect {
+        egui::Rect::from_min_size(
+            rect.min
+                + egui::vec2(
+                    ROW_HEAD + addr.col as f32 * COL_WIDTH,
+                    COL_HEAD + self.row_offsets[addr.row],
+                ),
+            egui::vec2(
+                COL_WIDTH,
+                self.row_offsets[addr.row + 1] - self.row_offsets[addr.row],
+            ),
+        )
+    }
+
+    fn span_rect(&self, rect: egui::Rect, range: CellRange) -> egui::Rect {
+        self.cell_rect(rect, range.start)
+            .union(self.cell_rect(rect, range.end))
+    }
+
+    fn address_at(&self, rect: egui::Rect, pointer: egui::Pos2) -> CellAddr {
+        CellAddr::new(
+            self.row_at(pointer.y - rect.top() - COL_HEAD),
+            ((pointer.x - rect.left() - ROW_HEAD) / COL_WIDTH)
+                .floor()
+                .clamp(0.0, MAX_COLS as f32 - 1.0) as usize,
+        )
+    }
+
+    fn commit(&mut self, actions: &mut Vec<SheetAction>) {
+        if let Some(action) = self.commit_pending() {
+            actions.push(action);
+        }
+    }
+
+    fn switch_sheet(&mut self, id: u64, actions: &mut Vec<SheetAction>) {
+        if self.active == id {
+            return;
+        }
+        self.commit(actions);
+        self.active = id;
+        self.tab_reveal = true;
+        self.cursor = CellAddr::new(0, 0);
+        self.anchor = self.cursor;
+        self.address = "A1".into();
+        self.renaming = false;
+        self.confirm_delete = false;
+        self.grid_focus = true;
+        self.reveal = true;
+        self.error = None;
+    }
+
+    fn new_sheet(&mut self, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        if book.sheets.len() >= MAX_SHEETS {
+            self.error = Some(format!("A workbook can have at most {MAX_SHEETS} sheets"));
+            return;
+        }
+        self.commit(actions);
+        let mut number = book.sheets.len() + 1;
+        let name = loop {
+            let name = format!("Sheet {number}");
+            if !book
+                .sheets
+                .iter()
+                .any(|sheet| sheet.name.eq_ignore_ascii_case(&name))
+            {
+                break name;
+            }
+            number += 1;
+        };
+        self.pending_add = Some(book.sheets.len());
+        actions.push(SheetAction::AddSheet(name));
+    }
+
+    pub fn ui(&mut self, ui: &mut Ui, book: &Workbook, decimals: usize) -> Vec<SheetAction> {
+        let mut actions = Vec::new();
+        if let Some(previous) = self.pending_add.take() {
+            if book.sheets.len() > previous {
+                if let Some(sheet) = book.sheets.last() {
+                    self.switch_sheet(sheet.id, &mut actions);
+                }
+            }
+        }
+        if book.sheet(self.active).is_none() {
+            if let Some(first) = book.sheets.first() {
+                self.active = first.id;
+                self.tab_reveal = true;
+                self.cursor = CellAddr::new(0, 0);
+                self.anchor = self.cursor;
+                self.address = "A1".into();
+                self.editing = None;
+                self.grid_focus = true;
+                self.reveal = true;
+            }
+        }
+        let today = Local::now().date_naive();
+        if self.values.is_none() || self.calculated_day != Some(today) {
+            self.values = Some(book.recalculate_at(today));
+            self.calculated_day = Some(today);
+        }
+        self.geometry(book);
+        self.sync_selection(book);
+        if self.pending_copy {
+            self.pending_copy = false;
+            self.copy(ui, book);
+        }
+        if self.editing.is_none() {
+            self.draft = book.raw(self.active, self.cursor).to_owned();
+        }
+        self.keyboard(ui, book, &mut actions);
+        self.geometry(book);
+        self.sync_selection(book);
+        self.menus(ui, book, &mut actions);
+        self.formula_bar(ui, book, &mut actions);
+        self.commands(ui, book, &mut actions);
+        self.format_toolbar(ui, book, &mut actions);
+        if let Some(error) = &self.error {
+            ui.label(RichText::new(error).color(PINK).size(11.0));
+        }
+        let reserve = if self.renaming || self.confirm_delete {
+            98.0
+        } else {
+            60.0
+        };
+        let height = (ui.available_height() - reserve).max(150.0);
+        self.grid(ui, book, decimals, height, &mut actions);
+        self.tabs(ui, book, &mut actions);
+        self.summary(ui, decimals, &mut actions);
+        actions
+    }
+
+    fn keyboard(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        if ui.memory(|memory| memory.any_popup_open()) {
+            return;
+        }
+        if !self.renaming {
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::F11)) {
+                self.new_sheet(book, actions);
+                return;
+            }
+            let previous =
+                ui.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::PageUp));
+            let next =
+                ui.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::PageDown));
+            if previous || next {
+                if let Some(index) = book.sheets.iter().position(|sheet| sheet.id == self.active) {
+                    let len = book.sheets.len();
+                    let next = (index + if previous { len - 1 } else { 1 }) % len;
+                    self.switch_sheet(book.sheets[next].id, actions);
+                    ui.ctx().request_repaint();
+                }
+                return;
+            }
+        }
+        if !self.renaming
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::G))
+        {
+            self.commit(actions);
+            self.goto_focus = true;
+            self.grid_focus = false;
+            self.address = range_label(self.selection());
+            ui.ctx().request_repaint();
+            return;
+        }
+        let focused = ui.memory(|memory| memory.has_focus(self.grid_id()));
+        if !focused || self.editing.is_some() || self.renaming || self.confirm_delete {
+            return;
+        }
+        let copied = ui.input_mut(|input| {
+            let copied = input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Copy));
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::Copy));
+            copied || input.consume_key(egui::Modifiers::CTRL, egui::Key::C)
+        });
+        if copied {
+            self.copy(ui, book);
+        }
+        let pasted = ui.input_mut(|input| {
+            let mut pasted = None;
+            input.events.retain(|event| {
+                if let egui::Event::Paste(text) = event {
+                    pasted = Some(text.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            pasted
+        });
+        if let Some(text) = pasted {
+            match self.paste(&text) {
+                Ok(rows) => actions.push(SheetAction::SetBlock {
+                    sheet: self.active,
+                    origin: self.selection().start,
+                    rows,
+                }),
+                Err(error) => self.error = Some(error),
+            }
+        }
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::A)) {
+            let used = book
+                .used_range(self.active)
+                .unwrap_or_else(|| CellRange::new(CellAddr::new(0, 0), CellAddr::new(0, 0)));
+            self.anchor = used.end;
+            self.cursor = used.start;
+            self.address = range_label(used);
+        }
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Home)) {
+            self.select(CellAddr::new(0, 0), false);
+        }
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::End)) {
+            let addr = book
+                .used_range(self.active)
+                .map_or(self.cursor, |range| range.end);
+            self.select(addr, false);
+        }
+        if ui.input(|input| input.modifiers.ctrl || input.modifiers.alt || input.modifiers.command)
+        {
+            return;
+        }
+        let shift = ui.input(|input| input.modifiers.shift);
+        for (key, dr, dc) in [
+            (egui::Key::ArrowUp, -1, 0),
+            (egui::Key::ArrowDown, 1, 0),
+            (egui::Key::ArrowLeft, 0, -1),
+            (egui::Key::ArrowRight, 0, 1),
+            (egui::Key::PageUp, -15, 0),
+            (egui::Key::PageDown, 15, 0),
+        ] {
+            if ui.input_mut(|input| {
+                input.consume_key(egui::Modifiers::NONE, key)
+                    || input.consume_key(egui::Modifiers::SHIFT, key)
+            }) {
+                self.navigate(book, dr, dc, shift);
+            }
+        }
+        if ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab)
+        }) {
+            self.navigate(book, 0, if shift { -1 } else { 1 }, false);
+        }
+        if ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+        }) {
+            actions.push(SheetAction::Clear {
+                sheet: self.active,
+                range: self.selection(),
+            });
+        }
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.anchor = self.cursor;
+            self.address = self.cursor.label();
+            self.error = None;
+        }
+        let edit = ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::F2)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+        });
+        if edit {
+            self.begin_edit(book, EditOrigin::Cell, None);
+            ui.ctx().request_repaint();
+            return;
+        }
+        let text = ui.input_mut(|input| {
+            if input.modifiers.ctrl || input.modifiers.alt || input.modifiers.command {
+                return None;
+            }
+            let mut text = String::new();
+            input.events.retain(|event| {
+                if let egui::Event::Text(value) = event {
+                    text.push_str(value);
+                    false
+                } else {
+                    true
+                }
+            });
+            (!text.is_empty()).then_some(text)
+        });
+        if let Some(text) = text {
+            self.begin_edit(book, EditOrigin::Cell, Some(text));
+            ui.ctx().request_repaint();
+        }
+    }
+
+    fn queue(&mut self, actions: &mut Vec<SheetAction>, action: SheetAction) {
+        self.commit(actions);
+        actions.push(action);
+    }
+
+    fn menu_action(
+        &mut self,
+        ui: &mut Ui,
+        actions: &mut Vec<SheetAction>,
+        label: &str,
+        action: SheetAction,
+    ) {
+        if ui.button(label).clicked() {
+            self.queue(actions, action);
+            ui.close_menu();
+        }
+    }
+
+    fn patch(&mut self, actions: &mut Vec<SheetAction>, patch: StylePatch) {
+        self.queue(
+            actions,
+            SheetAction::PatchStyle {
+                sheet: self.active,
+                range: self.selection(),
+                patch,
+            },
+        );
+    }
+
+    fn menus(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        egui::menu::bar(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                self.menu_action(ui, actions, "Open ODS…", SheetAction::OpenOds);
+                self.menu_action(ui, actions, "Save ODS", SheetAction::SaveOds);
+                ui.separator();
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Import PDF or image…",
+                    SheetAction::ImportPdf(self.active),
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Export PDF",
+                    SheetAction::ExportPdf(self.active),
+                );
+                ui.separator();
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Import CSV…",
+                    SheetAction::ImportCsv(self.active),
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Export CSV values",
+                    SheetAction::ExportCsv(self.active),
+                );
+                ui.separator();
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Open Jig JSON backup…",
+                    SheetAction::ImportJson,
+                );
+                self.menu_action(ui, actions, "Save Jig JSON backup", SheetAction::ExportJson);
+            });
+            ui.menu_button("Edit", |ui| {
+                self.menu_action(ui, actions, "Undo     Ctrl+Z", SheetAction::Undo);
+                ui.separator();
+                if ui.button("Copy cells     Ctrl+C").clicked() {
+                    self.commit(actions);
+                    self.pending_copy = true;
+                    ui.ctx().request_repaint();
+                    ui.close_menu();
+                }
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Paste cells     Ctrl+V",
+                    SheetAction::PasteClipboard {
+                        sheet: self.active,
+                        origin: self.selection().start,
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Clear contents     Delete",
+                    SheetAction::Clear {
+                        sheet: self.active,
+                        range: self.selection(),
+                    },
+                );
+                ui.separator();
+                if ui.button("Go to cell or range…     Ctrl+G").clicked() {
+                    self.commit(actions);
+                    self.goto_focus = true;
+                    self.grid_focus = false;
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Format", |ui| {
+                let style = book.style(self.active, self.cursor);
+                ui.menu_button("Font", |ui| self.font_choices(ui, &style, actions));
+                ui.menu_button("Font size", |ui| self.size_choices(ui, &style, actions));
+                if ui.selectable_label(style.bold, "Bold").clicked() {
+                    self.patch(
+                        actions,
+                        StylePatch {
+                            bold: Some(!style.bold),
+                            ..Default::default()
+                        },
+                    );
+                    ui.close_menu();
+                }
+                if ui.selectable_label(style.italic, "Italic").clicked() {
+                    self.patch(
+                        actions,
+                        StylePatch {
+                            italic: Some(!style.italic),
+                            ..Default::default()
+                        },
+                    );
+                    ui.close_menu();
+                }
+                if ui.selectable_label(style.underline, "Underline").clicked() {
+                    self.patch(
+                        actions,
+                        StylePatch {
+                            underline: Some(!style.underline),
+                            ..Default::default()
+                        },
+                    );
+                    ui.close_menu();
+                }
+                ui.separator();
+                ui.menu_button("Number format", |ui| {
+                    self.number_choices(ui, &style, actions)
+                });
+                self.color_menu(ui, "Text color", false, &style, actions);
+                self.color_menu(ui, "Fill color", true, &style, actions);
+                ui.menu_button("Borders", |ui| self.border_choices(ui, actions));
+                ui.separator();
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Merge cells",
+                    SheetAction::Merge {
+                        sheet: self.active,
+                        range: self.selection(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Unmerge cells",
+                    SheetAction::Unmerge {
+                        sheet: self.active,
+                        range: self.selection(),
+                    },
+                );
+                if ui.button("Clear formatting").clicked() {
+                    self.patch(
+                        actions,
+                        StylePatch {
+                            font_family: Some(CellFont::Mono),
+                            font_size: Some(13),
+                            bold: Some(false),
+                            italic: Some(false),
+                            underline: Some(false),
+                            text_color: Some(None),
+                            fill_color: Some(None),
+                            borders: Some(spreadsheet::CellBorders::none()),
+                            number_format: Some(NumberFormat::General),
+                        },
+                    );
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Insert", |ui| {
+                let range = self.selection();
+                let sheet = self.active;
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Rows above",
+                    SheetAction::InsertRows {
+                        sheet,
+                        at: range.start.row,
+                        count: range.rows(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Columns before",
+                    SheetAction::InsertColumns {
+                        sheet,
+                        at: range.start.col,
+                        count: range.cols(),
+                    },
+                );
+                ui.separator();
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Delete selected rows",
+                    SheetAction::DeleteRows {
+                        sheet,
+                        at: range.start.row,
+                        count: range.rows(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Delete selected columns",
+                    SheetAction::DeleteColumns {
+                        sheet,
+                        at: range.start.col,
+                        count: range.cols(),
+                    },
+                );
+                ui.separator();
+                let source_range = if range.start == range.end {
+                    book.used_range(self.active).unwrap_or(range)
+                } else {
+                    range
+                };
+                let source = ChartSource::Range {
+                    sheet,
+                    range: source_range,
+                };
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Pie chart · labels and values",
+                    SheetAction::AddChart {
+                        kind: ChartKind::Pie,
+                        source,
+                        title: "Pie chart".into(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Bar chart · labels and values",
+                    SheetAction::AddChart {
+                        kind: ChartKind::Bar,
+                        source,
+                        title: "Bar chart".into(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Gantt chart · labels, starts and due dates",
+                    SheetAction::AddChart {
+                        kind: ChartKind::Gantt,
+                        source,
+                        title: "Gantt chart".into(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Gantt chart from Jig tasks",
+                    SheetAction::AddChart {
+                        kind: ChartKind::Gantt,
+                        source: ChartSource::Tasks,
+                        title: "Task timeline".into(),
+                    },
+                );
+                ui.separator();
+                if ui.button("New sheet     Shift+F11").clicked() {
+                    self.new_sheet(book, actions);
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("View", |ui| {
+                self.menu_action(ui, actions, "Tasks", SheetAction::ShowTasks);
+                self.menu_action(ui, actions, "Charts", SheetAction::ShowCharts);
+                self.menu_action(ui, actions, "Workbench", SheetAction::ShowWorkbench);
+                ui.separator();
+                ui.checkbox(&mut self.show_gridlines, "Gridlines");
+            });
+        });
+    }
+
+    fn font_choices(&mut self, ui: &mut Ui, style: &CellStyle, actions: &mut Vec<SheetAction>) {
+        for (font, label) in [
+            (CellFont::Mono, "Mono"),
+            (CellFont::Sans, "Sans"),
+            (CellFont::Serif, "Serif"),
+        ] {
+            if ui
+                .selectable_label(style.font_family == font, label)
+                .clicked()
+            {
+                self.patch(
+                    actions,
+                    StylePatch {
+                        font_family: Some(font),
+                        ..Default::default()
+                    },
+                );
+                ui.close_menu();
+            }
+        }
+    }
+
+    fn size_choices(&mut self, ui: &mut Ui, style: &CellStyle, actions: &mut Vec<SheetAction>) {
+        for size in 9..=32_u8 {
+            if ui
+                .selectable_label(style.font_size == size, size.to_string())
+                .clicked()
+            {
+                self.patch(
+                    actions,
+                    StylePatch {
+                        font_size: Some(size),
+                        ..Default::default()
+                    },
+                );
+                ui.close_menu();
+            }
+        }
+    }
+
+    fn number_choices(&mut self, ui: &mut Ui, style: &CellStyle, actions: &mut Vec<SheetAction>) {
+        for (format, label) in [
+            (NumberFormat::General, "General"),
+            (NumberFormat::Number, "Number"),
+            (NumberFormat::Percent, "Percent"),
+            (NumberFormat::Currency("USD".into()), "Currency · USD"),
+            (NumberFormat::Currency("EUR".into()), "Currency · EUR"),
+            (NumberFormat::Currency("GBP".into()), "Currency · GBP"),
+            (NumberFormat::Currency("JPY".into()), "Currency · JPY"),
+            (NumberFormat::Date, "Date"),
+        ] {
+            if ui
+                .selectable_label(style.number_format == format, label)
+                .clicked()
+            {
+                self.patch(
+                    actions,
+                    StylePatch {
+                        number_format: Some(format),
+                        ..Default::default()
+                    },
+                );
+                ui.close_menu();
+            }
+        }
+    }
+
+    fn border_choices(&mut self, ui: &mut Ui, actions: &mut Vec<SheetAction>) {
+        for (preset, label) in [
+            (BorderPreset::None, "No borders"),
+            (BorderPreset::All, "All borders"),
+            (BorderPreset::Outer, "Outside border"),
+        ] {
+            if ui.button(label).clicked() {
+                self.queue(
+                    actions,
+                    SheetAction::SetBorders {
+                        sheet: self.active,
+                        range: self.selection(),
+                        preset,
+                    },
+                );
+                ui.close_menu();
+            }
+        }
+    }
+
+    fn color_menu(
+        &mut self,
+        ui: &mut Ui,
+        label: &str,
+        fill: bool,
+        style: &CellStyle,
+        actions: &mut Vec<SheetAction>,
+    ) {
+        ui.menu_button(label, |ui| {
+            let range = self.selection();
+            let key = (self.active, range.start, range.end, fill);
+            if self.color_menu_key != Some(key) {
+                let color = if fill {
+                    style.fill_color.unwrap_or([12, 19, 27])
+                } else {
+                    style.text_color.unwrap_or([246, 218, 174])
+                };
+                if fill {
+                    self.fill_color_draft = color;
+                } else {
+                    self.text_color_draft = color;
+                }
+                self.color_menu_key = Some(key);
+            }
+            ui.horizontal_wrapped(|ui| {
+                for (color, name) in [
+                    ([246, 218, 174], "Cream"),
+                    ([234, 133, 173], "Rose"),
+                    ([218, 185, 126], "Amber"),
+                    ([148, 188, 160], "Sage"),
+                    ([109, 185, 238], "Blue"),
+                    ([179, 158, 207], "Lilac"),
+                    ([245, 245, 245], "White"),
+                    ([28, 28, 28], "Black"),
+                ] {
+                    let response =
+                        ui.add_sized([22.0, 22.0], egui::Button::new(" ").fill(rgb(color)));
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            ui.is_enabled(),
+                            format!("{label}: {name}"),
+                        )
+                    });
+                    if response.on_hover_text(name).clicked() {
+                        let mut patch = StylePatch::default();
+                        if fill {
+                            patch.fill_color = Some(Some(color));
+                        } else {
+                            patch.text_color = Some(Some(color));
+                        }
+                        self.patch(actions, patch);
+                        ui.close_menu();
+                    }
+                }
+            });
+            let draft = if fill {
+                &mut self.fill_color_draft
+            } else {
+                &mut self.text_color_draft
+            };
+            ui.horizontal(|ui| {
+                ui.label("Custom");
+                ui.color_edit_button_srgb(draft);
+            });
+            if ui.button("Apply custom color").clicked() {
+                let color = if fill {
+                    self.fill_color_draft
+                } else {
+                    self.text_color_draft
+                };
+                let mut patch = StylePatch::default();
+                if fill {
+                    patch.fill_color = Some(Some(color));
+                } else {
+                    patch.text_color = Some(Some(color));
+                }
+                self.patch(actions, patch);
+                ui.close_menu();
+            }
+            if ui.button("Default").clicked() {
+                let mut patch = StylePatch::default();
+                if fill {
+                    patch.fill_color = Some(None);
+                } else {
+                    patch.text_color = Some(None);
+                }
+                self.patch(actions, patch);
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn format_toolbar(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        let style = book.style(self.active, self.cursor);
+        ui.horizontal_wrapped(|ui| {
+            ui.menu_button(font_label(style.font_family), |ui| {
+                self.font_choices(ui, &style, actions)
+            });
+            ui.menu_button(style.font_size.to_string(), |ui| {
+                self.size_choices(ui, &style, actions)
+            });
+            for (label, selected, property) in [
+                ("B", style.bold, 0),
+                ("I", style.italic, 1),
+                ("U", style.underline, 2),
+            ] {
+                if ui.selectable_label(selected, label).clicked() {
+                    let mut patch = StylePatch::default();
+                    match property {
+                        0 => patch.bold = Some(!selected),
+                        1 => patch.italic = Some(!selected),
+                        _ => patch.underline = Some(!selected),
+                    }
+                    self.patch(actions, patch);
+                }
+            }
+            self.color_menu(ui, "Text", false, &style, actions);
+            self.color_menu(ui, "Fill", true, &style, actions);
+            ui.menu_button("Borders", |ui| self.border_choices(ui, actions));
+            ui.menu_button(format_label(&style.number_format), |ui| {
+                self.number_choices(ui, &style, actions);
+            });
+            if ui
+                .button("Merge")
+                .on_hover_text("Merge selected cells; existing data is preserved")
+                .clicked()
+            {
+                self.queue(
+                    actions,
+                    SheetAction::Merge {
+                        sheet: self.active,
+                        range: self.selection(),
+                    },
+                );
+            }
+            if ui.button("Unmerge").clicked() {
+                self.queue(
+                    actions,
+                    SheetAction::Unmerge {
+                        sheet: self.active,
+                        range: self.selection(),
+                    },
+                );
+            }
+        });
+    }
+
+    fn formula_bar(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        ui.horizontal(|ui| {
+            let id = egui::Id::new("spreadsheet-address-input");
+            if self.goto_focus {
+                ui.memory_mut(|memory| memory.request_focus(id));
+                self.goto_focus = false;
+                ui.ctx().request_repaint();
+            }
+            if !ui.memory(|memory| memory.has_focus(id)) {
+                self.address = range_label(self.selection());
+            }
+            let address = ui
+                .add(
+                    TextEdit::singleline(&mut self.address)
+                        .id(id)
+                        .return_key(None)
+                        .desired_width(76.0),
+                )
+                .on_hover_text("Go to a cell or range · Ctrl+G");
+            if address.has_focus()
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                match parse_range(&self.address) {
+                    Ok(range) => {
+                        self.commit(actions);
+                        self.anchor = range.start;
+                        self.cursor = range.end;
+                        self.sync_selection(book);
+                        self.grid_focus = true;
+                        self.reveal = true;
+                        self.error = None;
+                        ui.memory_mut(|memory| memory.surrender_focus(id));
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            ui.label(RichText::new("fx").color(PINK));
+            let field = egui::Id::new(("spreadsheet-formula-input", self.active, self.cursor));
+            let width = (ui.available_width() - 58.0).max(60.0);
+            if self.editing == Some(EditOrigin::Cell) {
+                let mut text = self.draft.clone();
+                ui.add_enabled(
+                    false,
+                    TextEdit::singleline(&mut text)
+                        .id(field)
+                        .desired_width(width),
+                );
+            } else {
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.draft)
+                        .id(field)
+                        .return_key(None)
+                        .hint_text("Value or =formula")
+                        .desired_width(width),
+                );
+                if response.gained_focus() && self.editing.is_none() {
+                    self.original = book.raw(self.active, self.cursor).to_owned();
+                    self.editing = Some(EditOrigin::Formula);
+                    self.error = None;
+                }
+                let escape = response.has_focus()
+                    && ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    });
+                let enter = response.has_focus()
+                    && ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    });
+                if escape {
+                    self.cancel_edit();
+                    ui.memory_mut(|memory| memory.surrender_focus(field));
+                } else if enter
+                    || response.lost_focus() && self.editing == Some(EditOrigin::Formula)
+                {
+                    self.commit(actions);
+                    if !enter {
+                        // Tab or a pointer chose another control. Commit the
+                        // formula without stealing that control's focus.
+                        self.grid_focus = false;
+                    }
+                }
+            }
+            if ui.button("Enter").clicked() {
+                self.commit(actions);
+            }
+        });
+    }
+
+    fn commands(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button("Import CSV")
+                .on_hover_text("Import CSV at the selected cell")
+                .clicked()
+            {
+                self.commit(actions);
+                actions.push(SheetAction::ImportCsv(self.active));
+            }
+            if ui.button("Export CSV").on_hover_text(
+                "Export this sheet's used cells as evaluated values. JSON backups retain formulas.",
+            ).clicked() {
+                self.commit(actions);
+                actions.push(SheetAction::ExportCsv(self.active));
+            }
+            if ui.button("Rename").clicked() {
+                self.commit(actions);
+                self.name = book
+                    .sheet(self.active)
+                    .map_or_else(String::new, |sheet| sheet.name.clone());
+                self.renaming = true;
+                self.rename_focus = true;
+                self.confirm_delete = false;
+            }
+            if ui
+                .add_enabled(book.sheets.len() > 1, egui::Button::new("del"))
+                .on_hover_text("Delete this sheet")
+                .clicked()
+            {
+                self.commit(actions);
+                self.confirm_delete = true;
+                self.delete_focus = true;
+                self.renaming = false;
+            }
+        });
+    }
+
+    fn grid(
+        &mut self,
+        ui: &mut Ui,
+        book: &Workbook,
+        decimals: usize,
+        height: f32,
+        actions: &mut Vec<SheetAction>,
+    ) {
+        let active = self.active;
+        egui::ScrollArea::both()
+            .id_salt(("spreadsheet-scroll", active))
+            .max_height(height)
+            .auto_shrink([false, false])
+            .show_viewport(ui, |ui, _viewport| {
+                let size = egui::vec2(
+                    ROW_HEAD + MAX_COLS as f32 * COL_WIDTH,
+                    COL_HEAD + self.row_offsets[MAX_ROWS],
+                );
+                let id = self.grid_id();
+                if self.grid_focus && self.editing.is_none() && !self.renaming {
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                    self.grid_focus = false;
+                    ui.ctx().request_repaint();
+                }
+                let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                let response = ui.interact(rect, id, egui::Sense::click_and_drag());
+                if response.has_focus() {
+                    ui.memory_mut(|memory| {
+                        memory.set_focus_lock_filter(
+                            id,
+                            egui::EventFilter {
+                                horizontal_arrows: true,
+                                vertical_arrows: true,
+                                tab: true,
+                                ..Default::default()
+                            },
+                        )
+                    });
+                }
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        format!(
+                            "Spreadsheet {}, selected {}, value {}",
+                            book.sheet(active).map_or("", |sheet| sheet.name.as_str()),
+                            range_label(self.selection()),
+                            self.values
+                                .as_ref()
+                                .map(|values| values.value(active, self.cursor).display(decimals))
+                                .unwrap_or_default()
+                        ),
+                    )
+                });
+                let visible = rect.intersect(ui.clip_rect());
+                let body = egui::Rect::from_min_max(
+                    visible.min + egui::vec2(ROW_HEAD, COL_HEAD),
+                    visible.max,
+                );
+                if response.clicked() || response.double_clicked() || response.drag_started() {
+                    if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+                        self.commit(actions);
+                        let extend = ui.input(|input| input.modifiers.shift);
+                        if pointer.y < body.top() && pointer.x >= body.left() {
+                            let col = ((pointer.x - rect.left() - ROW_HEAD) / COL_WIDTH)
+                                .floor()
+                                .clamp(0.0, MAX_COLS as f32 - 1.0)
+                                as usize;
+                            self.anchor = CellAddr::new(MAX_ROWS - 1, col);
+                            self.cursor = CellAddr::new(0, col);
+                        } else if pointer.x < body.left() && pointer.y >= body.top() {
+                            let row = self.row_at(pointer.y - rect.top() - COL_HEAD);
+                            self.anchor = CellAddr::new(row, MAX_COLS - 1);
+                            self.cursor = CellAddr::new(row, 0);
+                        } else if body.contains(pointer) {
+                            let addr = self.address_at(rect, pointer);
+                            self.cursor = addr;
+                            if !extend {
+                                self.anchor = addr;
+                            }
+                            if response.double_clicked() {
+                                let pending =
+                                    actions.iter().rev().find_map(|action| match action {
+                                        SheetAction::SetCell {
+                                            sheet,
+                                            addr: changed,
+                                            raw,
+                                        } if *sheet == active && *changed == addr => {
+                                            Some(raw.clone())
+                                        }
+                                        _ => None,
+                                    });
+                                self.begin_edit(book, EditOrigin::Cell, pending);
+                            }
+                        } else {
+                            self.anchor = CellAddr::new(MAX_ROWS - 1, MAX_COLS - 1);
+                            self.cursor = CellAddr::new(0, 0);
+                        }
+                        self.sync_selection(book);
+                        self.address = range_label(self.selection());
+                        if self.editing.is_none() {
+                            response.request_focus();
+                        }
+                    }
+                }
+                if response.dragged() && self.editing.is_none() {
+                    if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+                        self.cursor = self.address_at(rect, pointer);
+                        self.sync_selection(book);
+                        self.address = range_label(self.selection());
+                    }
+                }
+                let first_col = ((body.left() - rect.left() - ROW_HEAD) / COL_WIDTH)
+                    .floor()
+                    .max(0.0) as usize;
+                let last_col =
+                    (((body.right() - rect.left() - ROW_HEAD) / COL_WIDTH).ceil() as usize + 1)
+                        .min(MAX_COLS);
+                let first_row = self.row_at(body.top() - rect.top() - COL_HEAD);
+                let last_row =
+                    (self.row_at(body.bottom() - rect.top() - COL_HEAD) + 2).min(MAX_ROWS);
+                let painter = ui.painter().with_clip_rect(body);
+                painter.rect_filled(body, 0.0, BG);
+                let selection = self.selection();
+                let mut drawn = std::collections::HashSet::new();
+                for row in first_row..last_row {
+                    for col in first_col..last_col {
+                        let addr = CellAddr::new(row, col);
+                        let span = book
+                            .merge_at(active, addr)
+                            .unwrap_or_else(|| CellRange::new(addr, addr));
+                        if !drawn.insert(span.start) {
+                            continue;
+                        }
+                        let cell = self.span_rect(rect, span);
+                        let style = book.rendered_style(active, span.start);
+                        let fill = style.fill_color.map(rgb).unwrap_or_else(|| {
+                            if ranges_intersect(selection, span) {
+                                SELECTED
+                            } else {
+                                BG
+                            }
+                        });
+                        painter.rect_filled(cell, 0.0, fill);
+                        if self.show_gridlines {
+                            painter.hline(
+                                cell.x_range(),
+                                cell.bottom(),
+                                Stroke::new(0.5_f32, RULE),
+                            );
+                            painter.vline(cell.right(), cell.y_range(), Stroke::new(0.5_f32, RULE));
+                        }
+                        let value = self
+                            .values
+                            .as_ref()
+                            .map(|values| values.value(active, span.start))
+                            .unwrap_or(CellValue::Blank);
+                        let number = matches!(value, CellValue::Number(_) | CellValue::Date(_));
+                        let error = matches!(value, CellValue::Error(_));
+                        let text = value.formatted(&style.number_format, decimals);
+                        let color =
+                            style
+                                .text_color
+                                .map(rgb)
+                                .unwrap_or(if error { PINK } else { CREAM });
+                        let mut job = egui::text::LayoutJob::simple_singleline(
+                            text,
+                            cell_font(&style),
+                            color,
+                        );
+                        if let Some(section) = job.sections.first_mut() {
+                            section.format.italics = style.italic;
+                            if style.underline {
+                                section.format.underline = Stroke::new(0.9_f32, color);
+                            }
+                        }
+                        let mut galley = ui.fonts(|fonts| fonts.layout_job(job.clone()));
+                        if number && galley.size().x > cell.width() - 12.0 {
+                            let full_value = job.text.clone();
+                            job.text = "####".into();
+                            loop {
+                                if let Some(section) = job.sections.first_mut() {
+                                    section.byte_range = 0..job.text.len();
+                                }
+                                galley = ui.fonts(|fonts| fonts.layout_job(job.clone()));
+                                if galley.size().x <= cell.width() - 12.0 || job.text.len() == 1 {
+                                    break;
+                                }
+                                job.text.pop();
+                            }
+                            ui.interact(
+                                cell.intersect(body),
+                                ui.id().with(("sheet-width-value", span.start)),
+                                egui::Sense::hover(),
+                            )
+                            .on_hover_text(full_value);
+                        }
+                        let position = egui::pos2(
+                            if number {
+                                cell.right() - 6.0 - galley.size().x
+                            } else {
+                                cell.left() + 6.0
+                            },
+                            cell.center().y - galley.size().y * 0.5,
+                        );
+                        let text_painter =
+                            painter.with_clip_rect(cell.shrink2(egui::vec2(5.0, 1.0)));
+                        text_painter.galley(position, galley.clone(), color);
+                        if style.bold {
+                            text_painter.galley(position + egui::vec2(0.5, 0.0), galley, color);
+                        }
+                        let border = Stroke::new(1.1_f32, MUTED);
+                        if style.borders.top {
+                            painter.hline(cell.x_range(), cell.top(), border);
+                        }
+                        if style.borders.bottom {
+                            painter.hline(cell.x_range(), cell.bottom(), border);
+                        }
+                        if style.borders.left {
+                            painter.vline(cell.left(), cell.y_range(), border);
+                        }
+                        if style.borders.right {
+                            painter.vline(cell.right(), cell.y_range(), border);
+                        }
+                    }
+                }
+                let selected = self.span_rect(
+                    rect,
+                    book.merge_at(active, self.cursor)
+                        .unwrap_or_else(|| CellRange::new(self.cursor, self.cursor)),
+                );
+                if selected.intersects(body) {
+                    let clip = painter.with_clip_rect(body);
+                    clip.hline(
+                        selected.x_range(),
+                        selected.top(),
+                        Stroke::new(1.0_f32, ACCENT),
+                    );
+                    clip.hline(
+                        selected.x_range(),
+                        selected.bottom(),
+                        Stroke::new(1.0_f32, ACCENT),
+                    );
+                    clip.vline(
+                        selected.left(),
+                        selected.y_range(),
+                        Stroke::new(1.0_f32, ACCENT),
+                    );
+                    clip.vline(
+                        selected.right(),
+                        selected.y_range(),
+                        Stroke::new(1.0_f32, ACCENT),
+                    );
+                }
+                self.headers(ui, rect, visible, first_row, last_row, first_col, last_col);
+                if self.reveal {
+                    ui.scroll_to_rect(
+                        selected.expand2(egui::vec2(ROW_HEAD + 4.0, COL_HEAD + 4.0)),
+                        None,
+                    );
+                    self.reveal = false;
+                    ui.ctx().request_repaint();
+                }
+                if self.editing == Some(EditOrigin::Cell) {
+                    let editor = self.editor_id();
+                    if self.editor_focus {
+                        ui.memory_mut(|memory| memory.request_focus(editor));
+                        self.editor_focus = false;
+                        ui.ctx().request_repaint();
+                    }
+                    let response = ui.put(
+                        selected.shrink(1.0),
+                        TextEdit::singleline(&mut self.draft)
+                            .id(editor)
+                            .lock_focus(true)
+                            .return_key(None)
+                            .font(FontId::monospace(13.0)),
+                    );
+                    let escape = response.has_focus()
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        });
+                    let shift = ui.input(|input| input.modifiers.shift);
+                    let enter = response.has_focus()
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter)
+                        });
+                    let tab = response.has_focus()
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab)
+                        });
+                    if escape {
+                        self.cancel_edit();
+                        ui.memory_mut(|memory| memory.surrender_focus(editor));
+                    } else if enter || tab {
+                        self.commit(actions);
+                        self.navigate(
+                            book,
+                            if enter {
+                                if shift {
+                                    -1
+                                } else {
+                                    1
+                                }
+                            } else {
+                                0
+                            },
+                            if tab {
+                                if shift {
+                                    -1
+                                } else {
+                                    1
+                                }
+                            } else {
+                                0
+                            },
+                            false,
+                        );
+                    } else if response.lost_focus() {
+                        self.commit(actions);
+                    }
+                }
+            });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn headers(
+        &self,
+        ui: &Ui,
+        rect: egui::Rect,
+        visible: egui::Rect,
+        first_row: usize,
+        last_row: usize,
+        first_col: usize,
+        last_col: usize,
+    ) {
+        let top = egui::Rect::from_min_max(
+            visible.min,
+            egui::pos2(visible.right(), visible.top() + COL_HEAD),
+        );
+        let left = egui::Rect::from_min_max(
+            visible.min,
+            egui::pos2(visible.left() + ROW_HEAD, visible.bottom()),
+        );
+        let painter = ui.painter().with_clip_rect(visible);
+        painter.rect_filled(top, 0.0, HEADER);
+        painter.rect_filled(left, 0.0, HEADER);
+        for col in first_col..last_col {
+            let x = rect.left() + ROW_HEAD + col as f32 * COL_WIDTH;
+            let cell = egui::Rect::from_min_size(
+                egui::pos2(x, top.top()),
+                egui::vec2(COL_WIDTH, COL_HEAD),
+            );
+            let clipped = painter.with_clip_rect(egui::Rect::from_min_max(
+                egui::pos2(left.right(), top.top()),
+                top.max,
+            ));
+            if col >= self.selection().start.col && col <= self.selection().end.col {
+                clipped.rect_filled(cell, 0.0, SELECTED);
+            }
+            clipped.text(
+                cell.center(),
+                egui::Align2::CENTER_CENTER,
+                column_label(col),
+                FontId::monospace(11.0),
+                MUTED,
+            );
+            clipped.vline(cell.right(), cell.y_range(), Stroke::new(0.5_f32, RULE));
+        }
+        for row in first_row..last_row {
+            let y = rect.top() + COL_HEAD + self.row_offsets[row];
+            let cell = egui::Rect::from_min_size(
+                egui::pos2(left.left(), y),
+                egui::vec2(ROW_HEAD, self.row_offsets[row + 1] - self.row_offsets[row]),
+            );
+            let clipped = painter.with_clip_rect(egui::Rect::from_min_max(
+                egui::pos2(left.left(), top.bottom()),
+                left.max,
+            ));
+            if row >= self.selection().start.row && row <= self.selection().end.row {
+                clipped.rect_filled(cell, 0.0, SELECTED);
+            }
+            clipped.text(
+                cell.center(),
+                egui::Align2::CENTER_CENTER,
+                (row + 1).to_string(),
+                FontId::monospace(11.0),
+                MUTED,
+            );
+            clipped.hline(cell.x_range(), cell.bottom(), Stroke::new(0.5_f32, RULE));
+        }
+        painter.rect_filled(
+            egui::Rect::from_min_size(visible.min, egui::vec2(ROW_HEAD, COL_HEAD)),
+            0.0,
+            HEADER,
+        );
+        painter.hline(top.x_range(), top.bottom(), Stroke::new(1.0_f32, RULE));
+        painter.vline(left.right(), left.y_range(), Stroke::new(1.0_f32, RULE));
+    }
+
+    fn tabs(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        egui::ScrollArea::horizontal()
+            .id_salt("spreadsheet-tabs")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for sheet in &book.sheets {
+                        let response = ui
+                            .selectable_label(self.active == sheet.id, &sheet.name)
+                            .on_hover_text("Select sheet · Alt+PageUp / Alt+PageDown");
+                        if self.active == sheet.id && self.tab_reveal {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                            self.tab_reveal = false;
+                        }
+                        if response.clicked() {
+                            self.switch_sheet(sheet.id, actions);
+                        }
+                        if response.double_clicked() {
+                            self.commit(actions);
+                            self.active = sheet.id;
+                            self.name = sheet.name.clone();
+                            self.renaming = true;
+                            self.rename_focus = true;
+                        }
+                    }
+                    if ui
+                        .add_enabled(book.sheets.len() < MAX_SHEETS, egui::Button::new("+"))
+                        .on_hover_text("Add a sheet · Shift+F11")
+                        .clicked()
+                    {
+                        self.new_sheet(book, actions);
+                    }
+                })
+            });
+        if self.renaming {
+            ui.horizontal_wrapped(|ui| {
+                let id = egui::Id::new("spreadsheet-sheet-name");
+                if self.rename_focus {
+                    ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
+                    });
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                    self.rename_focus = false;
+                    ui.ctx().request_repaint();
+                }
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.name)
+                        .id(id)
+                        .return_key(None)
+                        .desired_width(180.0),
+                );
+                let enter = response.has_focus()
+                    && ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    });
+                if ui.button("Save").clicked() || enter {
+                    actions.push(SheetAction::RenameSheet {
+                        sheet: self.active,
+                        name: self.name.clone(),
+                    });
+                    self.tab_reveal = true;
+                    self.renaming = false;
+                    self.grid_focus = true;
+                }
+                if ui.button("Cancel").clicked()
+                    || response.has_focus()
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        })
+                {
+                    self.renaming = false;
+                    self.grid_focus = true;
+                }
+            });
+        }
+        if self.confirm_delete {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "Delete {}?",
+                        book.sheet(self.active)
+                            .map_or("sheet", |sheet| sheet.name.as_str())
+                    ))
+                    .color(PINK),
+                );
+                if self.delete_focus {
+                    let id = ui.next_auto_id();
+                    ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
+                    });
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                    self.delete_focus = false;
+                    ui.ctx().request_repaint();
+                }
+                if ui.button("Delete sheet").clicked() {
+                    actions.push(SheetAction::RemoveSheet(self.active));
+                    self.confirm_delete = false;
+                    self.grid_focus = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.confirm_delete = false;
+                    self.grid_focus = true;
+                }
+            });
+        }
+    }
+
+    fn summary(&mut self, ui: &mut Ui, decimals: usize, actions: &mut Vec<SheetAction>) {
+        ui.horizontal_wrapped(|ui| {
+            let selection = self.selection();
+            ui.label(
+                RichText::new(format!(
+                    "{} · {} cells",
+                    range_label(selection),
+                    selection.rows() * selection.cols()
+                ))
+                .color(MUTED)
+                .size(11.0),
+            );
+            if let Some(values) = &self.values {
+                let mut count = 0;
+                let mut sum = 0.0;
+                for row in selection.start.row..=selection.end.row {
+                    for col in selection.start.col..=selection.end.col {
+                        if let Some(CellValue::Number(value)) =
+                            values.get(self.active, CellAddr::new(row, col))
+                        {
+                            count += 1;
+                            sum += value;
+                        }
+                    }
+                }
+                if count > 0 && sum.is_finite() {
+                    ui.label(
+                        RichText::new(format!("Sum {sum:.decimals$}"))
+                            .color(CREAM)
+                            .size(11.0),
+                    );
+                }
+            }
+            ui.label(RichText::new("Decimals").color(MUTED).size(11.0));
+            let mut number = decimals as u32;
+            if ui
+                .add(egui::DragValue::new(&mut number).range(0..=10))
+                .changed()
+            {
+                actions.push(SheetAction::Decimals(number as usize));
+            }
+        });
+    }
+
+    fn copy(&mut self, ui: &Ui, book: &Workbook) {
+        let selection = self.selection();
+        let mut raw = Vec::new();
+        let mut values = Vec::new();
+        for row in selection.start.row..=selection.end.row {
+            let mut raw_row = Vec::new();
+            let mut value_row = Vec::new();
+            for col in selection.start.col..=selection.end.col {
+                let addr = CellAddr::new(row, col);
+                raw_row.push(book.raw(self.active, addr).to_owned());
+                value_row.push(
+                    self.values
+                        .as_ref()
+                        .map(|values| values.value(self.active, addr).csv_value())
+                        .unwrap_or_default(),
+                );
+            }
+            raw.push(raw_row);
+            values.push(value_row);
+        }
+        let text = spreadsheet::encode_delimited(&values, '\t');
+        ui.ctx().copy_text(text.clone());
+        self.copied = Some(CopiedCells {
+            text,
+            origin: selection.start,
+            rows: raw,
+        });
+    }
+
+    fn paste(&self, text: &str) -> Result<Vec<Vec<String>>, String> {
+        self.pasted_rows(self.active, self.selection().start, text)
+    }
+
+    pub fn paste_at(
+        &self,
+        sheet: u64,
+        origin: CellAddr,
+        text: &str,
+    ) -> Result<SheetAction, String> {
+        Ok(SheetAction::SetBlock {
+            sheet,
+            origin,
+            rows: self.pasted_rows(sheet, origin, text)?,
+        })
+    }
+
+    fn pasted_rows(
+        &self,
+        _sheet: u64,
+        origin: CellAddr,
+        text: &str,
+    ) -> Result<Vec<Vec<String>>, String> {
+        if let Some(copied) = &self.copied {
+            if copied.text == text {
+                let dr = origin.row as i32 - copied.origin.row as i32;
+                let dc = origin.col as i32 - copied.origin.col as i32;
+                return Ok(copied
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|raw| sheet_formula::translate(raw, dr, dc))
+                            .collect()
+                    })
+                    .collect());
+            }
+        }
+        spreadsheet::parse_delimited(text, '\t')
+    }
+}
+
+fn font_label(font: CellFont) -> &'static str {
+    match font {
+        CellFont::Mono => "Mono",
+        CellFont::Sans => "Sans",
+        CellFont::Serif => "Serif",
+    }
+}
+
+fn format_label(format: &NumberFormat) -> String {
+    match format {
+        NumberFormat::General => "General".into(),
+        NumberFormat::Number => "Number".into(),
+        NumberFormat::Percent => "Percent".into(),
+        NumberFormat::Currency(code) => format!("Currency · {code}"),
+        NumberFormat::Date => "Date".into(),
+    }
+}
+
+fn rgb(color: [u8; 3]) -> Color32 {
+    Color32::from_rgb(color[0], color[1], color[2])
+}
+
+fn cell_font(style: &CellStyle) -> FontId {
+    let family = match style.font_family {
+        CellFont::Mono => "jig-mono",
+        CellFont::Sans => "jig-sans",
+        CellFont::Serif => "jig-serif",
+    };
+    FontId::new(
+        f32::from(style.font_size),
+        egui::FontFamily::Name(family.into()),
+    )
+}
+
+fn ranges_intersect(a: CellRange, b: CellRange) -> bool {
+    a.start.row <= b.end.row
+        && a.end.row >= b.start.row
+        && a.start.col <= b.end.col
+        && a.end.col >= b.start.col
+}
+
+fn range_label(range: CellRange) -> String {
+    if range.start == range.end {
+        range.start.label()
+    } else {
+        format!("{}:{}", range.start.label(), range.end.label())
+    }
+}
+
+fn parse_range(text: &str) -> Result<CellRange, String> {
+    let mut parts = text.trim().split(':');
+    let start = CellAddr::parse(parts.next().unwrap_or(""))?;
+    let end = parts
+        .next()
+        .map(CellAddr::parse)
+        .transpose()?
+        .unwrap_or(start);
+    if parts.next().is_some() {
+        return Err("Use a cell or range such as A1:C4".into());
+    }
+    Ok(CellRange::new(start, end))
+}
+
+fn column_label(col: usize) -> String {
+    let label = CellAddr::new(0, col).label();
+    label.trim_end_matches('1').to_owned()
+}

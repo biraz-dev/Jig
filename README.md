@@ -2,162 +2,226 @@
 
 You are a small Small Giant Psionicist.
 
-A small, local artist's workbench in Rust:
-calculator, length conversion, tasks, deadlines and calendar. The Rust CLI,
-terminal dashboard and egui browser preview share the same utility logic.
-The browser also includes a local STL viewer; mesh measurements are available
-through the CLI using the same Rust core.
-No accounts, telemetry, database, backend or background service. The CLI and
-terminal run offline; the browser loads static application assets and processes
-task and calculation data on your device. Weather is optional and contacts
-Open-Meteo for the location you select.
+Jig is a small, local spreadsheet and artist's workbench in Rust. The browser
+opens **Sheet**, with **Tasks** and **Workbench** always available from the top
+bar. Tasks, their Gantt timeline, calculator/converter, calendar, optional weather
+and STL viewer use the same portable state. The native CLI and Ratatui terminal
+interface share the Rust core; running `jig` still opens the terminal dashboard.
 
-![Jig terminal dashboard — sample data](docs/sample-dashboard.svg)
+No accounts, telemetry, database or backend. Files are processed on your device.
+The [public preview](https://biraz-dev.github.io/Jig/) uses clearly labelled sample
+data for new visitors. Personal documents are never published by the Pages build.
 
-The image above renders the Ratatui dashboard with clearly labelled sample data.
-The browser preview combines tasks and deadlines in one checklist, with a
-featured countdown, compact calendar and shared calculator/converter.
-The [browser preview](https://biraz-dev.github.io/Jig/) is deployed from `main`
-through GitHub Actions. Fresh visitors see clearly labelled sample data.
+## Spreadsheet
+
+The dark grid has familiar top menus, a formula bar, a formatting toolbar and
+named sheet tabs. Click a cell and type, double-click or press **F2** to edit;
+**Enter** commits, **Esc** cancels. Drag or Shift-click to select a range.
+Use the address field to jump to `B12` or select `A1:D20`.
+
+- Numbers, percentages, booleans, ISO dates (`2026-11-11`) and text. Prefix an
+  apostrophe to keep text such as `'0012` literal.
+- Arithmetic, parentheses, comparisons, powers and percentages:
+  `=(A1+B2)*1.15`, `=A1^2`, `=IF(B2>100,"Review","OK")`.
+- Relative and anchored references (`A1`, `$A$1`, `A$1`, `$A1`), ranges and named
+  sheet references such as `='Clay tests'!B2`.
+- `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `ABS`, `ROUND`, `DATE`, `TODAY`,
+  `DAY`, `MONTH`, `YEAR`, `TRUE` and `FALSE`. Dates can be subtracted for durations
+  or offset by a number of days. `TODAY()` follows the local calendar day.
+- Mono, Sans and Serif fonts; sizes 9–32; bold, italic, underline, text/fill colors,
+  borders and General/Number/Percent/Currency/Date formats. Currency choices in
+  the toolbar are USD, EUR, GBP and JPY. Display precision never rounds saved inputs.
+- Insert/delete rows and columns, merge/unmerge selected cells, add/rename/delete
+  tabs. Structural changes update references. Merging rejects ranges that would
+  hide existing cell content.
+- Copy and paste rectangular cells. Copies made inside Jig translate relative
+  formula references when pasted elsewhere; pasted tab-separated text fills a
+  block. Clear removes contents while retaining formatting. **Undo** covers sheet
+  changes alongside existing task and workbench changes.
+
+The grid paints visible cells and caches calculated values until edits or a local
+calendar-day change. Each sheet has **1,000 rows × 52 columns (A–AZ)**; a workbook
+has up to **16 sheets**, **20,000 populated/styled cells** and **1 MiB of cell input**.
+Formula work is bounded. Errors such as `#REF!`, `#DIV/0!`, circular references and
+unsupported functions remain visible. A number or date too wide for its cell
+shows `####`; select it to inspect the full value and saved input.
+
+### Documents, CSV and printing
+
+**File → Save ODS** downloads `jig.ods`, the main portable document. Standard
+OpenDocument cells carry formulas, typed values, formats, merges and sheet names.
+A Jig metadata entry also retains the complete state: tasks, linked deadlines,
+colors, charts, preferences, calendar notes and calculator history. Keep this
+whole-document scope in mind when sharing an ODS file.
+
+**Open ODS** shows an import summary before replacing saved data. An ordinary ODS
+from another editor replaces the workbook and keeps your existing Jig tools.
+When an exported Jig ODS is edited externally, its visible spreadsheet changes
+are imported while its embedded Jig task/history data is retained. Jig supports
+its documented formula subset; it does not promise full Excel or LibreOffice
+compatibility. ODS charts are exported as SVG previews, with editable Jig chart
+specifications in metadata. Foreign native ODS chart objects are not imported.
+Browser ODS input is limited to 10 MiB; the core bounds expanded ZIP/XML content.
+
+**Import CSV** fills cells starting at the selection. **Export CSV values** writes
+one sheet's evaluated values at stored precision; formulas, styles, other sheets
+and tasks require ODS or a Jig JSON backup. CSV input is UTF-8 and limited to 2 MiB.
+
+**File → Export PDF** prints the active sheet's used area, or the selected range
+when more than one cell is selected, followed by its relevant charts as vector
+pages. A4 landscape pages repeat row/column labels and include page numbers.
+Fonts are embedded with Unicode mappings; number/date/currency formats, fills,
+borders and merges are retained. Long cell text clips at its cell boundary;
+oversized numeric values show `####`. The export is capped at 200 pages.
+
+### Charts and tasks
+
+Select a table and choose **Insert → Chart**. Pie and bar charts read labels and
+numeric values from the first two columns; Gantt charts read labels, start dates
+and due dates from three columns. An optional first header row is recognized.
+Chart results follow changes to their source cells. **View → Charts** opens the
+inline gallery, where charts can be renamed or removed.
+
+**Tasks** opens the existing checklist and calendar/timeline. Add a task, give it
+an optional due date, and star it to drive the featured countdown in Workbench.
+**Gantt from Jig tasks** reads these same records directly, including their
+colors and completion status. Editing a task updates its live chart; there is no
+second copy of the task to maintain.
+
+### Sheet keys
+
+| Key | Action |
+| --- | --- |
+| Arrows / Shift-Arrows | Move between cells / extend selection |
+| Tab / Shift-Tab | Next / previous cell |
+| Enter / F2 | Edit the selected cell |
+| Ctrl-G | Go to a cell or range |
+| Ctrl-Home / Ctrl-End | First cell / end of used area |
+| Ctrl-C / Ctrl-V | Copy / paste cells |
+| Delete / Backspace | Clear selected contents |
+| Shift-F11 | Add a sheet |
+| Alt-PageUp / Alt-PageDown | Previous / next sheet |
+| Ctrl-S / Ctrl-O / Ctrl-P | Download ODS / open ODS / export PDF |
+| Ctrl-Z outside text fields | Undo a Jig change |
+| Ctrl-Alt-2 | Tasks |
+| Ctrl-Alt-W | Switch Sheet / Workbench |
+
+Text fields retain their normal editing shortcuts. File and Edit menus also
+provide pointer/touch access to these actions.
+
+### Import statement PDFs and images
+
+**File → Import PDF or image…** selects local PDFs, PNGs or JPEGs for review.
+This supports gathering statement and transaction information into cells for
+preparation. Review extracted rows, correct their contents and confirm the
+destination before inserting them. Text PDFs can be read directly; scanned PDFs
+and screenshots need the optional OCR step.
+
+Document text extraction runs locally. OCR also processes pages in the browser;
+its recognition assets must be loaded before use. File contents are not sent to
+an OCR service. The source PDFs/images remain session-only; confirmed cell values
+are saved with the workbook. The browser file picker accepts up to 20 documents,
+10 MiB each and 50 MiB total. Verify dates, signs, decimal places and totals
+against the originals. Jig does not classify accounts or calculate/file taxes.
 
 ## Build and run on Linux
 
-Install the stable Rust toolchain with rustup, then:
+Install stable Rust with rustup, then:
 
 ```sh
 git clone https://github.com/biraz-dev/Jig.git
 cd Jig
 cargo build --locked --release
 ./target/release/jig
-# Optional: install the binary in ~/.cargo/bin
-cargo install --locked --path .
+cargo install --locked --path .  # optional: installs in ~/.cargo/bin
 ```
 
+This runs the native terminal dashboard and CLI. The graphical Sheet workspace
+is currently the browser application; there is no native graphical binary yet.
 A UTF-8 terminal is recommended. Set IBM Plex Mono in your terminal preferences
-if installed; terminal applications cannot select the font. The complete tiled
-dashboard needs at least 100 columns × 36 rows. Smaller terminals show the focused
-tool; below 32 × 10 Jig asks you to resize. F2 expands a tool at any size.
+if installed. Full terminal tiles need 100 columns × 36 rows; smaller sizes show
+the focused tool, and below 32 × 10 Jig asks you to resize. F2 expands a tool.
 
-## Run the browser preview locally
-
-Install stable Rust and the pinned Trunk build tool, then run from the repository:
+### Run the browser locally
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install trunk --version 0.21.14 --locked
+python3 scripts/fetch_ocr_assets.py
 trunk serve --public-url /
 ```
 
-Open the local address printed by Trunk, normally `http://127.0.0.1:8080/`.
-The preview needs JavaScript, WebAssembly and WebGL enabled. Native terminal
-dependencies are excluded from the WASM build; `jig` still launches the TUI by
-default.
+Open the address printed by Trunk, normally `http://127.0.0.1:8080/`. The app needs
+JavaScript, WebAssembly and WebGL enabled. Terminal dependencies are excluded from
+the WASM build. Fonts are bundled; Jig makes no remote font requests.
 
-A fresh browser opens a clearly labelled **Sample data** workbench. Open **Data**
-for import/export and dataset controls. Demo edits are temporary and never
-replace saved personal data. **Start empty** creates your own
-workbench after confirmation; **Open local data** returns to saved personal data;
-**Sample mode** returns to the demo. Personal edits save in this browser profile
-under `jig.personal.v1`. **Import JSON** validates a complete Jig state file and
-asks before replacing personal data; **Export JSON** downloads the current
-workbench as `jig.json`. **Clear saved data** requires confirmation and returns to
-temporary samples. Use export for backups and to transfer data between the
-browser and CLI. Importing a file never uploads it.
+The OCR build step downloads pinned official engine packages and English model
+data, verifies SHA-256 hashes, and prepares the optional self-hosted assets.
+Generated engines are not stored in Git. After the first fetch, builds can use
+the cached files offline; `python3 scripts/fetch_ocr_assets.py --verify-only`
+checks their completeness without making network requests. Only static engine
+assets are downloaded at build time; financial documents are never uploaded.
 
-The preview supports mouse interaction and normal text editing. Click an applet
-to select it, or use the arrow keys while no text field is being edited. The
-selected applet is highlighted. **Ctrl-M** maximizes or restores it; **Esc** leaves
-an editor and returns to the dashboard. **Ctrl-Alt-4** focuses the math input;
-**Ctrl-Alt-D** opens the inline **Data** controls; **Ctrl-Alt-N** opens the
-start-empty confirmation; **Ctrl-Alt-O** reopens local data. Tab/Shift-Tab navigate
-controls. On narrow screens the applets stack and the dashboard scrolls.
+For a Pages build, run the same asset step before
+`trunk build --release --public-url /Jig/`. The **Browser
+preview** Actions workflow builds on pushes and pull requests and deploys pushes
+to `main`. Repository **Settings → Pages → Source** must be **GitHub Actions**.
+See [preview notes](docs/preview.md) and [Actions](https://github.com/biraz-dev/Jig/actions).
 
-The calculator and converter use one input, result display and history. Type
-`125 * 1.15` for arithmetic or `72 in mm` for a conversion (`1828.80 mm`).
-`72in to mm`, `72in -> mm`, `72in → mm` and `1 1/2 in cm` also work.
-Decimal places and **Copy** stay inside this instrument. Click a history result
-to reuse its full precision; a converted result includes its source unit, ready
-for another target, such as `1828.8 mm in`.
+## Local browser data
 
-The browser uses one checklist. Add a task, give it an optional due date, then
-star it to drive the large countdown. Starring an undated task opens its date
-editor first. Completing a dated task clears its star and subdues its calendar mark;
-deleting it also removes its linked date. Previously saved deadlines appear in
-the same list without rewriting the saved file merely to display them.
+New visitors see temporary **Sample data**, now in Sheet. **Data → Start empty**
+creates personal data after confirmation. **Open local data** reopens saved work;
+**Sample mode** returns to temporary samples. Demo edits never replace saved
+personal data. Importing a real document explicitly leaves sample mode.
 
-Give a dated task a color using its inline swatch: Rose, Amber, Sage, Blue or
-Lilac, or leave it neutral. The same color appears beside the task and as a
-small mark on its due date only. Dates with several tasks show separate marks;
-dense dates show a count for additional tasks. Completed tasks retain a subdued,
-hollow mark. Colors travel with task data in JSON; older files without colors
-load as neutral.
+Personal edits autosave in this browser profile under `jig.personal.v1`.
+**Save ODS** is the portable document download; **Export JSON** is a full Jig
+backup compatible with the native CLI. **Import JSON** validates the complete
+state and asks before replacement. Older files without spreadsheets, task colors
+or start dates still load. **Clear saved data** also requires confirmation.
 
-The compact calendar shows day numbers, today and due-date marks. Click or tap a
-day, or use Tab then Enter/Space, to see its task names, Open/Done status and
-weather details beneath the grid. The list scrolls within the panel when needed.
-Calendar selection does not change
-the starred task. Starring a dated task reveals its day in the calendar. Calendar
-note controls and markers stay hidden; existing notes remain in saved/imported/
-exported data and are still available through the native CLI and terminal.
+Browser JSON saves/imports have a 2 MiB limit. Invalid saved data is preserved and
+reported. Failed saves leave edits in memory with **Retry save** available; export
+before closing the page. A stale tab cannot overwrite a newer save. Storage is
+specific to this profile and origin, so keep portable file backups. Opened
+PDF/image/STL source bytes are session-only and are not embedded in saved state.
 
-Browser imports and saves have a 2 MiB limit. Invalid saved data is preserved and
-reported. If a save fails, edits remain in memory and **Retry save** becomes
-available; export them before closing the page. If another tab changes the saved
-text, Jig rejects the stale write. Export your current work, then reload to open
-the newer saved copy. Browser storage belongs to this browser profile and origin;
-clearing site data or using another browser does not carry it over.
+## Workbench, tasks and timeline
 
-Completed tasks can be removed together with **Delete all completed tasks** and
-an inline confirmation. Individual removal buttons use **del**.
+**Workbench** keeps the fixed applets: featured countdown, unified task/deadline
+checklist, compact calendar/timeline, calculator/converter and STL viewer.
+Click an applet or use arrows outside text editors to select it; **Ctrl-M**
+maximizes/restores the highlighted applet. **Esc** leaves an editor. Narrow
+screens stack the applets and scroll. **Ctrl-Alt-4** focuses the calculator;
+**Ctrl-Alt-D** opens Data controls.
 
-### Timeline
+The shared math input accepts `125 * 1.15`, `72 in mm`, `72in to mm` and
+`1 1/2 in cm`. Decimal places and Copy remain inside this instrument. Clicking a
+history result reuses full precision, including its unit for conversions.
 
-Choose **Timeline** beside **Calendar**, or press **Ctrl-Alt-T**, for a compact
-Gantt view of the same tasks. **Week** and **Month** change the visible range;
-the arrows move through it and **Today** returns to the current period. A thin
-today line helps locate the present. **Ctrl-M** expands the selected applet.
+Dated tasks have optional Rose, Amber, Sage, Blue or Lilac colors. Their due day
+gets the same mark in the calendar; several tasks show separate marks and dense
+dates add a count. Completed tasks keep subdued, hollow marks. Click/tap a date,
+or use Tab then Enter/Space, to see task names, Open/Done status and weather.
+Selecting a date leaves the starred countdown alone. Completing a task clears
+its star; deleting a task also removes its linked deadline. **del** removes one
+task; **Delete all completed tasks** asks before clearing completed work.
+Calendar note controls are hidden in the browser, while saved notes and native
+CLI/terminal note functions remain available.
 
-Tasks with a start and due date appear as colored bars; tasks with just a due
-date appear as diamonds. Completed work is subdued and labelled **Done**.
-Dated rows appear first, followed by editable **No date** tasks, preserving
-checklist order inside each group. Bars crossing a range boundary have small
-continuation marks. Calendar marks still represent due dates only.
+Choose **Timeline** beside Calendar, or **Ctrl-Alt-T**, for the task Gantt view.
+Week/Month, arrows and Today change the visible range. Tasks with start and due
+dates are bars; due-only tasks are diamonds. Completed rows are labelled Done.
+Select a row to edit dates inline. Start accepts `YYYY-MM-DD`; due accepts that
+format or timezone-qualified RFC3339. Changing a due day keeps its existing time;
+new date-only deadlines use 09:00 local time. Saving the range is one undo step.
+Removing a due date clears its start. The starred task stays independent of
+calendar/timeline selection. Legacy standalone deadlines remain usable.
 
-Click or tap a row, or use Tab and Enter/Space, to edit its dates inline. The
-optional start field uses **YYYY-MM-DD**. The due field accepts the same format
-or a timezone-qualified RFC3339 timestamp. Editing a start alone keeps the exact
-deadline time; changing the due day keeps its local time. New date-only
-deadlines use 09:00 local time. Saving validates the complete range as one
-undoable action. Removing a due date also clears its start date. Selecting rows
-or switching views leaves the starred countdown alone.
-
-Start instants are stored as optional UTC `Task.start` values alongside existing
-task data. JSON imports, exports and native state files use the same format;
-existing dated tasks without starts render as milestones. The view derives its rows from
-tasks and linked deadlines. Merely opening a legacy standalone deadline does
-not create or change a record. No new storage service or dependency is needed.
-
-For an already dated task, native commands share these records:
-
-```sh
-jig tasks start 1 "2026-11-01T00:00:00-04:00"
-jig timeline 2026-11-01 --month
-jig tasks start 1  # clear the start date
-```
-
-For a production build under the repository's Pages path:
-
-```sh
-trunk build --release --public-url /Jig/
-```
-
-The **Browser preview** Actions workflow builds on pushes and pull requests,
-checks WASM with Clippy, exercises the browser app, and uploads static assets and
-browser test results. Deployment runs only on a push to `main`. To make the site
-public, set **Settings → Pages → Build and deployment → Source → GitHub Actions**
-before the first deployment. The workflow reports the published URL. See
-[the browser preview notes](docs/preview.md) for implementation and deployment
-details.
+The browser's Undo button, or **Ctrl-Z** outside text fields, covers data and STL
+changes. The session journal keeps up to 20 steps within a 64 MiB budget and is
+cleared when switching datasets or reloading; it is not saved in documents.
 
 ## Weather calendar
 
@@ -210,16 +274,6 @@ to return to warm clay. This appearance setting is session-only and undoable;
 it does not affect measurements, clay shrinkage settings or exported geometry.
 The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
 one another correctly. Other workbench tools continue to use the existing layout.
-
-The header's **Undo** button, or **Ctrl-Z** outside text fields, reverses the most
-recent workbench or STL change. That includes calculations, tasks, dates, colors,
-completion, deletion, preferences and material settings, as well as model
-opening/clearing, orientation, zoom, source units, scale and shrinkage mode.
-An STL drag or wheel burst is one step. Text fields keep their normal typing
-undo. The single session history holds up to 20 steps within a 64 MiB budget for
-data snapshots and shared geometry. It is cleared when switching datasets or
-reloading, and is never saved in JSON. Restoring saved work uses the same safe
-save guards as ordinary edits.
 
 STL files do not contain units. Choose **mm**, **cm** or **in** for the source
 coordinates before interpreting the numbers. Physical scale is independent of
@@ -290,6 +344,13 @@ jig stl sculpture.stl --shrinkage 11 --compensate
 ## CLI
 
 ```sh
+jig sheet
+jig sheet set A1 125
+jig sheet set B1 '=A1*1.15'
+jig sheet get B1
+jig sheet get B1 --raw
+jig sheet import supplies.csv --at A3
+jig sheet export supplies-values.csv
 jig calc '125 * 1.15'
 jig calc '(12 + 8) * 50%'
 jig calc 'ans / 2'
@@ -303,6 +364,7 @@ jig tasks
 jig tasks add 'Photograph sculptures'
 jig tasks edit 1 'Photograph new sculptures'
 jig tasks due 1 '2026-12-01T18:00:00-05:00'
+jig tasks start 1 '2026-11-01T00:00:00-04:00'
 jig tasks star 1
 jig tasks due 1
 jig tasks done 1
@@ -315,6 +377,7 @@ jig deadline feature 2
 jig deadline countdown
 jig deadline edit 2 'Opening' '2026-12-02T18:00:00+01:00'
 jig deadline delete 2
+jig timeline 2026-11-01 --month
 jig calendar
 jig calendar --year 2027 --month 1
 jig calendar add 2026-12-01 'Studio visit'
@@ -326,6 +389,11 @@ jig --state /path/to/portable/jig.json
 jig --help
 ```
 
+`jig sheet` lists tabs. Use `--sheet NAME_OR_ID` for a particular tab. Spreadsheet
+set/import changes are saved to the same JSON state; export emits evaluated CSV
+and refuses to overwrite an existing output file. ODS and PDF file dialogs are
+currently browser features.
+
 IDs are printed when adding items and listed by CLI commands. They are shared
 across tasks, deadlines and calendar notes; use the actual returned IDs.
 `tasks done` toggles completion. Task positions are 1-based. Errors go to stderr
@@ -336,6 +404,7 @@ refreshes the countdown every second.
 `tasks star ID` features a dated, unfinished task. Assigning a date alone does
 not star it. Existing `deadline` commands remain compatible with portable files.
 
+The standalone calculator has a smaller grammar than spreadsheet formulas.
 Arithmetic syntax: `+ - * /`, decimals, unary signs, parentheses, postfix `%`,
 and `ans` (the last result). Percent always divides its operand by 100:
 `100 + 10%` is `100.10`; use `100 * (1 + 10%)` for a 10% increase. No implicit
@@ -355,6 +424,8 @@ without unit metadata continue to work. The separate `jig units` command remains
 a read-only conversion shortcut.
 
 ## Terminal dashboard keys
+
+![Native Ratatui dashboard — sample data](docs/sample-dashboard.svg)
 
 | Key | Action |
 | --- | --- |
@@ -386,8 +457,9 @@ selected and edited independently of the displayed month.
 Default: `$XDG_DATA_HOME/jig/jig.json`, or `~/.local/share/jig/jig.json`.
 `--state PATH` overrides it for every command. Copy that one file to another
 computer and open it with `--state`; no migration service or database is needed.
-State includes preferences, complete calculator history, task order, deadlines,
-calendar notes and featured deadline ID. New terminal installations start empty;
+State includes the workbook and charts, preferences, calculator history, task
+order, linked deadlines, colors, start dates, calendar notes and featured ID.
+New terminal installations start empty;
 the converter initially displays 12 inches as an instrument example. Browser demo
 samples are generated in code and kept separate from saved personal state.
 
@@ -397,13 +469,14 @@ completing a task clears its featured countdown, and removing a task or its date
 cleans up the link. Older standalone deadlines remain usable in the unified
 browser list and through the existing CLI commands.
 
-JSON is deliberately simpler than Markdown front matter: one established serde
-parser, an explicit format version, and no ambiguity between prose and structured
-data. It is human-readable and editable while Jig is stopped. No personal state
-is committed; the public preview contains only synthetic samples. A terminal or
-CLI save on each successful mutation uses a same-directory temporary file, file sync, atomic rename and directory sync on Linux. Invalid or
-unsupported state produces an error and is never silently reset. Files created
-on Unix use mode 0600.
+JSON remains the native state and browser autosave format: an established serde
+parser, an explicit version, and straightforward human-readable backups. ODS is
+the browser's main portable document and carries this same state as metadata.
+The JSON file is editable while Jig is stopped. No personal state is committed;
+the public preview contains only synthetic samples. Each successful native
+mutation uses a same-directory temporary file, file sync, atomic rename and
+directory sync on Linux. Invalid or unsupported state produces an error and is
+never silently reset. Files created on Unix use mode 0600.
 
 Only one Jig process can open a given file at once. After a crash, check that no
 Jig process is running, then remove the lock formed by appending `.lock` to the
@@ -416,14 +489,12 @@ and displays an error. Quit retries the save. Preferences are also saved on quit
 
 ## Development
 
-Single crate: `src/lib.rs` exposes portable logic; `src/main.rs`, `storage.rs`
-and `tui.rs` adapt it for Linux files, commands and the terminal. `src/web.rs`
-implements the egui browser dashboard, and `src/browser_storage.rs` plus
-`web/bridge.js` adapt browser-local storage and file import/export. Terminal and
-web dependencies are optional and target-specific. No filesystem, DOM, terminal,
-CLI or network API is used by the core modules. Chrono supplies calendar
-and timezone arithmetic; serde supplies portable serialization. Arithmetic is a
-small bounded parser for the deliberately limited grammar.
+One crate keeps portable logic in `model`, `spreadsheet`, `sheet_formula`,
+`charts`, `documents`, calculation, calendar, task and mesh modules. File parsing,
+formulas, chart scenes and document exports accept in-memory data. Native storage,
+CLI/TUI, egui presentation and browser adapters stay separate. Browser file and
+clipboard access use a small JavaScript bridge; the main spreadsheet and shared
+business logic are Rust. See `web/font-license.txt` for bundled font licenses.
 
 ```sh
 cargo fmt --check
@@ -432,38 +503,32 @@ cargo test --locked
 cargo build --locked
 python3 tests/terminal_smoke.py
 cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features web --bin jig-web -- -D warnings
+python3 scripts/fetch_ocr_assets.py
 trunk build --release --public-url /Jig/
 ```
 
-Tests cover arithmetic errors and precedence, percentages, precise result reuse,
-conversion round trips and fractions, checklist changes, deadlines/timezones,
-leap years, labelled synthetic samples, state serialization, safe saves, locking,
-CLI restart persistence, rejected intermediate arithmetic overflow, and imported
-history containing terminal controls.
-GitHub Actions runs the same checks, a Linux PTY smoke check, and a release build.
-The PTY check verifies idle countdown redraws, keyboard input, resizing, restart
-persistence and terminal restoration. CI publishes the Linux binary as an artifact.
+Core tests exercise formula precedence, anchors/ranges, reference changes,
+dates, styles, merges, charts, ODS metadata/foreign-grid imports and real Unicode
+PDF content/pagination, alongside existing utility and persistence tests. The
+workflows define native checks, a Linux PTY smoke check, browser suites and Pages
+deployment. Run the checks appropriate to a change before publishing it.
 
-## Limitations and next steps
+## Limits and next steps
 
-The native dashboard is keyboard-only. The browser supports mouse and keyboard,
-but the egui canvas currently has limited screen-reader accessibility. Browser
-background tabs may throttle the otherwise one-second countdown refresh. Browser
-storage can be cleared or unavailable; JSON export is the portable backup.
-Browser state is capped at 2 MiB; CLI history is intentionally unbounded.
+This is a bounded spreadsheet for small local documents and task plans. It has
+no macros, external workbook links, XLSX support, advanced spreadsheet functions,
+collaboration, account classification, tax calculation or tax filing. Numeric
+arithmetic uses `f64`, not exact decimal accounting. Check imported statement
+amounts against the original before using them for preparation or reporting.
 
-Arithmetic uses f64 rather than exact decimal/rational values. Undo is currently
-available in the browser; the terminal has no undo. There are no recurring
-deadlines, timezone database selection, external calendar sync, scientific
-calculator or automatic backup retention. The native terminal editor
-uses append/backspace editing. No native graphical application is included.
-The preview bundles monospace fonts and makes no remote font requests.
-Optional weather sends the selected location to Open-Meteo as described above. It has no service worker: reopening it offline depends on the browser's
-asset cache; use the native binary for dependable offline launch.
+Grid column widths are currently fixed; long text clips and oversized numeric
+values show `####`. The egui canvas has limited screen-reader accessibility.
+Browser background tabs may throttle the featured countdown. There is no service
+worker: offline reopening depends on cached assets; the native binary launches
+offline reliably. Fresh weather and optional OCR asset downloads need a connection.
+No native graphical build is included yet; terminal tools keep their existing
+keyboard interface and append/backspace editor.
 
-The layout follows the supplied concept with compact instruments and optional weather;
-priorities and additional measurement modes are outside this milestone.
-Next, validate the browser preview on real devices, improve canvas accessibility
-and narrow layouts, and address concrete feedback before adding tools. The
-[Actions page](https://github.com/biraz-dev/Jig/actions) shows build progress;
-[preview notes](docs/preview.md) describe Pages deployment and follow-up work.
+Next, validate real ODS/statement examples and touch/keyboard use, improve printing
+and accessibility where concrete documents expose gaps, and keep expanding the
+supported subset only when it serves actual work.

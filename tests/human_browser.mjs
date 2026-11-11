@@ -98,6 +98,10 @@ async function open(label, viewport = { width: 1440, height: 1000 }, sourceDivis
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   expanded.set(page, false);
   await page.waitForTimeout(500);
+  // The spreadsheet is the launch workspace; exercise the retained Workbench.
+  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press("Control+Alt+w");
+  await paint(page);
   await page.locator("#jig-stl-import").setInputFiles({ name: `Sample-human-${sourceDivisor === 1 ? "millimeters" : "centimeters"}.stl`, mimeType: "model/stl", buffer: box(sourceDivisor) });
   await page.waitForTimeout(1300);
   await paint(page);

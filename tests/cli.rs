@@ -1,5 +1,203 @@
 use std::{fs, process::Command};
 #[test]
+fn cli_sheets_share_formulas_csv_and_portable_state_without_replacing_workbench_data() {
+    let dir = std::env::temp_dir().join(format!("jig-cli-sheet-test-{}", std::process::id()));
+    let path = dir.join("state.json");
+    let invoke = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_jig"))
+            .arg("--state")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let load = || jig::model::State::from_json(&fs::read_to_string(&path).unwrap()).unwrap();
+    let listed = invoke(&["sheet", "list"]);
+    assert!(listed.status.success());
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("Sheet 1"));
+    assert!(invoke(&["sheet", "get", "A1"]).status.success());
+    assert!(
+        !path.exists(),
+        "Read-only sheet access must not create a state file"
+    );
+    assert!(!invoke(&["sheet", "set", "BA1", "5"]).status.success());
+    assert!(
+        !path.exists(),
+        "Rejected edits must not create a workbook or file"
+    );
+
+    assert!(invoke(&["tasks", "add", "Photograph sculpture"])
+        .status
+        .success());
+    assert!(invoke(&["tasks", "due", "1", "2030-01-15T12:00:00Z"])
+        .status
+        .success());
+    assert!(invoke(&["tasks", "star", "1"]).status.success());
+    assert!(invoke(&["calc", "1 / 3"]).status.success());
+    let original = serde_json::to_value(load()).unwrap();
+    assert!(load().workbook.is_none());
+    let legacy_bytes = fs::read(&path).unwrap();
+    assert!(invoke(&["sheet", "list"]).status.success());
+    assert!(invoke(&["sheet", "get", "A1", "--raw"]).status.success());
+    assert!(invoke(&["sheet", "export"]).status.success());
+    assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
+
+    for args in [
+        ["sheet", "set", "A1", "12.5"],
+        ["sheet", "set", "B1", "2"],
+        ["sheet", "set", "C1", "=A1*B1"],
+        ["sheet", "set", "A2", "Sample: sculpture"],
+        ["sheet", "set", "B2", "=SUM(A1:C1)"],
+    ] {
+        let result = invoke(&args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let result = invoke(&["sheet", "get", "C1", "--sheet", "sheet 1"]);
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), "25.00");
+    assert_eq!(
+        String::from_utf8_lossy(&invoke(&["sheet", "get", "B2"]).stdout).trim(),
+        "39.50"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&invoke(&["sheet", "get", "C1", "--raw"]).stdout).trim(),
+        "=A1*B1"
+    );
+    let state = load();
+    let workbook = state.workbook.as_ref().unwrap();
+    assert_eq!(workbook.sheets.len(), 1);
+    assert_eq!(workbook.sheets[0].cells.len(), 5);
+    let after = serde_json::to_value(&state).unwrap();
+    for field in [
+        "tasks",
+        "deadlines",
+        "entries",
+        "featured",
+        "history",
+        "preferences",
+    ] {
+        assert_eq!(
+            after[field], original[field],
+            "Sheet edits must preserve {field}"
+        );
+    }
+    let saved = fs::read(&path).unwrap();
+    assert!(invoke(&["sheet", "get", "C1"]).status.success());
+    for args in [
+        vec!["sheet", "set", "A1001", "5"],
+        vec!["sheet", "set", "A1", "5", "--sheet", "missing"],
+        vec!["sheet", "get", "A1", "--sheet", "missing"],
+    ] {
+        assert!(!invoke(&args).status.success());
+        assert_eq!(fs::read(&path).unwrap(), saved);
+    }
+
+    let input = dir.join("sample-input.csv");
+    fs::write(
+        &input,
+        "\"Sample, label\",3.125\r\n\"line1\nline2\",=A1*2\r\n",
+    )
+    .unwrap();
+    let imported = invoke(&["sheet", "import", input.to_str().unwrap(), "--at", "D3"]);
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&invoke(&["sheet", "get", "D3"]).stdout).trim(),
+        "Sample, label"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&invoke(&["sheet", "get", "E3", "--raw"]).stdout).trim(),
+        "3.125"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&invoke(&["sheet", "get", "E4"]).stdout).trim(),
+        "25.00"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&invoke(&["sheet", "get", "C1"]).stdout).trim(),
+        "25.00"
+    );
+    let after_import = fs::read(&path).unwrap();
+    let csv = invoke(&["sheet", "export"]);
+    assert!(csv.status.success());
+    let csv = String::from_utf8(csv.stdout).unwrap();
+    assert!(
+        csv.contains("3.125"),
+        "CSV values must preserve unrounded numbers"
+    );
+    assert!(csv.contains("\"Sample, label\""));
+    assert!(csv.contains("\"line1\nline2\""));
+    assert!(
+        !csv.contains("=A1"),
+        "CSV export contains evaluated values; JSON retains formulas"
+    );
+    let output = dir.join("sample-values.csv");
+    assert!(invoke(&["sheet", "export", output.to_str().unwrap()])
+        .status
+        .success());
+    assert_eq!(fs::read_to_string(&output).unwrap(), csv);
+    assert!(!invoke(&["sheet", "export", output.to_str().unwrap()])
+        .status
+        .success());
+    assert_eq!(
+        fs::read_to_string(&output).unwrap(),
+        csv,
+        "Exports must not overwrite existing files"
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        after_import,
+        "Exports are read-only for application state"
+    );
+
+    let invalid = dir.join("invalid.csv");
+    fs::write(&invalid, "\"unterminated").unwrap();
+    assert!(!invoke(&["sheet", "import", invalid.to_str().unwrap()])
+        .status
+        .success());
+    assert!(
+        !invoke(&["sheet", "import", input.to_str().unwrap(), "--at", "AZ1000"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        after_import,
+        "Rejected CSV imports must be atomic"
+    );
+    assert!(invoke(&["sheet", "set", "F1", "=F1"]).status.success());
+    let with_cycle = fs::read(&path).unwrap();
+    let error = invoke(&["sheet", "get", "F1"]);
+    assert!(!error.status.success());
+    assert!(!error.stderr.is_empty());
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        with_cycle,
+        "Reading a formula error must not change state"
+    );
+    let restored = load();
+    let restored = serde_json::to_value(&restored).unwrap();
+    for field in [
+        "tasks",
+        "deadlines",
+        "entries",
+        "featured",
+        "history",
+        "preferences",
+    ] {
+        assert_eq!(restored[field], original[field]);
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn cli_shares_state_and_returns_predictable_errors() {
     let dir = std::env::temp_dir().join(format!("jig-cli-test-{}", std::process::id()));
     let path = dir.join("state.json");

@@ -22,8 +22,13 @@ required-features = ["web"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+lopdf = { version = "0.38", default-features = false, features = ["wasm_js"] }
+quick-xml = "0.38"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+ttf-parser = "0.25"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap = { version = "4.5", features = ["derive"], optional = true }

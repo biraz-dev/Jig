@@ -4,3 +4,10 @@ jig.json.*
 /dist/
 /node_modules/
 /playwright-results/
+/.jig-cache/
+__pycache__/
+/web/vendor/ocr/**
+!/web/vendor/ocr/**/
+!/web/vendor/ocr/**/*.txt
+!/web/vendor/ocr/**/LICENSE*
+!/web/vendor/ocr/manifest.json

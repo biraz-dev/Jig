@@ -85,6 +85,10 @@ async function boot(page, reload = false) {
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   await page.waitForTimeout(500);
+  // The spreadsheet is the launch workspace; exercise the retained Workbench.
+  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press("Control+Alt+w");
+  await paint(page);
 }
 async function state(page) { return page.evaluate(key => JSON.parse(localStorage.getItem(key)), storageKey); }
 async function raw(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }

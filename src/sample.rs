@@ -69,6 +69,36 @@ pub fn state(now: DateTime<Utc>) -> State {
             .set_entry(None, title, &now.date_naive().to_string())
             .expect("Built-in sample calendar entry is valid");
     }
+    let mut workbook = crate::spreadsheet::Workbook::default();
+    let sheet = workbook.sheets[0].id;
+    workbook
+        .rename_sheet(sheet, "Sample sheet")
+        .expect("Built-in sample sheet name is valid");
+    let rows: Vec<Vec<String>> = [
+        vec![
+            "Sample: test bar",
+            "Start (mm)",
+            "Fired (mm)",
+            "Shrinkage (%)",
+        ],
+        vec!["Sample A", "100", "94", "=(B2-C2)/B2*100"],
+        vec![],
+        vec!["Sample: studio costs", "Amount"],
+        vec!["Sample: materials", "42.5"],
+        vec!["Sample: firing", "18"],
+        vec!["Sample: total", "=SUM(B5:B6)"],
+    ]
+    .into_iter()
+    .map(|row| row.into_iter().map(str::to_owned).collect())
+    .collect();
+    workbook
+        .set_block(
+            sheet,
+            crate::spreadsheet::CellAddr { row: 0, col: 0 },
+            &rows,
+        )
+        .expect("Built-in sample cells are valid");
+    state.workbook = Some(workbook);
     state
 }
 
@@ -96,6 +126,18 @@ mod tests {
         assert!(first.tasks.iter().any(|t| t.complete));
         assert!(first.tasks.iter().any(|t| !t.complete));
         assert_eq!(first.history[0].result, 1.0 / 3.0);
+        let workbook = first.workbook.as_ref().unwrap();
+        assert_eq!(workbook.sheets[0].name, "Sample sheet");
+        assert_eq!(
+            workbook
+                .recalculate()
+                .value(
+                    workbook.sheets[0].id,
+                    crate::spreadsheet::CellAddr { row: 1, col: 3 }
+                )
+                .display(2),
+            "6.00"
+        );
     }
 
     #[test]

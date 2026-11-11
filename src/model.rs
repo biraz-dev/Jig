@@ -111,6 +111,8 @@ pub struct State {
     pub deadlines: Vec<Deadline>,
     pub entries: Vec<Entry>,
     pub featured: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workbook: Option<crate::spreadsheet::Workbook>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -122,6 +124,7 @@ impl Default for State {
             deadlines: vec![],
             entries: vec![],
             featured: None,
+            workbook: None,
         }
     }
 }
@@ -185,6 +188,9 @@ impl State {
         }
         if let Some(settings) = &self.preferences.clay {
             settings.validate()?;
+        }
+        if let Some(workbook) = &self.workbook {
+            workbook.validate()?;
         }
         if self.history.iter().any(|h| {
             !h.result.is_finite()

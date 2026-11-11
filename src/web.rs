@@ -1,6 +1,9 @@
 //! egui adapter for the same local utility model used by the CLI and terminal.
 use crate::{
     browser_storage,
+    chart_ui::{ChartAction, ChartPanel},
+    pdf_import_ui::{PdfImportAction, PdfImportPanel},
+    spreadsheet_ui::{SheetAction, SheetPanel},
     stl_ui::{Snapshot as StlSnapshot, StlPanel},
     timeline_ui::{TimelineAction, TimelinePanel},
     weather_ui::WeatherPanel,
@@ -10,6 +13,7 @@ use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit
 use jig::{
     calendar,
     model::{State, TaskColor},
+    spreadsheet::{self, CellAddr, Workbook},
 };
 use std::time::Duration;
 
@@ -105,6 +109,19 @@ pub struct BrowserApp {
     selected_date: NaiveDate,
     timeline_view: bool,
     timeline: TimelinePanel,
+    sheet: SheetPanel,
+    sheet_workspace: bool,
+    pending_csv_target: Option<(u64, CellAddr)>,
+    pending_paste_target: Option<(u64, CellAddr)>,
+    tasks_workspace: bool,
+    charts_view: bool,
+    charts: ChartPanel,
+    pdf_target: Option<(u64, CellAddr)>,
+    pdf_preview: Option<PdfImportPanel>,
+    pdf_documents: Vec<jig::pdf_import::ExtractedPdf>,
+    pdf_errors: Vec<String>,
+    ocr_original: Option<jig::pdf_import::ExtractedPdf>,
+    ocr_running: bool,
 }
 
 impl BrowserApp {
@@ -131,6 +148,20 @@ impl BrowserApp {
             .text_styles
             .insert(egui::TextStyle::Monospace, FontId::monospace(14.0));
         cc.egui_ctx.set_style(style);
+        let mut fonts = egui::FontDefinitions::default();
+        for (name, bytes) in [
+            ("jig-mono", jig::sheet_fonts::MONO),
+            ("jig-sans", jig::sheet_fonts::SANS),
+            ("jig-serif", jig::sheet_fonts::SERIF),
+        ] {
+            fonts
+                .font_data
+                .insert(name.into(), egui::FontData::from_static(bytes).into());
+            fonts
+                .families
+                .insert(FontFamily::Name(name.into()), vec![name.into()]);
+        }
+        cc.egui_ctx.set_fonts(fonts);
         let (mut state, demo, status, storage_error) = match browser_storage::load() {
             Ok(Some(state)) => (
                 state,
@@ -193,10 +224,25 @@ impl BrowserApp {
             selected_date: today,
             timeline_view: false,
             timeline: TimelinePanel::new(today),
+            sheet: SheetPanel::new(),
+            sheet_workspace: true,
+            pending_csv_target: None,
+            pending_paste_target: None,
+            tasks_workspace: false,
+            charts_view: false,
+            charts: ChartPanel::new(),
+            pdf_target: None,
+            pdf_preview: None,
+            pdf_documents: Vec::new(),
+            pdf_errors: Vec::new(),
+            ocr_original: None,
+            ocr_running: false,
         }
     }
 
     fn changed(&mut self) {
+        self.sheet.invalidate();
+        self.charts.invalidate();
         // Finish an earlier viewer gesture before recording this data action.
         self.stl.finish_undo_gesture();
         self.collect_viewer_undo();
@@ -282,6 +328,11 @@ impl BrowserApp {
     }
 
     fn reset_undo(&mut self) {
+        self.cancel_document_import();
+        self.charts.reset();
+        self.sheet.reset();
+        self.pending_csv_target = None;
+        browser_storage::cancel_csv();
         self.timeline = TimelinePanel::new(Local::now().date_naive());
         self.undo_history.clear();
         self.stl.clear_undo();
@@ -321,6 +372,8 @@ impl BrowserApp {
     }
 
     fn reset_editors(&mut self) {
+        self.sheet.restore_data();
+        self.charts.invalidate();
         self.task_edit = None;
         self.task_color_edit = None;
         self.task_text.clear();
@@ -334,6 +387,742 @@ impl BrowserApp {
         self.feature_after_date = false;
         self.focus_task_date = false;
         self.calculation.clear();
+    }
+
+    fn apply_sheet_action(&mut self, action: SheetAction) -> bool {
+        match &action {
+            SheetAction::ImportCsv(id) => {
+                self.cancel_document_import();
+                self.pending_csv_target = Some((*id, self.sheet.selection().start));
+                if let Err(error) = browser_storage::request_csv() {
+                    self.pending_csv_target = None;
+                    self.status = error;
+                    return false;
+                }
+                return true;
+            }
+            SheetAction::ExportCsv(id) => {
+                let empty = Workbook::default();
+                let book = self.state.workbook.as_ref().unwrap_or(&empty);
+                let result = book
+                    .export_csv_at(*id, Local::now().date_naive())
+                    .and_then(|csv| {
+                        browser_storage::download_csv(&csv, &format!("jig-sheet-{id}.csv"))
+                    });
+                self.status = match result {
+                    Ok(()) => {
+                        "CSV values downloaded. Save ODS to retain formulas, formatting and Jig tools."
+                            .into()
+                    }
+                    Err(error) => error,
+                };
+                return true;
+            }
+            SheetAction::OpenOds => {
+                self.cancel_document_import();
+                if let Err(error) = browser_storage::request_ods() {
+                    self.status = error;
+                    return false;
+                }
+                return true;
+            }
+            SheetAction::SaveOds => {
+                let result = jig::documents::save_ods(&self.state).and_then(|bytes| {
+                    browser_storage::download_binary(
+                        &bytes,
+                        "jig.ods",
+                        "application/vnd.oasis.opendocument.spreadsheet",
+                    )
+                });
+                self.status = match result {
+                    Ok(()) => {
+                        "ODS document download prepared with your workbook, tasks and Jig data."
+                            .into()
+                    }
+                    Err(error) => error,
+                };
+                return true;
+            }
+            SheetAction::ExportPdf(id) => {
+                let selected = self.sheet.selection();
+                let area = (selected.rows() > 1 || selected.cols() > 1).then_some(selected);
+                let result = jig::documents::export_pdf(&self.state, *id, area).and_then(|bytes| {
+                    browser_storage::download_binary(&bytes, "jig-sheet.pdf", "application/pdf")
+                });
+                self.status = match result {
+                    Ok(()) => "PDF download prepared from the sheet and its charts.".into(),
+                    Err(error) => error,
+                };
+                return true;
+            }
+            SheetAction::ImportPdf(id) => {
+                self.cancel_document_import();
+                let mut origin = self.sheet.selection().start;
+                if origin == CellAddr::new(0, 0) {
+                    if let Some(range) = self
+                        .state
+                        .workbook
+                        .as_ref()
+                        .and_then(|book| book.used_range(*id))
+                    {
+                        if range.end.row + 1 < spreadsheet::MAX_ROWS {
+                            origin.row = range.end.row + 1;
+                        } else {
+                            self.status = "No rows remain below this sheet. Choose a blank sheet for the document import.".into();
+                            return false;
+                        }
+                    }
+                }
+                self.pdf_target = Some((*id, origin));
+                self.charts_view = false;
+                if let Err(error) = browser_storage::request_pdf() {
+                    self.pdf_target = None;
+                    self.status = error;
+                    return false;
+                }
+                return true;
+            }
+            SheetAction::ImportJson => {
+                self.cancel_document_import();
+                if let Err(error) = browser_storage::request_import() {
+                    self.status = error;
+                    return false;
+                }
+                return true;
+            }
+            SheetAction::ExportJson => {
+                if let Err(error) = browser_storage::download(&self.state) {
+                    self.status = error;
+                    return false;
+                }
+                self.status = "JSON backup download prepared.".into();
+                return true;
+            }
+            SheetAction::PasteClipboard { sheet, origin } => {
+                self.pending_paste_target = Some((*sheet, *origin));
+                if let Err(error) = browser_storage::request_clipboard() {
+                    self.status = error;
+                    return false;
+                }
+                return true;
+            }
+            SheetAction::ShowCharts => {
+                self.charts_view = true;
+                return true;
+            }
+            SheetAction::Decimals(decimals) => {
+                if *decimals <= 10 && self.state.preferences.decimals != *decimals {
+                    self.state.preferences.decimals = *decimals;
+                    self.changed();
+                }
+                return true;
+            }
+            _ => {}
+        }
+        let mut book = self.state.workbook.clone().unwrap_or_default();
+        let result = match &action {
+            SheetAction::SetCell { sheet, addr, raw } => book.set_cell(*sheet, *addr, raw),
+            SheetAction::SetBlock {
+                sheet,
+                origin,
+                rows,
+            } => book.set_block(*sheet, *origin, rows),
+            SheetAction::Clear { sheet, range } => book.clear(*sheet, *range),
+            SheetAction::AddSheet(name) => book.add_sheet(name).map(|_| true),
+            SheetAction::RenameSheet { sheet, name } => book.rename_sheet(*sheet, name),
+            SheetAction::RemoveSheet(sheet) => book.remove_sheet(*sheet),
+            SheetAction::PatchStyle {
+                sheet,
+                range,
+                patch,
+            } => book.patch_style(*sheet, *range, patch.clone()),
+            SheetAction::SetBorders {
+                sheet,
+                range,
+                preset,
+            } => book.set_borders(*sheet, *range, *preset),
+            SheetAction::InsertRows { sheet, at, count } => book.insert_rows(*sheet, *at, *count),
+            SheetAction::DeleteRows { sheet, at, count } => book.delete_rows(*sheet, *at, *count),
+            SheetAction::InsertColumns { sheet, at, count } => {
+                book.insert_columns(*sheet, *at, *count)
+            }
+            SheetAction::DeleteColumns { sheet, at, count } => {
+                book.delete_columns(*sheet, *at, *count)
+            }
+            SheetAction::Merge { sheet, range } => book.merge(*sheet, *range),
+            SheetAction::Unmerge { sheet, range } => book.unmerge(*sheet, *range),
+            SheetAction::AddChart {
+                kind,
+                source,
+                title,
+            } => book.add_chart(*kind, *source, title).map(|_| true),
+            _ => unreachable!("Non-data sheet actions were handled above"),
+        };
+        match result {
+            Ok(changed) => {
+                if changed {
+                    self.state.workbook = Some(book);
+                    self.changed();
+                    if matches!(action, SheetAction::AddChart { .. }) {
+                        self.charts_view = true;
+                    }
+                }
+                true
+            }
+            Err(error) => {
+                self.status = error.clone();
+                self.sheet.reject_action(&action, error);
+                false
+            }
+        }
+    }
+
+    fn flush_sheet_edit(&mut self) -> bool {
+        match self.sheet.commit_pending() {
+            Some(action) => self.apply_sheet_action(action),
+            None => true,
+        }
+    }
+
+    fn set_workspace(&mut self, sheet: bool, ctx: &egui::Context) -> bool {
+        if self.sheet_workspace == sheet && !self.tasks_workspace {
+            return true;
+        }
+        if !self.flush_sheet_edit() {
+            return false;
+        }
+        self.sheet_workspace = sheet;
+        self.tasks_workspace = false;
+        browser_storage::set_workspace(if sheet { "sheet" } else { "workbench" });
+        self.focus_calculator = false;
+        self.focus_task_date = false;
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+        if sheet {
+            self.sheet.request_focus();
+        }
+        ctx.request_repaint();
+        true
+    }
+
+    fn spreadsheet(&mut self, ui: &mut Ui) {
+        if self.document_import_panel(ui) {
+            return;
+        }
+        if self.charts_view {
+            ui.horizontal(|ui| {
+                if ui.button("Save .ods").clicked() {
+                    self.apply_sheet_action(SheetAction::SaveOds);
+                }
+                if ui.button("Export PDF").clicked() {
+                    self.apply_sheet_action(SheetAction::ExportPdf(self.sheet.active_sheet()));
+                }
+            });
+            for action in self.charts.ui(ui, &self.state) {
+                self.apply_chart_action(action);
+            }
+            return;
+        }
+        let empty = Workbook::default();
+        let book = self.state.workbook.as_ref().unwrap_or(&empty);
+        let actions = self.sheet.ui(ui, book, self.state.preferences.decimals);
+        for action in actions {
+            let applied = match action {
+                SheetAction::ShowTasks => self.show_tasks(ui.ctx()),
+                SheetAction::ShowWorkbench => self.set_workspace(false, ui.ctx()),
+                SheetAction::Undo => {
+                    self.undo_last(ui.ctx());
+                    true
+                }
+                action => self.apply_sheet_action(action),
+            };
+            ui.ctx().request_repaint();
+            if !applied {
+                break;
+            }
+        }
+    }
+
+    fn show_tasks(&mut self, ctx: &egui::Context) -> bool {
+        if !self.flush_sheet_edit() {
+            return false;
+        }
+        self.sheet_workspace = false;
+        self.tasks_workspace = true;
+        self.focus = 1;
+        self.expanded = false;
+        self.timeline_view = true;
+        self.focus_calculator = false;
+        self.focus_task_date = false;
+        browser_storage::set_workspace("tasks");
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+        ctx.request_repaint();
+        true
+    }
+
+    fn workspace_buttons(&mut self, ui: &mut Ui) {
+        let sense = egui::Sense::click().difference(egui::Sense::focusable_noninteractive());
+        if ui
+            .add(
+                egui::Button::new("Sheet")
+                    .selected(self.sheet_workspace)
+                    .sense(sense),
+            )
+            .on_hover_text("Spreadsheet workspace · Ctrl-Alt-W switches to/from Workbench")
+            .clicked()
+        {
+            self.set_workspace(true, ui.ctx());
+        }
+        if ui
+            .add(
+                egui::Button::new("Tasks")
+                    .selected(self.tasks_workspace)
+                    .sense(sense),
+            )
+            .on_hover_text("Your existing tasks and Gantt timeline · Ctrl-Alt-2")
+            .clicked()
+        {
+            self.show_tasks(ui.ctx());
+        }
+        if (self.sheet_workspace || self.tasks_workspace)
+            && ui
+                .add(egui::Button::new("Workbench").sense(sense))
+                .on_hover_text("Calculator, calendar, weather and STL tools · Ctrl-Alt-W")
+                .clicked()
+        {
+            self.set_workspace(false, ui.ctx());
+        }
+    }
+
+    fn tasks_main(&mut self, ui: &mut Ui, height: f32) {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Gantt chart").clicked() {
+                let action = SheetAction::AddChart {
+                    kind: jig::charts::ChartKind::Gantt,
+                    source: jig::charts::ChartSource::Tasks,
+                    title: "Task plan".into(),
+                };
+                if self.apply_sheet_action(action) {
+                    self.set_workspace(true, ui.ctx());
+                }
+            }
+            if ui.button("Save .ods").clicked() {
+                self.apply_sheet_action(SheetAction::SaveOds);
+            }
+        });
+        if self.expanded {
+            self.tool(ui, if self.focus == 2 { 2 } else { 1 }, height);
+        } else if ui.available_width() >= 800.0 {
+            let left = (ui.available_width() * 0.43).clamp(330.0, 600.0);
+            let right = ui.available_width() - left - 12.0;
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(left, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.tool(ui, 1, height),
+                );
+                ui.add_space(8.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.tool(ui, 2, height),
+                );
+            });
+        } else {
+            self.tool(ui, 1, 300.0);
+            ui.add_space(8.0);
+            self.tool(ui, 2, 350.0);
+        }
+    }
+
+    fn apply_chart_action(&mut self, action: ChartAction) {
+        if matches!(action, ChartAction::BackToGrid) {
+            self.charts_view = false;
+            self.sheet.request_focus();
+            return;
+        }
+        let mut book = self.state.workbook.clone().unwrap_or_default();
+        let result = match &action {
+            ChartAction::Rename { id, title } => book.rename_chart(*id, title),
+            ChartAction::Remove(id) => book.remove_chart(*id),
+            ChartAction::BackToGrid => Ok(false),
+        };
+        match result {
+            Ok(changed) => {
+                if changed {
+                    self.state.workbook = Some(book);
+                    self.changed();
+                }
+            }
+            Err(error) => {
+                self.status = error.clone();
+                self.charts.reject_action(&action, error);
+            }
+        }
+    }
+
+    fn cancel_document_import(&mut self) {
+        self.pending_csv_target = None;
+        self.pending_paste_target = None;
+        self.pdf_target = None;
+        self.pdf_preview = None;
+        self.pdf_documents.clear();
+        self.pdf_errors.clear();
+        self.ocr_original = None;
+        self.ocr_running = false;
+        browser_storage::cancel_documents();
+    }
+
+    fn import_rows(
+        &mut self,
+        sheet: u64,
+        origin: CellAddr,
+        rows: Vec<Vec<String>>,
+        title: &str,
+    ) -> bool {
+        self.import_formatted_rows(sheet, origin, rows, title, &[], &[])
+    }
+
+    fn import_formatted_rows(
+        &mut self,
+        sheet: u64,
+        origin: CellAddr,
+        rows: Vec<Vec<String>>,
+        title: &str,
+        date_columns: &[usize],
+        amount_columns: &[usize],
+    ) -> bool {
+        let apply = |book: &mut Workbook, target| -> Result<bool, String> {
+            let mut changed = book.set_block(target, origin, &rows)?;
+            if !rows.is_empty() {
+                for (columns, format) in [
+                    (date_columns, spreadsheet::NumberFormat::Date),
+                    (
+                        amount_columns,
+                        spreadsheet::NumberFormat::Currency("USD".into()),
+                    ),
+                ] {
+                    for column in columns {
+                        let start = CellAddr::new(origin.row, origin.col + column);
+                        let end = CellAddr::new(origin.row + rows.len() - 1, start.col);
+                        changed |= book.patch_style(
+                            target,
+                            spreadsheet::CellRange::new(start, end),
+                            spreadsheet::StylePatch {
+                                number_format: Some(format.clone()),
+                                ..Default::default()
+                            },
+                        )?;
+                    }
+                }
+            }
+            Ok(changed)
+        };
+        if !self.demo {
+            let mut book = self.state.workbook.clone().unwrap_or_default();
+            return match apply(&mut book, sheet) {
+                Ok(changed) => {
+                    if changed {
+                        self.state.workbook = Some(book);
+                        self.changed();
+                    }
+                    true
+                }
+                Err(error) => {
+                    self.status = error;
+                    false
+                }
+            };
+        }
+        // Importing a real file is an explicit move out of the temporary demo.
+        // Keep the user's saved tools and sheets, adding an import sheet when
+        // a workbook already exists instead of replacing it with sample data.
+        let base = match browser_storage::load() {
+            Ok(state) => state.unwrap_or_default(),
+            Err(error) => {
+                self.status = format!("Saved data was preserved; import could not start: {error}");
+                return false;
+            }
+        };
+        let existed = base.workbook.is_some();
+        let mut book = base.workbook.clone().unwrap_or_default();
+        let result = (|| -> Result<u64, String> {
+            let target = if existed {
+                let mut name = title.to_owned();
+                let mut suffix = 2;
+                while book
+                    .sheets
+                    .iter()
+                    .any(|sheet| sheet.name.eq_ignore_ascii_case(&name))
+                {
+                    name = format!("{title} {suffix}");
+                    suffix += 1;
+                }
+                book.add_sheet(&name)?
+            } else {
+                book.sheets[0].id
+            };
+            apply(&mut book, target)?;
+            Ok(target)
+        })();
+        match result {
+            Ok(target) => {
+                self.state = base;
+                self.demo = false;
+                self.storage_error = false;
+                self.reset_editors();
+                self.reset_undo();
+                self.state.workbook = Some(book);
+                self.changed();
+                self.sheet.activate(target);
+                self.sheet_workspace = true;
+                self.tasks_workspace = false;
+                browser_storage::set_workspace("sheet");
+                true
+            }
+            Err(error) => {
+                self.status = error;
+                false
+            }
+        }
+    }
+
+    fn process_pdf_events(&mut self) {
+        if self.pdf_target.is_none() || self.pdf_preview.is_some() {
+            return;
+        }
+        if self.ocr_running {
+            match browser_storage::take_ocr() {
+                Ok(Some(json)) => {
+                    self.ocr_running = false;
+                    match jig::pdf_import::ExtractedPdf::from_ocr_json(&json) {
+                        Ok(document) if document.has_text() => {
+                            let document = match self.ocr_original.take() {
+                                Some(original) => {
+                                    jig::pdf_import::ExtractedPdf::merge_ocr(original, document)
+                                }
+                                None => document,
+                            };
+                            self.pdf_documents.push(document);
+                        }
+                        Ok(_) => self
+                            .pdf_errors
+                            .push("Recognition found no readable text.".into()),
+                        Err(error) => self.pdf_errors.push(error),
+                    }
+                    self.ocr_original = None;
+                    browser_storage::next_pdf();
+                }
+                Ok(None) => return,
+                Err(error) => {
+                    self.ocr_running = false;
+                    self.ocr_original = None;
+                    self.pdf_errors.push(error);
+                    browser_storage::next_pdf();
+                }
+            }
+        }
+        if !self.ocr_running {
+            match browser_storage::take_pdf() {
+                Ok(Some(file)) => {
+                    let pdf = file.mime == "application/pdf"
+                        || file.name.to_ascii_lowercase().ends_with(".pdf")
+                        || file.bytes.starts_with(b"%PDF-");
+                    let extracted = if pdf {
+                        jig::pdf_import::extract(&file.bytes)
+                    } else {
+                        Err("Image requires local text recognition".into())
+                    }
+                    .map(|mut document| {
+                        document.set_name(&file.name);
+                        document
+                    });
+                    match extracted {
+                        Ok(mut document)
+                            if document.has_text()
+                                && document
+                                    .pages
+                                    .iter()
+                                    .all(|page| !page.text.trim().is_empty()) =>
+                        {
+                            document.set_name(&file.name);
+                            self.pdf_documents.push(document);
+                            browser_storage::next_pdf();
+                        }
+                        original => match browser_storage::start_ocr(&file) {
+                            Ok(()) => {
+                                self.ocr_original = original.ok();
+                                self.ocr_running = true;
+                                self.status = format!(
+                                    "Recognizing {} locally. Review amounts before importing.",
+                                    file.name
+                                );
+                            }
+                            Err(error) => {
+                                self.pdf_errors.push(format!("{}: {error}", file.name));
+                                browser_storage::next_pdf();
+                            }
+                        },
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.pdf_errors.push(error);
+                    browser_storage::next_pdf();
+                }
+            }
+        }
+        if !self.ocr_running && browser_storage::remaining_pdf() == 0 {
+            if !self.pdf_documents.is_empty() {
+                let document =
+                    jig::pdf_import::ExtractedPdf::combine(std::mem::take(&mut self.pdf_documents));
+                let (sheet, origin) = self.pdf_target.unwrap();
+                self.pdf_preview = Some(PdfImportPanel::new(document, sheet, origin));
+                self.status =
+                    "Documents read locally. Correct and select rows before importing.".into();
+            } else if !self.pdf_errors.is_empty() {
+                self.status = format!("No rows imported: {}", self.pdf_errors.join(" · "));
+                self.pdf_target = None;
+                self.pdf_errors.clear();
+            }
+        }
+    }
+
+    fn document_import_panel(&mut self, ui: &mut Ui) -> bool {
+        if self.pdf_target.is_none() {
+            return false;
+        }
+        if self.pdf_preview.is_none() {
+            let mut cancel = false;
+            ui.horizontal_wrapped(|ui| {
+                if self.ocr_running {
+                    let progress = browser_storage::ocr_progress();
+                    let status: serde_json::Value =
+                        serde_json::from_str(&progress).unwrap_or_default();
+                    let value = status["progress"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) as f32;
+                    let stage = status["stage"]
+                        .as_str()
+                        .unwrap_or("Recognizing text locally");
+                    ui.add(
+                        egui::ProgressBar::new(value)
+                            .desired_width(180.0)
+                            .text(stage),
+                    );
+                } else {
+                    ui.label("Choose PDF documents or transaction screenshots to review locally.");
+                }
+                cancel = ui.button("Cancel import").clicked();
+            });
+            if cancel {
+                self.cancel_document_import();
+            }
+            return self.ocr_running || browser_storage::remaining_pdf() > 0;
+        }
+        for error in &self.pdf_errors {
+            ui.colored_label(PINK, format!("File skipped: {error}"));
+        }
+        let action = self.pdf_preview.as_mut().and_then(|preview| preview.ui(ui));
+        match action {
+            Some(PdfImportAction::Cancel) => self.cancel_document_import(),
+            Some(PdfImportAction::Apply {
+                sheet,
+                origin,
+                rows,
+                date_columns,
+                amount_columns,
+            }) => {
+                let count = rows.len();
+                if self.import_formatted_rows(
+                    sheet,
+                    origin,
+                    rows,
+                    "Imported documents",
+                    &date_columns,
+                    &amount_columns,
+                ) {
+                    self.cancel_document_import();
+                    self.sheet.request_focus();
+                    self.status = format!(
+                        "Imported {count} reviewed rows locally. Undo restores the previous sheet."
+                    );
+                }
+            }
+            None => {}
+        }
+        true
+    }
+
+    fn process_document_events(&mut self) {
+        match browser_storage::take_csv() {
+            Ok(Some(text)) => {
+                if let Some((sheet, origin)) = self.pending_csv_target.take() {
+                    match spreadsheet::parse_delimited(&text, ',') {
+                        Ok(rows) => {
+                            self.import_rows(sheet, origin, rows, "Imported CSV");
+                        }
+                        Err(error) => self.status = format!("CSV import rejected: {error}"),
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.pending_csv_target = None;
+                self.status = error;
+            }
+        }
+        match browser_storage::take_clipboard() {
+            Ok(Some(text)) => {
+                if let Some((sheet, origin)) = self.pending_paste_target.take() {
+                    match self.sheet.paste_at(sheet, origin, &text) {
+                        Ok(action) => {
+                            self.apply_sheet_action(action);
+                        }
+                        Err(error) => self.status = error,
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.pending_paste_target = None;
+                self.status = error;
+            }
+        }
+        match browser_storage::take_ods() {
+            Ok(Some(bytes)) => match jig::documents::read_ods(&bytes) {
+                Ok(import) => {
+                    let state = match import.embedded_state {
+                        Some(state) => state,
+                        None => {
+                            let mut state = if self.demo {
+                                match browser_storage::load() {
+                                    Ok(state) => state.unwrap_or_default(),
+                                    Err(_) => State::default(),
+                                }
+                            } else {
+                                self.state.clone()
+                            };
+                            state.workbook = Some(import.workbook);
+                            state
+                        }
+                    };
+                    self.pending_import = Some(state);
+                    self.status = "ODS read locally. Review the import summary before replacing the current document.".into();
+                }
+                Err(error) => {
+                    self.status = format!("ODS import rejected; current data is unchanged: {error}")
+                }
+            },
+            Ok(None) => {}
+            Err(error) => self.status = error,
+        }
+        self.process_pdf_events();
     }
 
     fn focus_after_resize(&mut self, ctx: &egui::Context) {
@@ -398,7 +1187,7 @@ impl BrowserApp {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        let wide = ui.available_width() >= 900.0;
+        let wide = ui.available_width() >= 1000.0;
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("JIG")
@@ -408,6 +1197,7 @@ impl BrowserApp {
             );
             if wide {
                 ui.label(RichText::new("You are a small Small Giant Psionicist.").color(BLUE));
+                self.workspace_buttons(ui);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.selectable_label(self.data_open, "Data").clicked() {
@@ -415,11 +1205,14 @@ impl BrowserApp {
                 }
                 if ui
                     .add_enabled(
-                        !self.undo_history.is_empty() || self.stl.has_pending_undo(),
+                        !self.undo_history.is_empty()
+                            || self.stl.has_pending_undo()
+                            || (self.sheet_workspace && self.sheet.is_editing()),
                         egui::Button::new("Undo"),
                     )
-                    .on_hover_text("Undo the most recent workbench or STL change (Ctrl-Z)")
+                    .on_hover_text("Undo the most recent spreadsheet, task or STL change (Ctrl-Z)")
                     .clicked()
+                    && self.flush_sheet_edit()
                 {
                     self.undo_last(ui.ctx());
                 }
@@ -442,11 +1235,14 @@ impl BrowserApp {
             });
         });
         if !wide {
-            ui.label(
-                RichText::new("You are a small Small Giant Psionicist.")
-                    .color(BLUE)
-                    .small(),
-            );
+            ui.horizontal_wrapped(|ui| {
+                self.workspace_buttons(ui);
+                ui.label(
+                    RichText::new("You are a small Small Giant Psionicist.")
+                        .color(BLUE)
+                        .small(),
+                );
+            });
         }
         if self.data_open {
             ui.separator();
@@ -469,12 +1265,12 @@ impl BrowserApp {
                         self.status = "Sample mode. Your saved personal data has not changed.".into();
                     }
                 }
-                if ui.button("Import JSON").clicked() {
+                if ui.button("Import JSON").clicked() && self.flush_sheet_edit() {
                     if let Err(error) = browser_storage::request_import() {
                         self.status = error;
                     }
                 }
-                if ui.button("Export JSON").clicked() {
+                if ui.button("Export JSON").clicked() && self.flush_sheet_edit() {
                     self.status = match browser_storage::download(&self.state) {
                         Ok(()) => "JSON download prepared on this device.".into(),
                         Err(error) => error,
@@ -505,7 +1301,11 @@ impl BrowserApp {
             });
         }
         if let Some(import) = &self.pending_import {
-            let summary = format!("Import {} tasks, {} deadlines and {} calculations? This replaces the browser's saved dataset.", import.tasks.len(), import.deadlines.len(), import.history.len());
+            let sheets = import.workbook.as_ref().map_or(0, |book| book.sheets.len());
+            let cells = import.workbook.as_ref().map_or(0, |book| {
+                book.sheets.iter().map(|sheet| sheet.cells.len()).sum()
+            });
+            let summary = format!("Import {sheets} sheets / {cells} cells, {} tasks, {} deadlines and {} calculations? This replaces the browser's saved Jig data.", import.tasks.len(), import.deadlines.len(), import.history.len());
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(summary).color(PINK));
                 if ui.button("Confirm import").clicked() {
@@ -1695,8 +2495,10 @@ impl eframe::App for BrowserApp {
             ctx.set_theme(egui::ThemePreference::Dark);
         }
         ctx.request_repaint_after(Duration::from_secs(1));
+        self.process_document_events();
         self.weather.update();
         if self.stl.update() {
+            self.set_workspace(false, ctx);
             self.focus = 4;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1727,18 +2529,44 @@ impl eframe::App for BrowserApp {
             alt: true,
             ..Default::default()
         };
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::W)) {
+            self.set_workspace(!(self.sheet_workspace || self.tasks_workspace), ctx);
+        }
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num2)) {
+            self.show_tasks(ctx);
+        }
+        if self.sheet_workspace || self.tasks_workspace {
+            for (key, action) in [
+                (egui::Key::S, SheetAction::SaveOds),
+                (egui::Key::O, SheetAction::OpenOds),
+                (
+                    egui::Key::P,
+                    SheetAction::ExportPdf(self.sheet.active_sheet()),
+                ),
+            ] {
+                if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, key))
+                    && self.flush_sheet_edit()
+                {
+                    self.apply_sheet_action(action);
+                }
+            }
+        }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::N)) {
             self.confirm = Some(Confirm::Empty);
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
             self.open_local();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4))
+            && self.set_workspace(false, ctx)
+        {
             self.focus = 3;
             self.focus_calculator = true;
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num5)) {
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num5))
+            && self.set_workspace(false, ctx)
+        {
             self.focus = 4;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1751,7 +2579,9 @@ impl eframe::App for BrowserApp {
             self.stl.request_open_focus();
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::S)) {
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::S))
+            && self.set_workspace(false, ctx)
+        {
             self.focus = 4;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1766,7 +2596,9 @@ impl eframe::App for BrowserApp {
             self.stl.request_size_focus();
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::H)) {
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::H))
+            && self.set_workspace(false, ctx)
+        {
             self.focus = 4;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1779,7 +2611,9 @@ impl eframe::App for BrowserApp {
             self.stl.toggle_human_comparison();
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::G)) {
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::G))
+            && self.set_workspace(false, ctx)
+        {
             self.focus = 4;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1792,7 +2626,9 @@ impl eframe::App for BrowserApp {
             self.stl.toggle_grey_matcap();
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T)) {
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T))
+            && self.set_workspace(false, ctx)
+        {
             self.focus = 2;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -1815,16 +2651,25 @@ impl eframe::App for BrowserApp {
             self.data_open = !self.data_open;
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M)) {
+        if !self.sheet_workspace
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M))
+        {
             self.expanded = !self.expanded;
             self.focus_after_resize(ctx);
             ctx.request_repaint();
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
+        if !self.sheet_workspace
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
+        {
             self.expanded = !self.expanded;
             self.focus_after_resize(ctx);
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if self.sheet_workspace && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.confirm = None;
+        }
+        if !self.sheet_workspace
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
             self.expanded = false;
             self.confirm = None;
             self.focus_calculator = false;
@@ -1843,16 +2688,22 @@ impl eframe::App for BrowserApp {
             if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
                 self.undo_last(ctx);
             }
-            let previous = ctx.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-            });
-            let next = ctx.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-            });
+            let previous = !self.sheet_workspace
+                && ctx.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                });
+            let next = !self.sheet_workspace
+                && ctx.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                });
             if previous || next {
-                let order = [0, 2, 1, 3, 4];
+                let order: &[usize] = if self.tasks_workspace {
+                    &[1, 2]
+                } else {
+                    &[0, 2, 1, 3, 4]
+                };
                 let current = order
                     .iter()
                     .position(|index| *index == self.focus)
@@ -1882,18 +2733,28 @@ impl eframe::App for BrowserApp {
                 ));
                 ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
                 ui.label(
-                    RichText::new("Arrows select | Ctrl+M maximize | Esc return")
-                        .size(11.0)
-                        .color(BLUE),
+                    RichText::new(if self.sheet_workspace {
+                        "Arrows cells | Enter edit | Ctrl+G go to | Ctrl+Alt+W tools"
+                    } else {
+                        "Arrows select | Ctrl+M maximize | Esc return"
+                    })
+                    .size(11.0)
+                    .color(BLUE),
                 );
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.sheet_workspace {
+                self.spreadsheet(ui);
+                return;
+            }
             let height = ui.available_height().max(500.0);
             egui::ScrollArea::vertical()
                 .id_salt("dashboard")
                 .show(ui, |ui| {
-                    if self.expanded {
+                    if self.tasks_workspace {
+                        self.tasks_main(ui, height - 8.0);
+                    } else if self.expanded {
                         self.tool(ui, self.focus, height - 8.0);
                     } else if ui.available_width() >= 760.0 {
                         let featured = self

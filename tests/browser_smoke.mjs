@@ -192,6 +192,11 @@ async function boot(page, reload = false, address = base) {
   assert.equal(await page.locator("#loading").isHidden(), true);
   // WebRunner startup precedes the first painted egui frame.
   await page.waitForTimeout(500);
+  // The spreadsheet is the launch workspace; exercise the retained Workbench.
+  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press("Control+Alt+w");
+  await paint(page);
+  await page.waitForTimeout(250);
 }
 
 async function saved(page) {

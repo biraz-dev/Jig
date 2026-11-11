@@ -3,8 +3,16 @@ mod tui;
 
 use chrono::{Datelike, Local, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
-use jig::{calendar, model::State, stl, timeline, units};
-use std::{io::Read, path::PathBuf};
+use jig::{
+    calendar,
+    model::State,
+    spreadsheet::{CellAddr, CellValue, Workbook},
+    stl, timeline, units,
+};
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 #[derive(Parser)]
 #[command(
@@ -21,6 +29,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read and edit the same local workbook used by the browser spreadsheet
+    Sheet {
+        #[command(subcommand)]
+        action: Option<SheetAction>,
+    },
     /// Evaluate arithmetic or a length conversion, e.g. calc '72 in mm'; ans reuses the last number
     Calc { expression: String },
     /// List saved calculations (oldest first)
@@ -81,6 +94,44 @@ enum Command {
     Precision {
         #[arg(value_parser = clap::value_parser!(u8).range(0..=10))]
         decimals: u8,
+    },
+}
+#[derive(Subcommand)]
+enum SheetAction {
+    /// List worksheet IDs and names without creating or changing a workbook
+    List,
+    /// Print an evaluated cell, or its saved input with --raw
+    Get {
+        cell: String,
+        /// Worksheet name or ID (defaults to the first worksheet)
+        #[arg(long)]
+        sheet: Option<String>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Set text, a number, or a formula beginning with =; an empty input clears the cell
+    Set {
+        cell: String,
+        #[arg(allow_hyphen_values = true)]
+        input: String,
+        /// Worksheet name or ID (defaults to the first worksheet)
+        #[arg(long)]
+        sheet: Option<String>,
+    },
+    /// Paste a UTF-8 CSV file into a worksheet; FILE=- reads standard input
+    Import {
+        file: PathBuf,
+        /// First destination cell; other existing cells remain intact
+        #[arg(long, default_value = "A1")]
+        at: String,
+        #[arg(long)]
+        sheet: Option<String>,
+    },
+    /// Export evaluated cell values as CSV; omit FILE or use - for standard output
+    Export {
+        file: Option<PathBuf>,
+        #[arg(long)]
+        sheet: Option<String>,
     },
 }
 #[derive(Subcommand)]
@@ -181,6 +232,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 fn execute(command: Command, state: &mut State) -> Result<bool, String> {
     match command {
+        Command::Sheet { action } => {
+            return execute_sheet(action.unwrap_or(SheetAction::List), state);
+        }
         Command::Calc { expression } => {
             state.calculate(&expression)?;
             let answer = state.history.last().ok_or("No calculation result")?;
@@ -387,6 +441,105 @@ fn execute(command: Command, state: &mut State) -> Result<bool, String> {
         },
     }
     Ok(true)
+}
+
+fn sheet_id(workbook: &Workbook, selection: Option<&str>) -> Result<u64, String> {
+    match selection {
+        None => workbook.sheets.first().map(|sheet| sheet.id),
+        Some(selection) => workbook
+            .sheets
+            .iter()
+            .find(|sheet| {
+                sheet.name.eq_ignore_ascii_case(selection)
+                    || selection.parse::<u64>().ok() == Some(sheet.id)
+            })
+            .map(|sheet| sheet.id),
+    }
+    .ok_or_else(|| {
+        format!(
+            "Worksheet not found: {}",
+            selection.unwrap_or("first sheet")
+        )
+    })
+}
+
+fn execute_sheet(action: SheetAction, state: &mut State) -> Result<bool, String> {
+    let mut workbook = state.workbook.clone().unwrap_or_default();
+    let changed = match action {
+        SheetAction::List => {
+            for sheet in &workbook.sheets {
+                println!("{}\t{}\t{} cells", sheet.id, sheet.name, sheet.cells.len());
+            }
+            return Ok(false);
+        }
+        SheetAction::Get { cell, sheet, raw } => {
+            let sheet = sheet_id(&workbook, sheet.as_deref())?;
+            let cell = CellAddr::parse(&cell)?;
+            if raw {
+                println!("{}", workbook.raw(sheet, cell));
+            } else {
+                let value = workbook
+                    .recalculate_at(Local::now().date_naive())
+                    .value(sheet, cell);
+                if let CellValue::Error(error) = value {
+                    return Err(error.to_string());
+                }
+                println!("{}", value.display(state.preferences.decimals));
+            }
+            return Ok(false);
+        }
+        SheetAction::Set { cell, input, sheet } => {
+            let sheet = sheet_id(&workbook, sheet.as_deref())?;
+            workbook.set_cell(sheet, CellAddr::parse(&cell)?, &input)?
+        }
+        SheetAction::Import { file, at, sheet } => {
+            let sheet = sheet_id(&workbook, sheet.as_deref())?;
+            let source: Box<dyn Read> =
+                if file == std::path::Path::new("-") {
+                    Box::new(std::io::stdin())
+                } else {
+                    Box::new(std::fs::File::open(&file).map_err(|error| {
+                        format!("Could not open CSV {}: {error}", file.display())
+                    })?)
+                };
+            let mut text = String::new();
+            source
+                .take(2 * 1024 * 1024 + 1)
+                .read_to_string(&mut text)
+                .map_err(|error| format!("Could not read UTF-8 CSV: {error}"))?;
+            if text.len() > 2 * 1024 * 1024 {
+                return Err("CSV exceeds the 2 MiB input limit".into());
+            }
+            let rows = jig::spreadsheet::parse_delimited(&text, ',')?;
+            workbook.set_block(sheet, CellAddr::parse(&at)?, &rows)?
+        }
+        SheetAction::Export { file, sheet } => {
+            let sheet = sheet_id(&workbook, sheet.as_deref())?;
+            let csv = workbook.export_csv_at(sheet, Local::now().date_naive())?;
+            match file {
+                None => print!("{csv}"),
+                Some(file) if file == std::path::Path::new("-") => print!("{csv}"),
+                Some(file) => {
+                    let mut output = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&file)
+                        .map_err(|error| {
+                            format!("Could not create CSV {}: {error}", file.display())
+                        })?;
+                    output.write_all(csv.as_bytes()).map_err(|error| {
+                        format!("Could not write CSV {}: {error}", file.display())
+                    })?;
+                }
+            }
+            return Ok(false);
+        }
+    };
+    if changed {
+        workbook.validate()?;
+        state.workbook = Some(workbook);
+    }
+    Ok(changed)
 }
 
 fn inspect_stl(

@@ -1,9 +1,15 @@
 //! Portable utility logic. Terminal and filesystem adapters live in the binary.
 pub mod calculator;
 pub mod calendar;
+pub mod charts;
 pub mod clay;
+pub mod documents;
 pub mod model;
+pub mod pdf_import;
 pub mod sample;
+pub mod sheet_fonts;
+pub mod sheet_formula;
+pub mod spreadsheet;
 pub mod stl;
 pub mod stl_camera;
 pub mod stl_comparison;

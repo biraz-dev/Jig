@@ -131,6 +131,10 @@ async function open(label, viewport = { width: 1440, height: 1000 }) {
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   await page.waitForTimeout(500);
+  // The spreadsheet is the launch workspace; exercise the retained Workbench.
+  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press("Control+Alt+w");
+  await paint(page);
   expanded.set(page, false);
   await page.locator("#jig-stl-import").setInputFiles({ name: "Sample-camera-box.stl", mimeType: "model/stl", buffer: box() });
   await page.waitForTimeout(1300);

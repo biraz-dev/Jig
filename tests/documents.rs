@@ -4,7 +4,8 @@ use jig::{
     documents::{export_pdf, read_ods, save_ods},
     model::State,
     spreadsheet::{
-        CellAddr, CellBorders, CellFont, CellRange, CellStyle, CellValue, NumberFormat, Workbook,
+        CellAddr, CellAlignment, CellBorders, CellFont, CellRange, CellStyle, CellValue,
+        NumberFormat, Workbook,
     },
 };
 use std::io::{Cursor, Read, Write};
@@ -50,6 +51,8 @@ fn fixture() -> State {
         bold: true,
         italic: true,
         underline: true,
+        strike: true,
+        alignment: CellAlignment::Center,
         text_color: Some([20, 45, 90]),
         fill_color: Some([225, 235, 248]),
         borders: CellBorders::all(),
@@ -139,6 +142,9 @@ fn ods_is_standard_zip_with_formulas_styles_merges_and_exact_jig_roundtrip() {
     assert!(xml.contains("table:number-rows-spanned=\"2\""));
     assert!(xml.contains("fo:font-weight=\"bold\""));
     assert!(xml.contains("fo:font-style=\"italic\""));
+    assert!(xml.contains("fo:text-align=\"center\""));
+    assert!(xml.contains("style:text-line-through-style=\"solid\""));
+    assert!(xml.contains("style:text-line-through-type=\"single\""));
     assert!(xml.contains("office:value-type=\"date\" office:date-value=\"2026-11-11\""));
     assert!(xml.find("<table:shapes>").unwrap() < xml.find("<table:table-column ").unwrap());
     let imported = read_ods(&bytes).unwrap();
@@ -147,6 +153,77 @@ fn ods_is_standard_zip_with_formulas_styles_merges_and_exact_jig_roundtrip() {
         serde_json::to_value(state).unwrap()
     );
     std::fs::write("/tmp/jig-document-review.ods", &bytes).unwrap();
+}
+
+#[test]
+fn ods_standard_styles_preserve_all_alignments_strike_and_foreign_currency_without_metadata() {
+    let mut state = State::default();
+    let mut book = Workbook::default();
+    let alignments = [
+        CellAlignment::Auto,
+        CellAlignment::Left,
+        CellAlignment::Center,
+        CellAlignment::Right,
+    ];
+    for (row, alignment) in alignments.into_iter().enumerate() {
+        let address = CellAddr::new(row, 0);
+        book.set_cell(1, address, "12.5").unwrap();
+        book.set_style(
+            1,
+            CellRange::new(address, address),
+            CellStyle {
+                alignment,
+                strike: row % 2 == 0,
+                number_format: NumberFormat::Currency("GBP".into()),
+                ..CellStyle::default()
+            },
+        )
+        .unwrap();
+    }
+    state.workbook = Some(book.clone());
+    let bytes = save_ods(&state).unwrap();
+    let content = entry(&bytes, "content.xml");
+    let imported = read_ods(&package(&content, Some(&entry(&bytes, "styles.xml")))).unwrap();
+    assert!(imported.embedded_state.is_none());
+    for row in 0..4 {
+        let address = CellAddr::new(row, 0);
+        assert_eq!(imported.workbook.style(1, address), book.style(1, address));
+    }
+}
+
+#[test]
+fn external_ods_imports_inherited_alignment_strike_and_safe_fallbacks() {
+    let styles = r##"<office:document-styles xmlns:office="o" xmlns:style="s" xmlns:fo="f"><office:styles>
+      <style:style style:name="parent" style:family="table-cell"><style:paragraph-properties fo:text-align="end"/><style:text-properties style:text-line-through-style="dash" style:text-line-through-type="double"/></style:style>
+      <style:style style:name="child" style:family="table-cell" style:parent-style-name="parent"/>
+      <style:style style:name="off" style:family="table-cell" style:parent-style-name="child"><style:paragraph-properties fo:text-align="start"/><style:text-properties style:text-line-through-style="none"/></style:style>
+      <style:style style:name="unknown" style:family="table-cell" style:parent-style-name="parent"><style:paragraph-properties fo:text-align="justify"/><style:text-properties style:text-line-through-style="not-a-line"/></style:style>
+      <style:style style:name="no-type" style:family="table-cell"><style:paragraph-properties fo:text-align="center"/><style:text-properties style:text-line-through-style="solid" style:text-line-through-type="none"/></style:style>
+    </office:styles></office:document-styles>"##;
+    let content = r##"<office:document-content xmlns:office="o" xmlns:table="t" xmlns:text="x"><office:body><office:spreadsheet><table:table table:name="Imported"><table:table-row>
+      <table:table-cell table:style-name="child" office:value-type="currency" office:currency="JPY" office:value="123"/>
+      <table:table-cell table:style-name="off" office:value-type="string"><text:p>Off</text:p></table:table-cell>
+      <table:table-cell table:style-name="unknown" office:value-type="string"><text:p>Fallback</text:p></table:table-cell>
+      <table:table-cell table:style-name="no-type" office:value-type="string"><text:p>Center</text:p></table:table-cell>
+    </table:table-row></table:table></office:spreadsheet></office:body></office:document-content>"##;
+    let imported = read_ods(&package(content, Some(styles))).unwrap();
+    let book = imported.workbook;
+    let inherited = book.style(1, addr("A1"));
+    assert_eq!(inherited.alignment, CellAlignment::Right);
+    assert!(inherited.strike);
+    assert_eq!(
+        inherited.number_format,
+        NumberFormat::Currency("JPY".into())
+    );
+    let off = book.style(1, addr("B1"));
+    assert_eq!(off.alignment, CellAlignment::Left);
+    assert!(!off.strike);
+    let unknown = book.style(1, addr("C1"));
+    assert_eq!(unknown.alignment, CellAlignment::Auto);
+    assert!(!unknown.strike);
+    let no_type = book.style(1, addr("D1"));
+    assert_eq!(no_type.alignment, CellAlignment::Center);
+    assert!(!no_type.strike);
 }
 
 #[test]
@@ -325,4 +402,249 @@ fn pdf_never_prints_a_clipped_financial_amount() {
     let text = pdf.extract_text(&[1]).unwrap();
     assert!(text.contains("####"));
     assert!(!text.contains("1234567890123"));
+}
+
+fn first_page_operations(pdf: &lopdf::Document) -> Vec<lopdf::content::Operation> {
+    let page = pdf.get_pages()[&1];
+    pdf.get_and_decode_page_content(page).unwrap().operations
+}
+
+fn text_positions(
+    pdf: &lopdf::Document,
+    operations: &[lopdf::content::Operation],
+) -> Vec<(String, [f64; 2], usize)> {
+    let encodings: std::collections::BTreeMap<_, _> = pdf
+        .get_page_fonts(pdf.get_pages()[&1])
+        .unwrap()
+        .into_iter()
+        .map(|(name, font)| (name, font.get_font_encoding(pdf).unwrap()))
+        .collect();
+    let mut encoding = None;
+    let mut position = [0.0; 2];
+    let mut texts = Vec::new();
+    for (index, operation) in operations.iter().enumerate() {
+        match operation.operator.as_str() {
+            "Tf" => encoding = encodings.get(operation.operands[0].as_name().unwrap()),
+            "Tm" => {
+                position = [
+                    f64::from(operation.operands[4].as_float().unwrap()),
+                    f64::from(operation.operands[5].as_float().unwrap()),
+                ];
+            }
+            "Tj" => texts.push((
+                lopdf::Document::decode_text(
+                    encoding.unwrap(),
+                    operation.operands[0].as_str().unwrap(),
+                )
+                .unwrap(),
+                position,
+                index,
+            )),
+            _ => {}
+        }
+    }
+    texts
+}
+
+fn text_width(text: &str, family: CellFont, size: f64) -> f64 {
+    let font = ttf_parser::Face::parse(jig::sheet_fonts::bytes(family), 0).unwrap();
+    text.chars()
+        .map(|ch| {
+            f64::from(
+                font.glyph_hor_advance(font.glyph_index(ch).unwrap())
+                    .unwrap(),
+            )
+        })
+        .sum::<f64>()
+        * size
+        / f64::from(font.units_per_em())
+}
+
+#[test]
+fn pdf_honors_every_horizontal_alignment_for_text_numbers_dates_and_currency() {
+    let mut state = State::default();
+    state.preferences.decimals = 2;
+    let mut book = Workbook::default();
+    let alignments = [
+        CellAlignment::Auto,
+        CellAlignment::Left,
+        CellAlignment::Center,
+        CellAlignment::Right,
+    ];
+    let cases = [
+        ("Studio", NumberFormat::General, "Studio", false),
+        ("12.5", NumberFormat::General, "12.50", true),
+        ("2026-11-11", NumberFormat::Date, "2026-11-11", true),
+        ("12.5", NumberFormat::Currency("USD".into()), "$12.50", true),
+    ];
+    for (case, (raw, format, _, _)) in cases.iter().enumerate() {
+        for (index, alignment) in alignments.iter().enumerate() {
+            let address = CellAddr::new(case * 4 + index, 0);
+            book.set_cell(1, address, raw).unwrap();
+            book.set_style(
+                1,
+                CellRange::new(address, address),
+                CellStyle {
+                    alignment: *alignment,
+                    number_format: format.clone(),
+                    ..CellStyle::default()
+                },
+            )
+            .unwrap();
+        }
+    }
+    state.workbook = Some(book);
+    let pdf = lopdf::Document::load_mem(&export_pdf(&state, 1, None).unwrap()).unwrap();
+    let operations = first_page_operations(&pdf);
+    let positions = text_positions(&pdf, &operations);
+    for (_, _, displayed, numeric) in cases {
+        let actual: Vec<_> = positions
+            .iter()
+            .filter(|(text, _, _)| text == displayed)
+            .collect();
+        assert_eq!(actual.len(), 4, "Searchable text: {displayed}");
+        let width = text_width(displayed, CellFont::Mono, 13.0);
+        for (index, alignment) in alignments.iter().enumerate() {
+            let expected_x = match alignment {
+                CellAlignment::Auto if numeric => 154.0 - width,
+                CellAlignment::Auto | CellAlignment::Left => 62.0,
+                CellAlignment::Center => 108.0 - width / 2.0,
+                CellAlignment::Right => 154.0 - width,
+            };
+            assert!(
+                (actual[index].1[0] - expected_x).abs() < 0.01,
+                "{displayed} {alignment:?}: {} versus {expected_x}",
+                actual[index].1[0]
+            );
+        }
+    }
+}
+
+#[test]
+fn pdf_strike_tracks_font_text_width_and_cell_clipping_including_merged_cells() {
+    let mut state = State::default();
+    let mut book = Workbook::default();
+    let cases = [
+        (
+            "A1",
+            "C2",
+            "Résumé heading",
+            CellFont::Sans,
+            18,
+            CellAlignment::Center,
+            300.0,
+        ),
+        (
+            "A3",
+            "A3",
+            "A long right aligned line that is clipped to its cell",
+            CellFont::Mono,
+            13,
+            CellAlignment::Right,
+            100.0,
+        ),
+        (
+            "A4",
+            "C4",
+            "A long centered merged heading that is clipped across three columns",
+            CellFont::Serif,
+            17,
+            CellAlignment::Center,
+            300.0,
+        ),
+    ];
+    for (start, end, text, font_family, font_size, alignment, _) in cases {
+        book.set_cell(1, addr(start), text).unwrap();
+        if start != end {
+            book.merge(1, range(start, end)).unwrap();
+        }
+        book.set_style(
+            1,
+            range(start, start),
+            CellStyle {
+                font_family,
+                font_size,
+                alignment,
+                strike: true,
+                text_color: Some([20, 45, 90]),
+                ..CellStyle::default()
+            },
+        )
+        .unwrap();
+    }
+    book.set_cell(1, addr("A5"), "Plain text").unwrap();
+    state.workbook = Some(book);
+    let pdf = lopdf::Document::load_mem(&export_pdf(&state, 1, None).unwrap()).unwrap();
+    let operations = first_page_operations(&pdf);
+    let positions = text_positions(&pdf, &operations);
+    for (start, _, text, family, size, alignment, cell_width) in cases {
+        let (_, origin, text_index) = positions
+            .iter()
+            .find(|(value, _, _)| value == text)
+            .unwrap();
+        let end = operations[*text_index..]
+            .iter()
+            .position(|operation| operation.operator == "Q")
+            .unwrap()
+            + text_index;
+        let decoration = &operations[*text_index..end];
+        let from = decoration
+            .iter()
+            .find(|operation| operation.operator == "m")
+            .unwrap();
+        let to = decoration
+            .iter()
+            .find(|operation| operation.operator == "l")
+            .unwrap();
+        let width = text_width(text, family, f64::from(size));
+        let expected_x = match alignment {
+            CellAlignment::Center => 58.0 + cell_width / 2.0 - width / 2.0,
+            CellAlignment::Right => 58.0 + cell_width - 4.0 - width,
+            _ => unreachable!(),
+        };
+        let font = ttf_parser::Face::parse(jig::sheet_fonts::bytes(family), 0).unwrap();
+        let metrics = font.strikeout_metrics().unwrap();
+        let strike_y = origin[1]
+            + f64::from(metrics.position) * f64::from(size) / f64::from(font.units_per_em());
+        for (actual, expected) in [
+            (origin[0], expected_x),
+            (f64::from(from.operands[0].as_float().unwrap()), origin[0]),
+            (
+                f64::from(to.operands[0].as_float().unwrap()),
+                origin[0] + width,
+            ),
+            (f64::from(from.operands[1].as_float().unwrap()), strike_y),
+            (f64::from(to.operands[1].as_float().unwrap()), strike_y),
+        ] {
+            assert!(
+                (actual - expected).abs() < 0.01,
+                "{start}: {actual} versus {expected}"
+            );
+        }
+        let clip_index = operations[..*text_index]
+            .iter()
+            .rposition(|operation| operation.operator == "W")
+            .unwrap();
+        let clip = &operations[clip_index - 1];
+        assert_eq!(clip.operator, "re");
+        assert!((f64::from(clip.operands[0].as_float().unwrap()) - 60.0).abs() < 0.01);
+        assert!(
+            (f64::from(clip.operands[2].as_float().unwrap()) - (cell_width - 4.0)).abs() < 0.01
+        );
+        assert!(operations[clip_index..end]
+            .iter()
+            .all(|operation| operation.operator != "Q"));
+        if start != "A1" {
+            assert!(origin[0] < 60.0);
+            if alignment == CellAlignment::Center {
+                assert!(origin[0] + width > 58.0 + cell_width - 2.0);
+            }
+        }
+    }
+    let (_, _, plain_index) = positions
+        .iter()
+        .find(|(text, _, _)| text == "Plain text")
+        .unwrap();
+    assert_eq!(operations[plain_index + 1].operator, "ET");
+    assert_eq!(operations[plain_index + 2].operator, "Q");
 }

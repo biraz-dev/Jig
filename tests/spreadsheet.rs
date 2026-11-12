@@ -3,8 +3,8 @@ use jig::charts::{ChartKind, ChartSource};
 use jig::model::State;
 use jig::spreadsheet::{
     date_to_serial, encode_delimited, parse_delimited, serial_to_date, BorderPreset, CellAddr,
-    CellBorders, CellError, CellFont, CellRange, CellStyle, CellValue, NumberFormat, StylePatch,
-    Workbook, MAX_CELL_BYTES, MAX_COLS, MAX_ROWS,
+    CellAlignment, CellBorders, CellError, CellFont, CellRange, CellStyle, CellValue, NumberFormat,
+    StylePatch, Workbook, MAX_CELL_BYTES, MAX_COLS, MAX_ROWS,
 };
 
 fn addr(text: &str) -> CellAddr {
@@ -418,6 +418,327 @@ fn formatting_patches_preserve_mixed_formats_and_outer_borders_use_the_selection
             .formatted(&NumberFormat::Percent, 2),
         "12.50%"
     );
+}
+
+#[test]
+fn legacy_styles_default_alignment_and_strike_without_changing_the_saved_format() {
+    let legacy = serde_json::json!({
+        "version": 1,
+        "sheets": [{
+            "id": 1,
+            "name": "Sheet 1",
+            "cells": {"A1": "12"},
+            "styles": {"A1": {"bold": true, "underline": true, "font_size": 18}}
+        }]
+    });
+    let book: Workbook = serde_json::from_value(legacy.clone()).unwrap();
+    book.validate().unwrap();
+    let style = book.style(1, addr("A1"));
+    assert_eq!(style.alignment, CellAlignment::Auto);
+    assert!(!style.strike);
+    assert!(style.bold && style.underline);
+    assert_eq!(serde_json::to_value(&book).unwrap(), legacy);
+    assert_eq!(
+        serde_json::to_value(CellStyle::default()).unwrap(),
+        serde_json::json!({})
+    );
+    for (alignment, encoded) in [
+        (CellAlignment::Auto, "auto"),
+        (CellAlignment::Left, "left"),
+        (CellAlignment::Center, "center"),
+        (CellAlignment::Right, "right"),
+    ] {
+        assert_eq!(serde_json::to_value(alignment).unwrap(), encoded);
+        assert_eq!(
+            serde_json::from_value::<CellAlignment>(serde_json::json!(encoded)).unwrap(),
+            alignment
+        );
+    }
+    assert!(serde_json::from_value::<CellStyle>(serde_json::json!({
+        "alignment": "diagonal"
+    }))
+    .is_err());
+}
+
+#[test]
+fn alignment_and_strike_survive_save_paste_and_structural_edits() {
+    let mut book = Workbook::default();
+    let source = CellRange::new(addr("B2"), addr("B2"));
+    let style = CellStyle {
+        alignment: CellAlignment::Center,
+        strike: true,
+        underline: true,
+        fill_color: Some([20, 30, 40]),
+        ..CellStyle::default()
+    };
+    book.set_style(1, source, style.clone()).unwrap();
+    put(&mut book, 1, "B2", "original");
+    book.patch_style(
+        1,
+        source,
+        StylePatch {
+            bold: Some(true),
+            ..StylePatch::default()
+        },
+    )
+    .unwrap();
+    let expected = CellStyle {
+        bold: true,
+        ..style
+    };
+    let encoded = serde_json::to_value(&book).unwrap();
+    assert_eq!(encoded["sheets"][0]["styles"]["B2"]["alignment"], "center");
+    assert_eq!(encoded["sheets"][0]["styles"]["B2"]["strike"], true);
+    let mut book: Workbook = serde_json::from_value(encoded).unwrap();
+    book.insert_rows(1, 1, 2).unwrap();
+    book.insert_columns(1, 1, 2).unwrap();
+    assert_eq!(book.style(1, addr("D4")), expected);
+    book.delete_rows(1, 0, 1).unwrap();
+    book.delete_columns(1, 0, 1).unwrap();
+    assert_eq!(book.style(1, addr("C3")), expected);
+    assert_eq!(book.raw(1, addr("C3")), "original");
+    book.set_block(1, addr("C3"), &[vec!["pasted".into(), "neighbor".into()]])
+        .unwrap();
+    assert_eq!(book.raw(1, addr("C3")), "pasted");
+    assert_eq!(book.style(1, addr("C3")), expected);
+    let destination = CellRange::new(addr("C3"), addr("C3"));
+    book.patch_style(
+        1,
+        destination,
+        StylePatch {
+            alignment: Some(CellAlignment::Right),
+            strike: Some(false),
+            ..StylePatch::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        book.style(1, addr("C3")),
+        CellStyle {
+            alignment: CellAlignment::Right,
+            strike: false,
+            ..expected
+        }
+    );
+    book.patch_style(
+        1,
+        destination,
+        StylePatch {
+            alignment: Some(CellAlignment::Auto),
+            ..StylePatch::default()
+        },
+    )
+    .unwrap();
+    let saved = serde_json::to_value(book.style(1, addr("C3"))).unwrap();
+    assert!(saved.get("alignment").is_none());
+    assert!(saved.get("strike").is_none());
+}
+
+#[test]
+fn border_presets_replace_all_sides_with_selection_relative_masks() {
+    let span = CellRange::new(addr("B2"), addr("D4"));
+    for preset in [
+        BorderPreset::None,
+        BorderPreset::All,
+        BorderPreset::Outer,
+        BorderPreset::Inner,
+        BorderPreset::Horizontal,
+        BorderPreset::Vertical,
+    ] {
+        let mut book = Workbook::default();
+        book.patch_style(
+            1,
+            span,
+            StylePatch {
+                bold: Some(true),
+                borders: Some(CellBorders::all()),
+                ..StylePatch::default()
+            },
+        )
+        .unwrap();
+        book.set_borders(1, span, preset).unwrap();
+        for row in span.start.row..=span.end.row {
+            for col in span.start.col..=span.end.col {
+                let expected = match preset {
+                    BorderPreset::None => CellBorders::none(),
+                    BorderPreset::All => CellBorders::all(),
+                    BorderPreset::Outer => CellBorders {
+                        top: row == span.start.row,
+                        bottom: row == span.end.row,
+                        left: col == span.start.col,
+                        right: col == span.end.col,
+                    },
+                    BorderPreset::Inner => CellBorders {
+                        top: row > span.start.row,
+                        bottom: row < span.end.row,
+                        left: col > span.start.col,
+                        right: col < span.end.col,
+                    },
+                    BorderPreset::Horizontal => CellBorders {
+                        top: true,
+                        bottom: true,
+                        ..CellBorders::none()
+                    },
+                    BorderPreset::Vertical => CellBorders {
+                        left: true,
+                        right: true,
+                        ..CellBorders::none()
+                    },
+                    _ => unreachable!(),
+                };
+                let style = book.style(1, CellAddr::new(row, col));
+                assert_eq!(style.borders, expected, "{preset:?} at {row},{col}");
+                assert!(style.bold);
+            }
+        }
+    }
+    let mut single = Workbook::default();
+    let cell = CellRange::new(addr("A1"), addr("A1"));
+    single.set_borders(1, cell, BorderPreset::Inner).unwrap();
+    assert_eq!(single.style(1, addr("A1")).borders, CellBorders::none());
+    single
+        .set_borders(1, cell, BorderPreset::Horizontal)
+        .unwrap();
+    assert_eq!(
+        single.style(1, addr("A1")).borders,
+        CellBorders {
+            top: true,
+            bottom: true,
+            ..CellBorders::none()
+        }
+    );
+}
+
+#[test]
+fn individual_border_edges_compose_without_changing_other_cell_edges() {
+    let mut book = Workbook::default();
+    let span = CellRange::new(addr("B2"), addr("D4"));
+    let center = CellRange::new(addr("C3"), addr("C3"));
+    book.set_borders(1, center, BorderPreset::All).unwrap();
+    for preset in [
+        BorderPreset::Top,
+        BorderPreset::Right,
+        BorderPreset::Bottom,
+        BorderPreset::Left,
+    ] {
+        assert!(book.set_borders(1, span, preset).unwrap());
+        assert!(!book.set_borders(1, span, preset).unwrap());
+        assert_eq!(book.style(1, addr("C3")).borders, CellBorders::all());
+    }
+    for row in span.start.row..=span.end.row {
+        for col in span.start.col..=span.end.col {
+            let cell = CellAddr::new(row, col);
+            let expected = if cell == addr("C3") {
+                CellBorders::all()
+            } else {
+                CellBorders {
+                    top: row == span.start.row,
+                    bottom: row == span.end.row,
+                    left: col == span.start.col,
+                    right: col == span.end.col,
+                }
+            };
+            assert_eq!(book.style(1, cell).borders, expected);
+        }
+    }
+    assert_eq!(book.style(1, addr("A1")), CellStyle::default());
+}
+
+#[test]
+fn border_presets_treat_merged_cells_as_a_single_perimeter() {
+    let merged = CellRange::new(addr("B2"), addr("C3"));
+    let span = CellRange::new(addr("A1"), addr("D4"));
+    for (preset, expected) in [
+        (BorderPreset::None, CellBorders::none()),
+        (BorderPreset::All, CellBorders::all()),
+        (BorderPreset::Outer, CellBorders::none()),
+        (BorderPreset::Inner, CellBorders::all()),
+        (
+            BorderPreset::Horizontal,
+            CellBorders {
+                top: true,
+                bottom: true,
+                ..CellBorders::none()
+            },
+        ),
+        (
+            BorderPreset::Vertical,
+            CellBorders {
+                left: true,
+                right: true,
+                ..CellBorders::none()
+            },
+        ),
+    ] {
+        let mut book = Workbook::default();
+        book.merge(1, merged).unwrap();
+        book.set_borders(1, span, preset).unwrap();
+        assert_eq!(
+            book.rendered_style(1, addr("B2")).borders,
+            expected,
+            "{preset:?}"
+        );
+        assert_eq!(
+            book.rendered_style(1, addr("C3")).borders,
+            expected,
+            "{preset:?}"
+        );
+        assert!(!book.style(1, addr("B2")).borders.bottom);
+        assert!(!book.style(1, addr("B2")).borders.right);
+        assert!(!book.style(1, addr("C3")).borders.top);
+        assert!(!book.style(1, addr("C3")).borders.left);
+    }
+    let mut book = Workbook::default();
+    book.merge(1, merged).unwrap();
+    book.set_borders(1, merged, BorderPreset::Inner).unwrap();
+    assert_eq!(
+        book.rendered_style(1, merged.start).borders,
+        CellBorders::none()
+    );
+    for preset in [
+        BorderPreset::Top,
+        BorderPreset::Bottom,
+        BorderPreset::Left,
+        BorderPreset::Right,
+    ] {
+        book.set_borders(1, merged, preset).unwrap();
+    }
+    assert_eq!(
+        book.rendered_style(1, merged.start).borders,
+        CellBorders::all()
+    );
+    assert!(!book.style(1, addr("B2")).borders.bottom);
+    assert!(!book.style(1, addr("C3")).borders.top);
+}
+
+#[test]
+fn rendered_merged_borders_ignore_interior_edges_saved_before_merging() {
+    let mut book = Workbook::default();
+    let anchor = CellRange::new(addr("A1"), addr("A1"));
+    book.patch_style(
+        1,
+        anchor,
+        StylePatch {
+            borders: Some(CellBorders {
+                bottom: true,
+                right: true,
+                ..CellBorders::none()
+            }),
+            alignment: Some(CellAlignment::Left),
+            strike: Some(true),
+            ..StylePatch::default()
+        },
+    )
+    .unwrap();
+    let merged = CellRange::new(addr("A1"), addr("B2"));
+    book.merge(1, merged).unwrap();
+    let rendered = book.rendered_style(1, addr("B2"));
+    assert_eq!(rendered.borders, CellBorders::none());
+    assert_eq!(rendered.alignment, CellAlignment::Left);
+    assert!(rendered.strike);
+    book.unmerge(1, merged).unwrap();
+    assert!(book.style(1, addr("A1")).borders.bottom);
+    assert!(book.style(1, addr("A1")).borders.right);
 }
 
 #[test]

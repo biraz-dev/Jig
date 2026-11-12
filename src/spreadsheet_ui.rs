@@ -6,8 +6,8 @@ use jig::{
     charts::{ChartKind, ChartSource},
     sheet_formula,
     spreadsheet::{
-        self, BorderPreset, CellAddr, CellFont, CellRange, CellStyle, CellValue, Evaluation,
-        NumberFormat, StylePatch, Workbook, MAX_COLS, MAX_ROWS, MAX_SHEETS,
+        self, BorderPreset, CellAddr, CellAlignment, CellFont, CellRange, CellStyle, CellValue,
+        Evaluation, NumberFormat, StylePatch, Workbook, MAX_COLS, MAX_ROWS, MAX_SHEETS,
     },
 };
 
@@ -816,6 +816,19 @@ impl SheetPanel {
                     );
                     ui.close_menu();
                 }
+                if ui.selectable_label(style.strike, "Strikethrough").clicked() {
+                    self.patch(
+                        actions,
+                        StylePatch {
+                            strike: Some(!style.strike),
+                            ..Default::default()
+                        },
+                    );
+                    ui.close_menu();
+                }
+                ui.menu_button("Alignment", |ui| {
+                    self.alignment_choices(ui, &style, actions)
+                });
                 ui.separator();
                 ui.menu_button("Number format", |ui| {
                     self.number_choices(ui, &style, actions)
@@ -851,6 +864,8 @@ impl SheetPanel {
                             bold: Some(false),
                             italic: Some(false),
                             underline: Some(false),
+                            strike: Some(false),
+                            alignment: Some(CellAlignment::Auto),
                             text_color: Some(None),
                             fill_color: Some(None),
                             borders: Some(spreadsheet::CellBorders::none()),
@@ -1016,9 +1031,6 @@ impl SheetPanel {
             (NumberFormat::Number, "Number"),
             (NumberFormat::Percent, "Percent"),
             (NumberFormat::Currency("USD".into()), "Currency · USD"),
-            (NumberFormat::Currency("EUR".into()), "Currency · EUR"),
-            (NumberFormat::Currency("GBP".into()), "Currency · GBP"),
-            (NumberFormat::Currency("JPY".into()), "Currency · JPY"),
             (NumberFormat::Date, "Date"),
         ] {
             if ui
@@ -1037,11 +1049,46 @@ impl SheetPanel {
         }
     }
 
+    fn alignment_choices(
+        &mut self,
+        ui: &mut Ui,
+        style: &CellStyle,
+        actions: &mut Vec<SheetAction>,
+    ) {
+        for (alignment, label) in [
+            (CellAlignment::Auto, "Auto · numbers right, text left"),
+            (CellAlignment::Left, "Left"),
+            (CellAlignment::Center, "Center"),
+            (CellAlignment::Right, "Right"),
+        ] {
+            if ui
+                .selectable_label(style.alignment == alignment, label)
+                .clicked()
+            {
+                self.patch(
+                    actions,
+                    StylePatch {
+                        alignment: Some(alignment),
+                        ..Default::default()
+                    },
+                );
+                ui.close_menu();
+            }
+        }
+    }
+
     fn border_choices(&mut self, ui: &mut Ui, actions: &mut Vec<SheetAction>) {
         for (preset, label) in [
             (BorderPreset::None, "No borders"),
             (BorderPreset::All, "All borders"),
             (BorderPreset::Outer, "Outside border"),
+            (BorderPreset::Inner, "Inner borders"),
+            (BorderPreset::Horizontal, "Horizontal borders"),
+            (BorderPreset::Vertical, "Vertical borders"),
+            (BorderPreset::Top, "Top border"),
+            (BorderPreset::Bottom, "Bottom border"),
+            (BorderPreset::Left, "Left border"),
+            (BorderPreset::Right, "Right border"),
         ] {
             if ui.button(label).clicked() {
                 self.queue(
@@ -1159,19 +1206,44 @@ impl SheetPanel {
             ui.menu_button(style.font_size.to_string(), |ui| {
                 self.size_choices(ui, &style, actions)
             });
-            for (label, selected, property) in [
-                ("B", style.bold, 0),
-                ("I", style.italic, 1),
-                ("U", style.underline, 2),
+            for (label, name, selected, property) in [
+                ("B", "Bold", style.bold, 0),
+                ("I", "Italic", style.italic, 1),
+                ("U", "Underline", style.underline, 2),
+                ("S", "Strikethrough", style.strike, 3),
             ] {
-                if ui.selectable_label(selected, label).clicked() {
+                let response = ui.selectable_label(selected, label);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
+                });
+                if response.on_hover_text(name).clicked() {
                     let mut patch = StylePatch::default();
                     match property {
                         0 => patch.bold = Some(!selected),
                         1 => patch.italic = Some(!selected),
-                        _ => patch.underline = Some(!selected),
+                        2 => patch.underline = Some(!selected),
+                        _ => patch.strike = Some(!selected),
                     }
                     self.patch(actions, patch);
+                }
+            }
+            for (label, name, alignment) in [
+                ("L", "Align left", CellAlignment::Left),
+                ("C", "Align center", CellAlignment::Center),
+                ("R", "Align right", CellAlignment::Right),
+            ] {
+                let response = ui.selectable_label(style.alignment == alignment, label);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
+                });
+                if response.on_hover_text(name).clicked() {
+                    self.patch(
+                        actions,
+                        StylePatch {
+                            alignment: Some(alignment),
+                            ..Default::default()
+                        },
+                    );
                 }
             }
             self.color_menu(ui, "Text", false, &style, actions);
@@ -1300,7 +1372,7 @@ impl SheetPanel {
         });
     }
 
-    fn commands(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+    fn commands(&mut self, ui: &mut Ui, _book: &Workbook, actions: &mut Vec<SheetAction>) {
         ui.horizontal_wrapped(|ui| {
             if ui
                 .button("Import CSV")
@@ -1315,25 +1387,6 @@ impl SheetPanel {
             ).clicked() {
                 self.commit(actions);
                 actions.push(SheetAction::ExportCsv(self.active));
-            }
-            if ui.button("Rename").clicked() {
-                self.commit(actions);
-                self.name = book
-                    .sheet(self.active)
-                    .map_or_else(String::new, |sheet| sheet.name.clone());
-                self.renaming = true;
-                self.rename_focus = true;
-                self.confirm_delete = false;
-            }
-            if ui
-                .add_enabled(book.sheets.len() > 1, egui::Button::new("del"))
-                .on_hover_text("Delete this sheet")
-                .clicked()
-            {
-                self.commit(actions);
-                self.confirm_delete = true;
-                self.delete_focus = true;
-                self.renaming = false;
             }
         });
     }
@@ -1363,7 +1416,12 @@ impl SheetPanel {
                     ui.ctx().request_repaint();
                 }
                 let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                let response = ui.interact(rect, id, egui::Sense::click_and_drag());
+                let visible = rect.intersect(ui.clip_rect());
+                let body = egui::Rect::from_min_max(
+                    visible.min + egui::vec2(ROW_HEAD, COL_HEAD),
+                    visible.max,
+                );
+                let response = ui.interact(body, id, egui::Sense::click_and_drag());
                 if response.has_focus() {
                     ui.memory_mut(|memory| {
                         memory.set_focus_lock_filter(
@@ -1392,11 +1450,6 @@ impl SheetPanel {
                         ),
                     )
                 });
-                let visible = rect.intersect(ui.clip_rect());
-                let body = egui::Rect::from_min_max(
-                    visible.min + egui::vec2(ROW_HEAD, COL_HEAD),
-                    visible.max,
-                );
                 if response.clicked() || response.double_clicked() || response.drag_started() {
                     if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
                         self.commit(actions);
@@ -1415,18 +1468,7 @@ impl SheetPanel {
                                 })
                                 .unwrap_or(input.modifiers.shift)
                         });
-                        if pointer.y < body.top() && pointer.x >= body.left() {
-                            let col = ((pointer.x - rect.left() - ROW_HEAD) / COL_WIDTH)
-                                .floor()
-                                .clamp(0.0, MAX_COLS as f32 - 1.0)
-                                as usize;
-                            self.anchor = CellAddr::new(MAX_ROWS - 1, col);
-                            self.cursor = CellAddr::new(0, col);
-                        } else if pointer.x < body.left() && pointer.y >= body.top() {
-                            let row = self.row_at(pointer.y - rect.top() - COL_HEAD);
-                            self.anchor = CellAddr::new(row, MAX_COLS - 1);
-                            self.cursor = CellAddr::new(row, 0);
-                        } else if body.contains(pointer) {
+                        if body.contains(pointer) {
                             let addr = self.address_at(rect, pointer);
                             self.cursor = addr;
                             if !extend {
@@ -1446,9 +1488,6 @@ impl SheetPanel {
                                     });
                                 self.begin_edit(book, EditOrigin::Cell, pending);
                             }
-                        } else {
-                            self.anchor = CellAddr::new(MAX_ROWS - 1, MAX_COLS - 1);
-                            self.cursor = CellAddr::new(0, 0);
                         }
                         self.sync_selection(book);
                         self.address = range_label(self.selection());
@@ -1531,6 +1570,9 @@ impl SheetPanel {
                             if style.underline {
                                 section.format.underline = Stroke::new(0.9_f32, color);
                             }
+                            if style.strike {
+                                section.format.strikethrough = Stroke::new(0.9_f32, color);
+                            }
                         }
                         let mut galley = ui.fonts(|fonts| fonts.layout_job(job.clone()));
                         if number && galley.size().x > cell.width() - 12.0 {
@@ -1554,10 +1596,13 @@ impl SheetPanel {
                             .on_hover_text(full_value);
                         }
                         let position = egui::pos2(
-                            if number {
-                                cell.right() - 6.0 - galley.size().x
-                            } else {
-                                cell.left() + 6.0
+                            match style.alignment {
+                                CellAlignment::Auto if number => {
+                                    cell.right() - 6.0 - galley.size().x
+                                }
+                                CellAlignment::Auto | CellAlignment::Left => cell.left() + 6.0,
+                                CellAlignment::Center => cell.center().x - galley.size().x * 0.5,
+                                CellAlignment::Right => cell.right() - 6.0 - galley.size().x,
                             },
                             cell.center().y - galley.size().y * 0.5,
                         );
@@ -1610,7 +1655,9 @@ impl SheetPanel {
                         Stroke::new(1.0_f32, ACCENT),
                     );
                 }
-                self.headers(ui, rect, visible, first_row, last_row, first_col, last_col);
+                self.headers(
+                    ui, book, rect, visible, first_row, last_row, first_col, last_col, actions,
+                );
                 if self.reveal {
                     ui.scroll_to_rect(
                         selected.expand2(egui::vec2(ROW_HEAD + 4.0, COL_HEAD + 4.0)),
@@ -1667,14 +1714,16 @@ impl SheetPanel {
 
     #[allow(clippy::too_many_arguments)]
     fn headers(
-        &self,
-        ui: &Ui,
+        &mut self,
+        ui: &mut Ui,
+        book: &Workbook,
         rect: egui::Rect,
         visible: egui::Rect,
         first_row: usize,
         last_row: usize,
         first_col: usize,
         last_col: usize,
+        actions: &mut Vec<SheetAction>,
     ) {
         let top = egui::Rect::from_min_max(
             visible.min,
@@ -1684,6 +1733,16 @@ impl SheetPanel {
             visible.min,
             egui::pos2(visible.left() + ROW_HEAD, visible.bottom()),
         );
+        let menu_id = ui.id().with(("spreadsheet-header-menu", self.active));
+        let mut menu = egui::menu::BarState::load(ui.ctx(), menu_id);
+        let had_menu = menu.is_some();
+        let selection = self.selection();
+        let rows_selected = selection.start.col == 0 && selection.end.col == MAX_COLS - 1;
+        let columns_selected = selection.start.row == 0 && selection.end.row == MAX_ROWS - 1;
+        let keyboard_menu = self.editing.is_none()
+            && (rows_selected || columns_selected)
+            && ui.memory(|memory| memory.has_focus(self.grid_id()))
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::F10));
         let painter = ui.painter().with_clip_rect(visible);
         painter.rect_filled(top, 0.0, HEADER);
         painter.rect_filled(left, 0.0, HEADER);
@@ -1693,10 +1752,36 @@ impl SheetPanel {
                 egui::pos2(x, top.top()),
                 egui::vec2(COL_WIDTH, COL_HEAD),
             );
-            let clipped = painter.with_clip_rect(egui::Rect::from_min_max(
-                egui::pos2(left.right(), top.top()),
-                top.max,
-            ));
+            let clip = egui::Rect::from_min_max(egui::pos2(left.right(), top.top()), top.max);
+            let response = ui.interact(
+                cell.intersect(clip),
+                ui.id()
+                    .with(("spreadsheet-column-header", self.active, col)),
+                egui::Sense::click(),
+            );
+            self.header_interaction(
+                ui,
+                book,
+                &response,
+                false,
+                col,
+                keyboard_menu
+                    && !rows_selected
+                    && col == self.cursor.col.clamp(first_col, last_col.saturating_sub(1)),
+                &mut menu,
+                actions,
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    format!(
+                        "Column {}. Right-click for insert and delete",
+                        column_label(col)
+                    ),
+                )
+            });
+            let clipped = painter.with_clip_rect(clip);
             if col >= self.selection().start.col && col <= self.selection().end.col {
                 clipped.rect_filled(cell, 0.0, SELECTED);
             }
@@ -1715,10 +1800,32 @@ impl SheetPanel {
                 egui::pos2(left.left(), y),
                 egui::vec2(ROW_HEAD, self.row_offsets[row + 1] - self.row_offsets[row]),
             );
-            let clipped = painter.with_clip_rect(egui::Rect::from_min_max(
-                egui::pos2(left.left(), top.bottom()),
-                left.max,
-            ));
+            let clip = egui::Rect::from_min_max(egui::pos2(left.left(), top.bottom()), left.max);
+            let response = ui.interact(
+                cell.intersect(clip),
+                ui.id().with(("spreadsheet-row-header", self.active, row)),
+                egui::Sense::click(),
+            );
+            self.header_interaction(
+                ui,
+                book,
+                &response,
+                true,
+                row,
+                keyboard_menu
+                    && rows_selected
+                    && row == self.cursor.row.clamp(first_row, last_row.saturating_sub(1)),
+                &mut menu,
+                actions,
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    format!("Row {}. Right-click for insert and delete", row + 1),
+                )
+            });
+            let clipped = painter.with_clip_rect(clip);
             if row >= self.selection().start.row && row <= self.selection().end.row {
                 clipped.rect_filled(cell, 0.0, SELECTED);
             }
@@ -1731,13 +1838,193 @@ impl SheetPanel {
             );
             clipped.hline(cell.x_range(), cell.bottom(), Stroke::new(0.5_f32, RULE));
         }
-        painter.rect_filled(
-            egui::Rect::from_min_size(visible.min, egui::vec2(ROW_HEAD, COL_HEAD)),
-            0.0,
-            HEADER,
-        );
+        let corner = egui::Rect::from_min_size(visible.min, egui::vec2(ROW_HEAD, COL_HEAD));
+        if ui
+            .interact(
+                corner,
+                ui.id().with(("spreadsheet-select-all", self.active)),
+                egui::Sense::click(),
+            )
+            .on_hover_text("Select all cells")
+            .clicked()
+        {
+            self.commit(actions);
+            self.anchor = CellAddr::new(MAX_ROWS - 1, MAX_COLS - 1);
+            self.cursor = CellAddr::new(0, 0);
+            self.sync_selection(book);
+            self.address = range_label(self.selection());
+            ui.memory_mut(|memory| memory.request_focus(self.grid_id()));
+        }
+        painter.rect_filled(corner, 0.0, HEADER);
         painter.hline(top.x_range(), top.bottom(), Stroke::new(1.0_f32, RULE));
         painter.vline(left.right(), left.y_range(), Stroke::new(1.0_f32, RULE));
+        if had_menu && menu.is_none() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.grid_focus = true;
+        }
+        menu.store(ui.ctx(), menu_id);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn header_interaction(
+        &mut self,
+        ui: &mut Ui,
+        book: &Workbook,
+        response: &egui::Response,
+        rows: bool,
+        index: usize,
+        keyboard_open: bool,
+        menu: &mut egui::menu::BarState,
+        actions: &mut Vec<SheetAction>,
+    ) {
+        if response.clicked() || response.secondary_clicked() {
+            self.commit(actions);
+            let range = self.selection();
+            let already_selected = if rows {
+                range.start.col == 0
+                    && range.end.col == MAX_COLS - 1
+                    && (range.start.row..=range.end.row).contains(&index)
+            } else {
+                range.start.row == 0
+                    && range.end.row == MAX_ROWS - 1
+                    && (range.start.col..=range.end.col).contains(&index)
+            };
+            if response.clicked() || !already_selected {
+                let extend = response.clicked()
+                    && ui.input(|input| {
+                        input
+                            .events
+                            .iter()
+                            .rev()
+                            .find_map(|event| match event {
+                                egui::Event::PointerButton {
+                                    button: egui::PointerButton::Primary,
+                                    modifiers,
+                                    ..
+                                } => Some(modifiers.shift),
+                                _ => None,
+                            })
+                            .unwrap_or(input.modifiers.shift)
+                    });
+                if rows {
+                    let anchor = if extend { self.anchor.row } else { index };
+                    self.anchor = CellAddr::new(anchor, MAX_COLS - 1);
+                    self.cursor = CellAddr::new(index, 0);
+                } else {
+                    let anchor = if extend { self.anchor.col } else { index };
+                    self.anchor = CellAddr::new(MAX_ROWS - 1, anchor);
+                    self.cursor = CellAddr::new(0, index);
+                }
+                self.sync_selection(book);
+                self.address = range_label(self.selection());
+            }
+            if response.secondary_clicked() {
+                response.request_focus();
+                self.grid_focus = false;
+            } else {
+                ui.memory_mut(|memory| memory.request_focus(self.grid_id()));
+            }
+        }
+        // Use egui's ordinary context menu machinery for pointer and touch,
+        // with the same popup available from a selected header via Shift+F10.
+        egui::menu::MenuRoot::context_click_interaction(response, menu);
+        if keyboard_open {
+            egui::menu::MenuRoot::handle_menu_response(
+                menu,
+                egui::menu::MenuResponse::Create(response.rect.left_bottom(), response.id),
+            );
+            response.request_focus();
+            self.grid_focus = false;
+        }
+        menu.show(response, |ui| {
+            self.header_choices(ui, rows, keyboard_open, actions)
+        });
+    }
+
+    fn header_choices(
+        &mut self,
+        ui: &mut Ui,
+        rows: bool,
+        mut focus_first: bool,
+        actions: &mut Vec<SheetAction>,
+    ) {
+        let range = self.selection();
+        let (first, last, count, limit, noun, before, after) = if rows {
+            (
+                range.start.row,
+                range.end.row,
+                range.rows(),
+                MAX_ROWS,
+                "row",
+                "above",
+                "below",
+            )
+        } else {
+            (
+                range.start.col,
+                range.end.col,
+                range.cols(),
+                MAX_COLS,
+                "column",
+                "left",
+                "right",
+            )
+        };
+        let target = if count == 1 {
+            noun.to_owned()
+        } else {
+            format!("{count} {noun}s")
+        };
+        for (at, direction) in [(first, before), (last + 1, after)] {
+            let response = ui.add_enabled(
+                at < limit && count <= limit.saturating_sub(at),
+                egui::Button::new(format!("Insert {target} {direction}")),
+            );
+            if focus_first && response.enabled() {
+                response.request_focus();
+                focus_first = false;
+            }
+            if response.clicked() {
+                let action = if rows {
+                    SheetAction::InsertRows {
+                        sheet: self.active,
+                        at,
+                        count,
+                    }
+                } else {
+                    SheetAction::InsertColumns {
+                        sheet: self.active,
+                        at,
+                        count,
+                    }
+                };
+                self.queue(actions, action);
+                self.grid_focus = true;
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        let response = ui.button(format!("Delete {target}"));
+        if focus_first {
+            response.request_focus();
+        }
+        if response.clicked() {
+            let action = if rows {
+                SheetAction::DeleteRows {
+                    sheet: self.active,
+                    at: first,
+                    count,
+                }
+            } else {
+                SheetAction::DeleteColumns {
+                    sheet: self.active,
+                    at: first,
+                    count,
+                }
+            };
+            self.queue(actions, action);
+            self.grid_focus = true;
+            ui.close_menu();
+        }
     }
 
     fn tabs(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
@@ -1749,7 +2036,9 @@ impl SheetPanel {
                     for sheet in &book.sheets {
                         let response = ui
                             .selectable_label(self.active == sheet.id, &sheet.name)
-                            .on_hover_text("Select sheet · Alt+PageUp / Alt+PageDown");
+                            .on_hover_text(
+                                "Select sheet · Double-click to rename · Alt+PageUp / Alt+PageDown",
+                            );
                         if self.active == sheet.id && self.tab_reveal {
                             response.scroll_to_me(Some(egui::Align::Center));
                             self.tab_reveal = false;
@@ -1763,6 +2052,7 @@ impl SheetPanel {
                             self.name = sheet.name.clone();
                             self.renaming = true;
                             self.rename_focus = true;
+                            self.confirm_delete = false;
                         }
                     }
                     if ui
@@ -1771,6 +2061,20 @@ impl SheetPanel {
                         .clicked()
                     {
                         self.new_sheet(book, actions);
+                    }
+                    let delete = ui.add_enabled(book.sheets.len() > 1, egui::Button::new("-"));
+                    delete.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            book.sheets.len() > 1 && ui.is_enabled(),
+                            "Delete active sheet",
+                        )
+                    });
+                    if delete.on_hover_text("Delete active sheet").clicked() {
+                        self.commit(actions);
+                        self.confirm_delete = true;
+                        self.delete_focus = true;
+                        self.renaming = false;
                     }
                 })
             });

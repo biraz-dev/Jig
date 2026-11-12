@@ -139,6 +139,16 @@ pub enum CellFont {
     Serif,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellAlignment {
+    #[default]
+    Auto,
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumberFormat {
@@ -188,6 +198,13 @@ pub enum BorderPreset {
     None,
     All,
     Outer,
+    Inner,
+    Horizontal,
+    Vertical,
+    Top,
+    Bottom,
+    Left,
+    Right,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -201,6 +218,9 @@ fn is_default_font_size(value: &u8) -> bool {
 }
 fn is_default_font(value: &CellFont) -> bool {
     *value == CellFont::Mono
+}
+fn is_auto_alignment(value: &CellAlignment) -> bool {
+    *value == CellAlignment::Auto
 }
 fn is_general_format(value: &NumberFormat) -> bool {
     *value == NumberFormat::General
@@ -225,6 +245,10 @@ pub struct CellStyle {
     pub italic: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub underline: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub strike: bool,
+    #[serde(skip_serializing_if = "is_auto_alignment")]
+    pub alignment: CellAlignment,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_color: Option<[u8; 3]>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +267,8 @@ impl Default for CellStyle {
             bold: false,
             italic: false,
             underline: false,
+            strike: false,
+            alignment: CellAlignment::Auto,
             text_color: None,
             fill_color: None,
             borders: CellBorders::none(),
@@ -273,6 +299,8 @@ pub struct StylePatch {
     pub bold: Option<bool>,
     pub italic: Option<bool>,
     pub underline: Option<bool>,
+    pub strike: Option<bool>,
+    pub alignment: Option<CellAlignment>,
     pub text_color: Option<Option<[u8; 3]>>,
     pub fill_color: Option<Option<[u8; 3]>>,
     pub borders: Option<CellBorders>,
@@ -295,6 +323,12 @@ impl StylePatch {
         }
         if let Some(value) = self.underline {
             style.underline = value;
+        }
+        if let Some(value) = self.strike {
+            style.strike = value;
+        }
+        if let Some(value) = self.alignment {
+            style.alignment = value;
         }
         if let Some(value) = self.text_color {
             style.text_color = value;
@@ -558,6 +592,9 @@ impl Workbook {
             return self.style(sheet, addr);
         };
         let mut result = self.style(sheet, range.start);
+        // Covered-cell edges may predate the merge. Only the merged range's
+        // perimeter contributes to its displayed border.
+        result.borders = CellBorders::none();
         let Some(sheet) = self.sheet(sheet) else {
             return result;
         };
@@ -627,17 +664,67 @@ impl Workbook {
         range: CellRange,
         preset: BorderPreset,
     ) -> Result<bool> {
+        valid_range(range)?;
+        let merges = self.sheet(sheet).ok_or("Sheet not found")?.merges.clone();
         self.update_styles(sheet, range, |addr, style| {
-            style.borders = match preset {
+            let perimeter = merges.iter().find(|merged| merged.contains(addr)).map_or(
+                CellBorders::all(),
+                |merged| CellBorders {
+                    top: addr.row == merged.start.row,
+                    bottom: addr.row == merged.end.row,
+                    left: addr.col == merged.start.col,
+                    right: addr.col == merged.end.col,
+                },
+            );
+            let outer = CellBorders {
+                top: addr.row == range.start.row,
+                bottom: addr.row == range.end.row,
+                left: addr.col == range.start.col,
+                right: addr.col == range.end.col,
+            };
+            let mut borders = match preset {
                 BorderPreset::None => CellBorders::none(),
                 BorderPreset::All => CellBorders::all(),
-                BorderPreset::Outer => CellBorders {
-                    top: addr.row == range.start.row,
-                    bottom: addr.row == range.end.row,
-                    left: addr.col == range.start.col,
-                    right: addr.col == range.end.col,
+                BorderPreset::Outer => outer,
+                BorderPreset::Inner => CellBorders {
+                    top: !outer.top,
+                    bottom: !outer.bottom,
+                    left: !outer.left,
+                    right: !outer.right,
                 },
+                BorderPreset::Horizontal => CellBorders {
+                    top: true,
+                    bottom: true,
+                    ..CellBorders::none()
+                },
+                BorderPreset::Vertical => CellBorders {
+                    left: true,
+                    right: true,
+                    ..CellBorders::none()
+                },
+                // Individual edges compose with the current border mask.
+                BorderPreset::Top => {
+                    style.borders.top |= outer.top && perimeter.top;
+                    return;
+                }
+                BorderPreset::Bottom => {
+                    style.borders.bottom |= outer.bottom && perimeter.bottom;
+                    return;
+                }
+                BorderPreset::Left => {
+                    style.borders.left |= outer.left && perimeter.left;
+                    return;
+                }
+                BorderPreset::Right => {
+                    style.borders.right |= outer.right && perimeter.right;
+                    return;
+                }
             };
+            borders.top &= perimeter.top;
+            borders.bottom &= perimeter.bottom;
+            borders.left &= perimeter.left;
+            borders.right &= perimeter.right;
+            style.borders = borders;
         })
     }
 

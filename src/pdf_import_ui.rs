@@ -10,6 +10,17 @@ use jig::{
 
 const FIELD_WIDTH: f32 = 156.0;
 
+fn parse_usd_amount(text: &str, decimal_mark: DecimalMark) -> Option<String> {
+    // The general parser accepts several currencies, but this review assigns USD.
+    if ["EUR", "GBP", "CAD", "AUD", "€", "£", "¥"]
+        .into_iter()
+        .any(|marker| text.contains(marker))
+    {
+        return None;
+    }
+    pdf_import::parse_amount(text, decimal_mark)
+}
+
 pub enum PdfImportAction {
     Apply {
         sheet: u64,
@@ -261,7 +272,7 @@ impl PdfImportPanel {
                     } else if *role == Role::Date {
                         pdf_import::parse_date(field, &self.date_order)
                     } else if role.is_amount() {
-                        pdf_import::parse_amount(field, self.decimal_mark)
+                        parse_usd_amount(field, self.decimal_mark)
                     } else {
                         Some(field.clone())
                     };
@@ -348,7 +359,7 @@ impl PdfImportPanel {
                     let typed = (**role == Role::Date
                         && pdf_import::parse_date(source, &self.date_order).is_some())
                         || (role.is_amount()
-                            && pdf_import::parse_amount(source, self.decimal_mark).is_some());
+                            && parse_usd_amount(source, self.decimal_mark).is_some());
                     if typed {
                         pdf_import::literal(&checked.fields[*column])
                     } else {
@@ -771,6 +782,75 @@ mod tests {
             panic!("Expected Apply")
         };
         assert_eq!(&rows[0][..3], ["11/09", "'=SUM(A1:A9)", "12.OO"]);
+    }
+
+    #[test]
+    fn foreign_amounts_require_review_and_keep_their_currency_as_text() {
+        for role in [Role::Amount, Role::Debit, Role::Credit] {
+            for foreign in [
+                "EUR 1,234.50",
+                "-GBP 1,234.50",
+                "1,234.50 CAD",
+                "AUD +1,234.50",
+                "(€1,234.50)",
+                "(1,234.50 £)",
+                "¥1,234.50",
+                "USD 1,234.50 EUR",
+            ] {
+                let mut panel = panel(&format!("{foreign}\tUSD 1,234.50"), 3);
+                panel.roles = vec![role, role];
+                panel.source_columns = false;
+                panel.check();
+                assert_eq!(panel.checked[0].issues.len(), 1, "{foreign}");
+                assert!(panel.output().is_err(), "{foreign}");
+
+                panel.keep_flagged = true;
+                let PdfImportAction::Apply {
+                    sheet,
+                    origin,
+                    rows,
+                    ..
+                } = panel.output().unwrap()
+                else {
+                    panic!("Expected Apply")
+                };
+                let mut workbook = spreadsheet::Workbook::default();
+                workbook.sheets[0].id = sheet;
+                workbook.set_block(sheet, origin, &rows).unwrap();
+                let evaluation = workbook.recalculate();
+                let kept_foreign = evaluation.value(sheet, origin);
+                assert_eq!(
+                    kept_foreign,
+                    spreadsheet::CellValue::Text(foreign.to_owned())
+                );
+                assert_eq!(kept_foreign.display(2), foreign);
+                assert_eq!(
+                    evaluation.value(sheet, CellAddr::new(origin.row, origin.col + 1)),
+                    spreadsheet::CellValue::Number(1234.5)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn usd_and_unmarked_amounts_remain_typed_with_both_decimal_marks() {
+        for role in [Role::Amount, Role::Debit, Role::Credit] {
+            for (decimal_mark, text) in [
+                (DecimalMark::Dot, "USD 1,234.50\t$1,234.50\t1,234.50"),
+                (DecimalMark::Comma, "USD 1.234,50\t$1.234,50\t1.234,50"),
+            ] {
+                let mut panel = panel(text, 3);
+                panel.roles = vec![role; 3];
+                panel.source_columns = false;
+                panel.decimal_mark = decimal_mark;
+                panel.check();
+                assert!(panel.checked[0].issues.is_empty());
+                let PdfImportAction::Apply { rows, .. } = panel.output().unwrap() else {
+                    panic!("Expected Apply")
+                };
+                assert_eq!(rows, [vec!["1234.5", "1234.5", "1234.5"]]);
+            }
+        }
     }
 
     #[test]

@@ -186,6 +186,9 @@ async function paste(page, address, source) {
   await key(page, "Control+v");
 }
 async function toolbar(page, index) { interaction = `toolbar control ${index}`; await nameFocus(page); await tab(page, index); await key(page, "Space"); }
+// Tab order from the address field. Keep these names aligned with the visible
+// toolbar, so a new control cannot silently turn a style test into another action.
+const controls = { font: 5, bold: 7, strike: 10, left: 11, center: 12, right: 13, borders: 16, number: 17 };
 async function undo(page) { await key(page, "Escape"); await key(page, "Control+z"); }
 async function exportCsv(page) {
   await nameFocus(page);
@@ -244,6 +247,27 @@ function zipEntries(bytes) {
     offset += 46 + nameLength + extraLength + commentLength;
   }
   return files;
+}
+function odsWithOnlyStandardWorkbook(bytes) {
+  // Make the private backup unavailable without changing any compressed data
+  // or CRC. The real file importer must reconstruct styles from ODF XML.
+  const result = Buffer.from(bytes);
+  const end = result.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let offset = result.readUInt32LE(end + 16), renamed = false;
+  for (let index = 0; index < result.readUInt16LE(end + 10); index++) {
+    const nameLength = result.readUInt16LE(offset + 28), extraLength = result.readUInt16LE(offset + 30), commentLength = result.readUInt16LE(offset + 32);
+    const name = result.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    if (name === "jig/state.json") {
+      const local = result.readUInt32LE(offset + 42);
+      result.write("jig/other.json", local + 30, "utf8");
+      result.write("jig/other.json", offset + 46, "utf8");
+      renamed = true;
+    }
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  assert.ok(renamed, "The standard ODS import fixture must exclude the private state backup");
+  assert.equal(zipEntries(result).has("jig/state.json"), false);
+  return result;
 }
 async function importOds(page, bytes) {
   const event = page.waitForEvent("filechooser", { timeout: 5000 });
@@ -464,7 +488,7 @@ try {
   await key(current.page, "Alt+PageUp");
   await value(current.page, "H1", 84);
   await key(current.page, "Alt+PageDown");
-  await toolbar(current.page, 6); // del, before the spreadsheet grid.
+  await sheetControl(current.page, "minus");
   assert.equal((await state(current.page)).workbook.sheets.length, 2, "Deleting a populated worksheet must wait for its inline confirmation");
   await key(current.page, "Space"); // The focused Delete sheet confirmation.
   assert.equal((await state(current.page)).workbook.sheets.length, 1);
@@ -492,17 +516,69 @@ try {
   const serial = (Date.UTC(2026, 10, 11) - Date.UTC(1899, 11, 30)) / 86400000;
   await enter(current.page, "A17", String(serial));
   await select(current.page, "A17");
-  await numberFormat(current.page, 7); // Date.
+  await numberFormat(current.page, 4); // Date, immediately after the only currency choice, USD.
   assert.equal(sheet(await state(current.page)).styles.A17.number_format, "date");
   assert.equal(sheet(await state(current.page)).cells.A17, String(serial));
   await value(current.page, "A17", serial);
   await select(current.page, "A15");
-  await toolbar(current.page, 7); // Font family, after the enabled del control.
+  await toolbar(current.page, controls.font);
   await tab(current.page, 3); // Mono, Sans, then Serif.
   await key(current.page, "Space");
   assert.equal(sheet(await state(current.page)).styles.A15.font_family, "serif");
-  await toolbar(current.page, 9); // Bold.
+  await toolbar(current.page, controls.bold);
   assert.equal(sheet(await state(current.page)).styles.A15.bold, true);
+
+  progress("align and strike actual cell text, restore Auto, and preserve independent styles");
+  await enter(current.page, "D15", "IIII");
+  await select(current.page, "D15");
+  await toolbar(current.page, controls.left);
+  const styledCell = await selectedCellBounds(current.page);
+  const leftInk = await cellInk(current.page, styledCell);
+  assert.equal(sheet(await state(current.page)).styles.D15.alignment, "left");
+  await toolbar(current.page, controls.center);
+  const centerInk = await cellInk(current.page, styledCell);
+  assert.equal(sheet(await state(current.page)).styles.D15.alignment, "center");
+  assert.ok(centerInk.left - leftInk.left >= 20, "Center must move the visible text inside the cell");
+  await toolbar(current.page, controls.right);
+  const rightInk = await cellInk(current.page, styledCell);
+  assert.equal(sheet(await state(current.page)).styles.D15.alignment, "right");
+  assert.ok(rightInk.left - centerInk.left >= 20, "Right alignment must move the visible text past center");
+  await autoAlignment(current.page);
+  assert.equal(sheet(await state(current.page)).styles?.D15?.alignment, undefined, "Auto must reset the saved override to the omitted default");
+  assert.ok(Math.abs((await cellInk(current.page, styledCell)).left - leftInk.left) <= 1, "Auto must return ordinary text to the left");
+  await toolbar(current.page, controls.center);
+  const unstruck = await cellInk(current.page, styledCell);
+  await toolbar(current.page, controls.strike);
+  saved = await state(current.page);
+  assert.equal(sheet(saved).styles.D15.strike, true);
+  assert.equal(sheet(saved).styles.D15.alignment, "center", "Strikethrough must preserve the chosen alignment");
+  assert.ok((await cellInk(current.page, styledCell)).maxRow >= unstruck.maxRow + 6, "Strikethrough must draw a line across the real glyphs");
+  await toolbar(current.page, controls.strike);
+  assert.equal(sheet(await state(current.page)).styles.D15.strike, undefined, "The same S control must toggle strikethrough off");
+  await undo(current.page);
+  await expectState(current.page, saved, "One Undo must restore the complete struck, centered style");
+  for (const [address, alignment] of [["E15", "left"], ["F15", "right"]]) {
+    await enter(current.page, address, "12");
+    await select(current.page, address);
+    await toolbar(current.page, controls[alignment]);
+  }
+
+  progress("apply every border preset to a rectangle through the real Borders menu");
+  const borderNames = ["none", "all", "outer", "inner", "horizontal", "vertical", "top", "bottom", "left", "right"];
+  for (let index = 0; index < borderNames.length; index++) {
+    await select(current.page, "H15:J17");
+    await borderFormat(current.page, 0); // Edge commands compose, so start each independent check without borders.
+    await borderFormat(current.page, index);
+    const styles = sheet(await state(current.page)).styles ?? {};
+    for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+      const address = `${String.fromCharCode(72 + col)}${15 + row}`;
+      const expected = borderEdges(borderNames[index], row, col);
+      assert.deepEqual(styles[address]?.borders ?? {}, expected, `${borderNames[index]} on ${address} must set the requested rectangle edges`);
+    }
+    assert.equal(styles.A15.bold, true, "Border actions must preserve unrelated formatting");
+    assert.equal(styles.D15.strike, true);
+  }
+  await borderFormat(current.page, 2); // Keep an outside border in the document round trip.
   await capture(current.page, "sheet-formats");
 
   progress("create a bar chart from selected cells and redraw it after editing source values");
@@ -556,6 +632,7 @@ try {
   saved = await state(current.page);
   const exported = await exportJson(current.page);
   assert.deepEqual(exported, saved, "JSON backups must include formulas and all existing Jig records");
+  assert.deepEqual(sheet(exported).styles.D15, { strike: true, alignment: "center" }, "JSON backups must serialize explicit alignment and strike together");
   await value(current.page, "C1", 7.5);
   const imported = structuredClone(exported);
   sheet(imported).cells.A1 = "8";
@@ -576,6 +653,9 @@ try {
   assert.equal(files.get("mimetype")?.toString("utf8"), "application/vnd.oasis.opendocument.spreadsheet");
   assert.ok(files.get("content.xml")?.toString("utf8").includes("table:formula="), "ODS must contain standard spreadsheet formulas, not merely an embedded JSON backup");
   assert.ok(files.get("content.xml")?.toString("utf8").includes("number:percentage-style"), "ODS must include standard numeric formatting");
+  const contentXml = files.get("content.xml").toString("utf8");
+  for (const alignment of ["left", "center", "right"]) assert.ok(contentXml.includes(`fo:text-align="${alignment}"`), `ODS must expose standard ${alignment} paragraph alignment`);
+  assert.ok(contentXml.includes('style:text-line-through-style="solid"'), "ODS must expose standard strikethrough formatting to other spreadsheet apps");
   const chartPictures = [...files].filter(([name]) => /^Pictures\/chart-.*\.svg$/.test(name));
   assert.equal(chartPictures.length, 2, "A saved ODS must carry both real charts as portable SVG images");
   assert.ok(chartPictures.some(([, bytes]) => bytes.toString("utf8").includes("Making")), "The portable bar chart must contain its actual data labels");
@@ -592,6 +672,7 @@ try {
   await tab(current.page, 3); // Data, active Undo, then Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, beforeOds, "Confirming a locally saved ODS must restore formulas and all original Jig records");
+  assert.deepEqual(sheet(await state(current.page)).styles.D15, { strike: true, alignment: "center" }, "ODS import must restore the actual alignment and strike style");
   await value(current.page, "B1", 11);
   const beforePdf = await raw(current.page);
   const pdf = await shortcutDownload(current.page, "Control+p", ".pdf");
@@ -628,6 +709,92 @@ try {
   await expectState(current.page, beforeStatement, "One global Undo must restore all cells and Jig data before a multirow PDF import");
   await current.context.close();
 
+  progress("keep legacy foreign currency readable while offering the five USD-only number formats");
+  const legacy = structuredClone(fixture);
+  legacy.workbook = {
+    version: 1, charts: [], sheets: [{ id: 1, name: "Legacy formats", cells: { A1: "12.5", B1: "100", C4: "7", D5: "9", E6: "5", F1: "=C4+D5+E6" }, styles: { A1: { number_format: { currency: "EUR" } } } }],
+  };
+  current = await open("sheet-legacy-formats", legacy);
+  await value(current.page, "A1", 12.5);
+  await value(current.page, "F1", 21);
+  const offeredFormats = [undefined, "number", "percent", { currency: "USD" }, "date"];
+  for (let index = 0; index < offeredFormats.length; index++) {
+    await select(current.page, "B1");
+    await numberFormat(current.page, index);
+    saved = await state(current.page);
+    assert.deepEqual(sheet(saved).styles?.B1?.number_format, offeredFormats[index], "The menu must offer General, Number, Percent, USD, then Date without foreign currency entries");
+    assert.deepEqual(sheet(saved).styles.A1.number_format, { currency: "EUR" }, "Changing another cell must preserve a loaded legacy foreign currency format");
+    assert.equal(sheet(saved).cells.B1, "100");
+  }
+  await boot(current.page, true);
+  assert.deepEqual(sheet(await state(current.page)).styles.A1.number_format, { currency: "EUR" }, "Legacy foreign currency must also survive restart");
+
+  progress("use the bottom plus and minus controls and double-click the sheet name");
+  await sheetControl(current.page, "plus");
+  saved = await state(current.page);
+  assert.equal(saved.workbook.sheets.length, 2, "Clicking the bottom + must add and activate a sheet");
+  const pointerSheet = saved.workbook.sheets.at(-1).id;
+  await enter(current.page, "A1", "31");
+  assert.equal(sheet(await state(current.page), pointerSheet).cells.A1, "31");
+  await renameSheet(current.page, "Pointer sheet");
+  assert.equal(sheet(await state(current.page), pointerSheet).name, "Pointer sheet", "Double-clicking the tab must open its real rename editor");
+  await sheetControl(current.page, "minus");
+  assert.equal((await state(current.page)).workbook.sheets.length, 2, "The bottom - must show confirmation before deleting the active sheet");
+  await key(current.page, "Space");
+  assert.equal((await state(current.page)).workbook.sheets.length, 1);
+  await undo(current.page);
+  assert.equal(sheet(await state(current.page), pointerSheet).cells.A1, "31", "Undo must restore the sheet deleted with the bottom -");
+  // Removing the active sheet selected the first sheet; Undo restores the data
+  // while the visible first sheet remains active for the header tests below.
+  await value(current.page, "F1", 21);
+
+  progress("right-click row and column headers to insert or delete whole selected spans and Undo");
+  await select(current.page, "A1");
+  const firstCell = await selectedCellBounds(current.page);
+  const beforeHeaders = await state(current.page);
+  for (const [axis, header, beforeFormula, afterFormula, deletedFormula] of [
+    ["row", { x: firstCell.left - 22, y: firstCell.top + 3 * 27 + 13 }, "=C6+D7+E8", "=C4+D5+E8", "=#REF!+#REF!+E4"],
+    ["column", { x: firstCell.left + 2 * 112 + 56, y: firstCell.top - 13 }, "=E4+F5+G6", "=C4+D5+G6", "=#REF!+#REF!+C6"],
+  ]) {
+    for (const [index, expected] of [[0, beforeFormula], [1, afterFormula], [2, deletedFormula]]) {
+      await select(current.page, "A1");
+      await current.page.mouse.click(header.x, header.y);
+      await paint(current.page);
+      await current.page.keyboard.down("Shift");
+      await paint(current.page);
+      await current.page.mouse.click(header.x + (axis === "column" ? 112 : 0), header.y + (axis === "row" ? 27 : 0));
+      await paint(current.page);
+      await current.page.keyboard.up("Shift");
+      await paint(current.page);
+      interaction = `right-click ${axis} header, action ${index}`;
+      await current.page.mouse.click(header.x, header.y, { button: "right" });
+      await paint(current.page);
+      await tab(current.page, index + 1); // Insert before, Insert after, Delete.
+      await key(current.page, "Space");
+      const formulaAddress = axis === "column" ? (index === 2 ? "D1" : "H1") : "F1";
+      assert.equal(sheet(await state(current.page)).cells[formulaAddress], expected, `${axis} header action must update formula references for the whole two-header selection`);
+      await value(current.page, formulaAddress, index === 2 ? "#REF!" : 21);
+      await undo(current.page);
+      await expectState(current.page, beforeHeaders, `One Undo must restore every cell, style, and reference after ${axis} header action ${index}`);
+    }
+  }
+  assert.deepEqual(toolsOnly(await state(current.page)), fixture);
+
+  progress("restore alignment, strike and borders through standard ODS XML without the private backup");
+  await importOds(current.page, odsWithOnlyStandardWorkbook(ods));
+  await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await key(current.page, "Escape");
+  await tab(current.page, 3); // Data, active Undo, Confirm import.
+  await key(current.page, "Space");
+  saved = await state(current.page);
+  assert.deepEqual(sheet(saved).styles.D15, { strike: true, alignment: "center" }, "Standard ODS XML must restore strikethrough and centered text without Jig metadata");
+  assert.equal(sheet(saved).styles.E15.alignment, "left");
+  assert.equal(sheet(saved).styles.F15.alignment, "right");
+  assert.deepEqual(sheet(saved).styles.H15.borders, { top: true, left: true });
+  assert.deepEqual(toolsOnly(saved), fixture, "Opening an ordinary ODS must preserve the existing workbench records");
+  await value(current.page, "D15", "IIII");
+  await current.context.close();
+
   progress("operate the spreadsheet grid by touch on a phone");
   current = await open("sheet-mobile", fixture, true);
   await enter(current.page, "A1", "12");
@@ -657,7 +824,7 @@ try {
   await value(current.page, "D10", "Sample: temporary spreadsheet edit");
   assert.equal(await raw(current.page), null, "Sample spreadsheet edits must not create or replace personal data");
   assert.deepEqual(issues, [], "The local spreadsheet must emit no application errors or remote data requests");
-  console.log("Spreadsheet browser checks passed: legacy-data preservation; cell editing, formulas, ranges, errors and cycle recovery; clipboard rectangles, formula relocation and global Undo; quoted CSV; sheet lifecycle and cross-sheet references; financial/date/font formatting; rendered live bar charts and existing-task Gantt charts; unchanged workbench tools; JSON backup/import and reload; real ODS documents with formulas, styles, charts and Jig data; embedded-font PDF export; local text-PDF review, cancellation, source provenance and atomic import/Undo; phone touch editing, draft cancellation and sample isolation.");
+  console.log("Spreadsheet browser checks passed: legacy-data preservation; cell editing, formulas, ranges, errors and cycle recovery; clipboard rectangles, formula relocation and global Undo; quoted CSV; sheet lifecycle and cross-sheet references; USD-only number choices with retained legacy currencies; visible alignment and strike, Auto reset, every border preset and style round trips; bottom sheet controls and double-click rename; header context-menu row/column span edits, reference updates and Undo; rendered live bar charts and existing-task Gantt charts; unchanged workbench tools; JSON backup/import and reload; real ODS documents with formulas, styles, charts and Jig data; embedded-font PDF export; local text-PDF review, cancellation, source provenance and atomic import/Undo; phone touch editing, draft cancellation and sample isolation.");
 } catch (error) {
   originalError = error;
   console.error(`Spreadsheet browser failed during: ${phase}; ${interaction}`);
@@ -705,14 +872,137 @@ async function pageImportCsv(page, contents) {
   await paint(page);
 }
 async function renameSheet(page, name) {
-  await toolbar(page, 5);
+  await select(page, "A1");
+  const bounds = await selectedSheetBounds(page);
+  await page.mouse.dblclick((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2, { delay: 80 });
+  await paint(page);
   await pageTextInput(page, name);
   await key(page, "Enter");
+  await page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { timeout: 10000, polling: 50 });
 }
 async function numberFormat(page, index) {
-  await toolbar(page, 15); // Number format, with two worksheets present.
+  await toolbar(page, controls.number);
   await tab(page, index + 1);
   await key(page, "Space");
+}
+async function borderFormat(page, index) {
+  await toolbar(page, controls.borders);
+  await tab(page, index + 1);
+  await key(page, "Space");
+}
+async function autoAlignment(page) {
+  await topMenu(page, 3); // Format, before Insert and View.
+  await tab(page, 7); // Font, size, B, I, U, S, Alignment.
+  await key(page, "Space");
+  await tab(page); // Auto is the first choice.
+  await key(page, "Space");
+}
+function borderEdges(preset, row, col) {
+  const all = { top: true, right: true, bottom: true, left: true };
+  const outer = { top: row === 0, right: col === 2, bottom: row === 2, left: col === 0 };
+  const choices = {
+    none: {}, all, outer,
+    inner: Object.fromEntries(Object.entries(outer).map(([edge, enabled]) => [edge, !enabled])),
+    horizontal: { top: true, bottom: true }, vertical: { left: true, right: true },
+    top: { top: row === 0 }, bottom: { bottom: row === 2 }, left: { left: col === 0 }, right: { right: col === 2 },
+  };
+  return Object.fromEntries(Object.entries(choices[preset]).filter(([, enabled]) => enabled));
+}
+async function selectedShapes(page) {
+  // Read rendered pixels, never application state or a synthetic UI hook. The
+  // selected fill identifies both cells and the active sheet tab on any layout.
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  return page.evaluate(async encoded => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`;
+    await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const mask = new Uint8Array(canvas.width * canvas.height);
+    for (let pixel = 0; pixel < mask.length; pixel++) {
+      const offset = pixel * 4;
+      mask[pixel] = Math.abs(data[offset] - 67) <= 1 && Math.abs(data[offset + 1] - 42) <= 1 && Math.abs(data[offset + 2] - 34) <= 1 ? 1 : 0;
+    }
+    const queue = new Int32Array(mask.length), shapes = [];
+    for (let pixel = 0; pixel < mask.length; pixel++) {
+      if (!mask[pixel]) continue;
+      let start = 0, end = 1;
+      queue[0] = pixel; mask[pixel] = 0;
+      let left = canvas.width, right = 0, top = canvas.height, bottom = 0;
+      while (start < end) {
+        const current = queue[start++], x = current % canvas.width, y = Math.floor(current / canvas.width);
+        left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
+        for (const neighbour of [x ? current - 1 : -1, x + 1 < canvas.width ? current + 1 : -1, y ? current - canvas.width : -1, y + 1 < canvas.height ? current + canvas.width : -1]) {
+          if (neighbour >= 0 && mask[neighbour]) { mask[neighbour] = 0; queue[end++] = neighbour; }
+        }
+      }
+      if (right - left >= 10 && bottom - top >= 12) shapes.push({ left, right, top, bottom, pixels: end });
+    }
+    return { shapes, height: canvas.height };
+  }, png.toString("base64"));
+}
+async function selectedCellBounds(page) {
+  const { shapes } = await selectedShapes(page);
+  const bounds = shapes.filter(item => item.right - item.left >= 85 && item.right - item.left <= 115 && item.bottom - item.top >= 20 && item.bottom - item.top <= 30 && item.pixels > 1500).sort((a, b) => b.bottom - a.bottom)[0];
+  assert.ok(bounds, "The real viewport must show one selected cell before measuring its text or headers");
+  return bounds;
+}
+async function selectedSheetBounds(page) {
+  await page.mouse.move(8, 8);
+  await key(page, "Escape");
+  const { shapes, height } = await selectedShapes(page);
+  const bounds = shapes.filter(item => item.top > height * 0.65 && item.bottom - item.top <= 32).sort((a, b) => b.bottom - a.bottom)[0];
+  assert.ok(bounds, "The bottom tab strip must visibly mark the active sheet");
+  return bounds;
+}
+async function sheetControl(page, control) {
+  // These operations use the last tab, so the next two rendered button fills
+  // belong to + and -. Locate their pixels rather than assuming label widths.
+  await select(page, "A1");
+  const bounds = await selectedSheetBounds(page);
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  const buttons = await page.evaluate(async ({ encoded, bounds }) => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const y = Math.round(bounds.bottom - 3), { data } = context.getImageData(0, y, canvas.width, 1);
+    const runs = []; let start;
+    for (let x = bounds.right + 1; x < canvas.width; x++) {
+      const offset = x * 4;
+      const filled = Math.abs(data[offset] - 41) <= 1 && Math.abs(data[offset + 1] - 37) <= 1 && Math.abs(data[offset + 2] - 34) <= 1;
+      if (filled && start === undefined) start = x;
+      if ((!filled || x + 1 === canvas.width) && start !== undefined) {
+        if (x - start >= 8 && x - start <= 100) runs.push({ x: (start + x - 1) / 2, y: (bounds.top + bounds.bottom) / 2 });
+        start = undefined;
+      }
+    }
+    return runs.slice(0, 2);
+  }, { encoded: png.toString("base64"), bounds });
+  const target = control === "plus" ? 0 : 1;
+  assert.ok(buttons.length > target, `The visible bottom tab strip must offer an enabled ${control} button after the last sheet`);
+  const point = buttons[target];
+  interaction = `click bottom sheet ${control}`;
+  await page.mouse.click(point.x, point.y);
+  await paint(page);
+}
+async function cellInk(page, bounds) {
+  const png = await page.screenshot({ clip: { x: bounds.left + 3, y: bounds.top + 3, width: bounds.right - bounds.left - 6, height: bounds.bottom - bounds.top - 6 }, timeout: 60000, animations: "disabled", caret: "hide" });
+  return page.evaluate(async encoded => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let left = canvas.width, maxRow = 0;
+    for (let y = 0; y < canvas.height; y++) {
+      let count = 0;
+      for (let x = 0; x < canvas.width; x++) {
+        const offset = (y * canvas.width + x) * 4;
+        if (data[offset] > 180 && data[offset + 1] > 175 && data[offset + 2] > 170) { left = Math.min(left, x); count++; }
+      }
+      maxRow = Math.max(maxRow, count);
+    }
+    return { left, maxRow };
+  }, png.toString("base64"));
 }
 async function tapFirstCell(page) {
   // Locate the visibly selected B1 cell in the real screenshot, then tap its

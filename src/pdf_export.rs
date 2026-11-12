@@ -2,7 +2,7 @@ use crate::{
     charts::{self, ChartScene, ChartSource, Primitive, TextAnchor},
     model::State,
     sheet_fonts,
-    spreadsheet::{CellAddr, CellFont, CellRange, CellStyle, Workbook},
+    spreadsheet::{CellAddr, CellAlignment, CellFont, CellRange, CellStyle, Workbook},
     Result,
 };
 use lopdf::{
@@ -249,6 +249,13 @@ impl Pdf {
     ) {
         let font = &mut self.fonts[font_index(style.font_family)];
         let width = font.width(text, size);
+        let strike_metrics = font.face.strikeout_metrics().map(|metrics| {
+            let scale = size / f64::from(font.face.units_per_em());
+            (
+                f64::from(metrics.position) * scale,
+                (f64::from(metrics.thickness) * scale).max(0.45),
+            )
+        });
         let x = match anchor {
             TextAnchor::Start => x,
             TextAnchor::Middle => x - width / 2.0,
@@ -302,6 +309,18 @@ impl Pdf {
                 y - 1.5,
                 style.text_color.unwrap_or([31, 38, 47]),
                 0.45,
+            );
+        }
+        if style.strike {
+            let (offset, thickness) = strike_metrics.unwrap_or((size * 0.3, 0.45));
+            line(
+                operations,
+                x,
+                y + offset,
+                x + width,
+                y + offset,
+                style.text_color.unwrap_or([31, 38, 47]),
+                thickness,
             );
         }
         op(operations, "Q", vec![]);
@@ -590,18 +609,24 @@ fn grid_pages(
                     );
                     op(&mut operations, "W", vec![]);
                     op(&mut operations, "n", vec![]);
+                    let anchor = match style.alignment {
+                        CellAlignment::Auto if numeric => TextAnchor::End,
+                        CellAlignment::Auto | CellAlignment::Left => TextAnchor::Start,
+                        CellAlignment::Center => TextAnchor::Middle,
+                        CellAlignment::Right => TextAnchor::End,
+                    };
                     pdf.text(
                         &mut operations,
-                        if numeric { x + width - 4.0 } else { x + 4.0 },
+                        match anchor {
+                            TextAnchor::Start => x + 4.0,
+                            TextAnchor::Middle => x + width / 2.0,
+                            TextAnchor::End => x + width - 4.0,
+                        },
                         bottom + cell_height / 2.0 - size * 0.35,
                         &text,
                         &style,
                         size,
-                        if numeric {
-                            TextAnchor::End
-                        } else {
-                            TextAnchor::Start
-                        },
+                        anchor,
                     );
                     op(&mut operations, "Q", vec![]);
                 }

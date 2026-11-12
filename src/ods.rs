@@ -4,8 +4,9 @@ use crate::{
     model::State,
     sheet_formula::{self, BinaryOp, Expr, Reference, UnaryOp},
     spreadsheet::{
-        CellAddr, CellBorders, CellFont, CellRange, CellStyle, CellValue, NumberFormat, Sheet,
-        Workbook, MAX_CELLS, MAX_CELL_BYTES, MAX_COLS, MAX_RAW_BYTES, MAX_ROWS, MAX_SHEETS,
+        CellAddr, CellAlignment, CellBorders, CellFont, CellRange, CellStyle, CellValue,
+        NumberFormat, Sheet, Workbook, MAX_CELLS, MAX_CELL_BYTES, MAX_COLS, MAX_RAW_BYTES,
+        MAX_ROWS, MAX_SHEETS,
     },
     Result,
 };
@@ -278,10 +279,28 @@ fn style_xml(xml: &mut String, style: &CellStyle, index: usize) {
     if style.underline {
         xml.push_str(" style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"");
     }
+    if style.strike {
+        xml.push_str(
+            " style:text-line-through-style=\"solid\" style:text-line-through-type=\"single\"",
+        );
+    }
     if let Some(value) = style.text_color {
         let _ = write!(xml, " fo:color=\"{}\"", color(value));
     }
-    xml.push_str("/><style:table-cell-properties");
+    xml.push_str("/>");
+    let alignment = match style.alignment {
+        CellAlignment::Auto => None,
+        CellAlignment::Left => Some("left"),
+        CellAlignment::Center => Some("center"),
+        CellAlignment::Right => Some("right"),
+    };
+    if let Some(alignment) = alignment {
+        let _ = write!(
+            xml,
+            "<style:paragraph-properties fo:text-align=\"{alignment}\"/>"
+        );
+    }
+    xml.push_str("<style:table-cell-properties");
     if let Some(value) = style.fill_color {
         let _ = write!(xml, " fo:background-color=\"{}\"", color(value));
     }
@@ -727,6 +746,8 @@ struct StyleDef {
     style: CellStyle,
     parent: Option<String>,
     format: Option<String>,
+    alignment: Option<CellAlignment>,
+    strike: Option<bool>,
 }
 #[derive(Default)]
 struct Styles {
@@ -748,7 +769,9 @@ impl Styles {
             if events > MAX_XML_EVENTS {
                 return Err("ODS XML exceeds its event limit".into());
             }
-            match reader.read_event().map_err(|_| "Invalid ODS XML")? {
+            let event = reader.read_event().map_err(|_| "Invalid ODS XML")?;
+            let empty = matches!(event, Event::Empty(_));
+            match event {
                 Event::Start(event) | Event::Empty(event) => {
                     let tag = local(event.name().as_ref()).to_vec();
                     let a = attributes(&event, &reader)?;
@@ -768,6 +791,8 @@ impl Styles {
                                         style: CellStyle::default(),
                                         parent: a.get("parent-style-name").cloned(),
                                         format: a.get("data-style-name").cloned(),
+                                        alignment: None,
+                                        strike: None,
                                     },
                                 ));
                             }
@@ -797,7 +822,34 @@ impl Styles {
                                     .is_some_and(|v| v == "italic" || v == "oblique");
                                 s.underline =
                                     a.get("text-underline-style").is_some_and(|v| v != "none");
+                                if let Some(value) = a.get("text-line-through-style") {
+                                    definition.strike = Some(matches!(
+                                        value.as_str(),
+                                        "solid"
+                                            | "dotted"
+                                            | "dash"
+                                            | "long-dash"
+                                            | "dot-dash"
+                                            | "dot-dot-dash"
+                                            | "wave"
+                                    ));
+                                }
+                                if a.get("text-line-through-type").is_some_and(|v| v == "none") {
+                                    definition.strike = Some(false);
+                                }
                                 s.text_color = a.get("color").and_then(|v| parse_color(v));
+                            }
+                        }
+                        b"paragraph-properties" => {
+                            if let Some((_, definition)) = &mut current {
+                                if let Some(value) = a.get("text-align") {
+                                    definition.alignment = Some(match value.as_str() {
+                                        "left" | "start" => CellAlignment::Left,
+                                        "center" => CellAlignment::Center,
+                                        "right" | "end" => CellAlignment::Right,
+                                        _ => CellAlignment::Auto,
+                                    });
+                                }
                             }
                         }
                         b"table-cell-properties" => {
@@ -831,6 +883,11 @@ impl Styles {
                         }
                         b"currency-symbol" => in_currency = true,
                         _ => {}
+                    }
+                    if empty && tag == b"style" {
+                        if let Some((name, style)) = current.take() {
+                            self.definitions.insert(name, style);
+                        }
                     }
                     // Empty elements have no matching End; style/property data
                     // is nevertheless complete. Limits are checked separately.
@@ -884,6 +941,27 @@ impl Styles {
             return CellStyle::default();
         };
         let mut style = definition.style.clone();
+        // Keep absent properties distinct from explicit "none"/automatic
+        // values so external styles can inherit these through parent styles.
+        let mut alignment = None;
+        let mut strike = None;
+        let mut inherited = Some(definition);
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some(item) = inherited {
+            alignment = alignment.or(item.alignment);
+            strike = strike.or(item.strike);
+            if alignment.is_some() && strike.is_some() {
+                break;
+            }
+            inherited = item.parent.as_ref().and_then(|parent| {
+                visited
+                    .insert(parent)
+                    .then(|| self.definitions.get(parent))
+                    .flatten()
+            });
+        }
+        style.alignment = alignment.unwrap_or_default();
+        style.strike = strike.unwrap_or(false);
         if let Some(format) = definition
             .format
             .as_ref()

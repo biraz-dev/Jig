@@ -13,6 +13,13 @@ chrome consistent, including the 3D viewport and loading screen. Task and chart
 category colors, explicit cell formatting and light document exports retain
 their own colors. The matching SVG favicon has an opaque charcoal interior.
 
+Sheet formatting includes left, center and right alignment, an Auto reset,
+strikeout and range-aware border presets. Row/column headers have insert/delete
+context menus, also available by touch-hold or Shift-F10 on selected headers.
+Sheet add/delete controls sit alongside the tabs; double-click a tab to rename.
+USD is the only currency offered for new styles. Existing imported currency
+metadata is preserved. Standard ODS and PDF use the same cell styles as the grid.
+
 The Workbench dashboard uses the same Rust calculator, length,
 task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows
 the approved dark terminal aesthetic with a compact featured countdown, one

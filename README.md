@@ -28,12 +28,27 @@ Use the address field to jump to `B12` or select `A1:D20`.
 - `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `ABS`, `ROUND`, `DATE`, `TODAY`,
   `DAY`, `MONTH`, `YEAR`, `TRUE` and `FALSE`. Dates can be subtracted for durations
   or offset by a number of days. `TODAY()` follows the local calendar day.
-- Mono, Sans and Serif fonts; sizes 9–32; bold, italic, underline, text/fill colors,
-  borders and General/Number/Percent/Currency/Date formats. Currency choices in
-  the toolbar are USD, EUR, GBP and JPY. Display precision never rounds saved inputs.
+- Mono, Sans and Serif fonts; sizes 9–32; bold, italic, underline, strikeout,
+  left/center/right alignment, text/fill colors and borders. Auto alignment keeps
+  numbers on the right and text on the left. General/Number/Percent/USD/Date
+  formats are available; USD is the only currency offered for new formatting.
+  Existing foreign-currency formats in imported documents remain intact.
+  Display precision never rounds saved inputs.
 - Insert/delete rows and columns, merge/unmerge selected cells, add/rename/delete
   tabs. Structural changes update references. Merging rejects ranges that would
   hide existing cell content.
+- Double-click a sheet tab to rename it. The **+ / -** buttons beside the tabs
+  add a sheet or delete the active one; deletion uses inline confirmation and can
+  be undone. The final sheet cannot be deleted.
+- Right-click a row number or column letter (or touch and hold) to insert above/
+  below or left/right, or delete. Shift-click selects a span of headers and the
+  menu acts on the whole span. **Shift-F10** opens the menu for selected headers;
+  the Insert menu also provides keyboard and touch access.
+- **Borders** offers no/all/outside/inner borders, horizontal or vertical lines,
+  and individual top/bottom/left/right edges. Horizontal and vertical presets
+  include the corresponding outside edges; individual edges add to existing
+  borders. Merged cells retain a single perimeter. Alignment, strike and borders
+  survive JSON and standard ODS round trips and appear in PDF exports.
 - Copy and paste rectangular cells. Copies made inside Jig translate relative
   formula references when pasted elsewhere; pasted tab-separated text fills a
   block. Clear removes contents while retaining formatting. **Undo** covers sheet
@@ -98,6 +113,7 @@ second copy of the task to maintain.
 | Ctrl-G | Go to a cell or range |
 | Ctrl-Home / Ctrl-End | First cell / end of used area |
 | Ctrl-C / Ctrl-V | Copy / paste cells |
+| Shift-F10 on selected row/column headers | Insert/delete context menu |
 | Delete / Backspace | Clear selected contents |
 | Shift-F11 | Add a sheet |
 | Alt-PageUp / Alt-PageDown | Previous / next sheet |
@@ -123,6 +139,8 @@ an OCR service. The source PDFs/images remain session-only; confirmed cell value
 are saved with the workbook. The browser file picker accepts up to 20 documents,
 10 MiB each and 50 MiB total. Verify dates, signs, decimal places and totals
 against the originals. Jig does not classify accounts or calculate/file taxes.
+Explicit foreign-currency markers in columns mapped to USD are flagged rather
+than relabelled as dollars; review can retain those original values as text.
 
 ## Build and run on Linux
 

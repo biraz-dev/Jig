@@ -829,12 +829,15 @@ try {
   await paint(weather.page);
   assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Selecting a day must not edit records or the featured countdown");
   await capture(weather.page, "calendar-weather-selected");
-  const remainingDays = await weather.page.evaluate(() => {
+  // Touch selects the date without requesting keyboard focus. Reanchor through
+  // normal shortcuts before traversing the calendar's known keyboard order.
+  await maximizeApplet(weather.page, "calendar");
+  const daysInMonth = await weather.page.evaluate(() => {
     const today = new Date();
-    return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() - today.getDate();
+    return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
   });
-  // After the selected date: the remaining dates, location, then Fahrenheit.
-  await tab(weather.page, remainingDays + 2);
+  // Data, Source, Calendar, Timeline, previous/next/Today, dates, location, °F.
+  await tab(weather.page, daysInMonth + 9);
   weatherMock.config = { ...celsius, unit: "fahrenheit" };
   await navigateKey(weather.page, "Space");
   checkWeather(await expectWeatherCache(weather.page, weatherMock.config), weatherMock.config);

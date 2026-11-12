@@ -8,7 +8,7 @@ use crossterm::{
 use jig::{
     calendar,
     model::{countdown, State},
-    units,
+    palette, units,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -20,11 +20,18 @@ use ratatui::{
 };
 use std::{io, time::Duration};
 
-const BG: Color = Color::Rgb(12, 19, 27);
-const CREAM: Color = Color::Rgb(246, 218, 174);
-const PINK: Color = Color::Rgb(234, 133, 173);
-const MUTED: Color = Color::Rgb(144, 161, 202);
-const ACCENT: Color = Color::Rgb(109, 185, 238);
+const fn rgb([r, g, b]: [u8; 3]) -> Color {
+    Color::Rgb(r, g, b)
+}
+
+const BG: Color = rgb(palette::BACKGROUND);
+const SURFACE: Color = rgb(palette::SURFACE);
+const TEXT: Color = rgb(palette::TEXT);
+const MUTED: Color = rgb(palette::MUTED);
+const BORDER: Color = rgb(palette::BORDER);
+const ACCENT: Color = rgb(palette::ACCENT);
+const SELECTED: Color = rgb(palette::SELECTED);
+const SUCCESS: Color = rgb(palette::SUCCESS);
 const NAMES: [&str; 5] = [
     "CALCULATOR",
     "LENGTH",
@@ -398,15 +405,16 @@ pub fn run(state: &mut State, store: &Store) -> Result<(), Box<dyn std::error::E
 }
 fn panel(title: String, focused: bool) -> Block<'static> {
     Block::default()
+        .style(Style::default().bg(SURFACE).fg(TEXT))
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if focused { PINK } else { MUTED }))
-        .title_style(Style::default().fg(PINK))
+        .border_style(Style::default().fg(if focused { ACCENT } else { BORDER }))
+        .title_style(Style::default().fg(ACCENT))
 }
 fn draw(frame: &mut Frame, state: &State, app: &mut App) {
     let area = frame.area();
     frame.render_widget(
-        Block::default().style(Style::default().bg(BG).fg(CREAM)),
+        Block::default().style(Style::default().bg(BG).fg(TEXT)),
         area,
     );
     if area.width < 32 || area.height < 10 {
@@ -427,7 +435,7 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 " JIG ",
-                Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 " / You are a small Small Giant Psionicist.",
@@ -440,8 +448,9 @@ fn draw(frame: &mut Frame, state: &State, app: &mut App) {
         ]))
         .block(
             Block::default()
+                .style(Style::default().bg(SURFACE))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(MUTED)),
+                .border_style(Style::default().fg(BORDER)),
         ),
         rows[0],
     );
@@ -503,7 +512,7 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
             body = sections[0];
             let mut lines = Vec::new();
             for (i, (label, value)) in form.labels.iter().zip(&form.values).enumerate() {
-                lines.push(Line::styled(*label, Style::default().fg(PINK)));
+                lines.push(Line::styled(*label, Style::default().fg(ACCENT)));
                 // Show the tail so newly typed text stays visible even in a narrow panel.
                 let chars: Vec<char> = value.chars().collect();
                 let tail: String = chars
@@ -555,17 +564,13 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                     && large_width(&result) <= result_area.width as usize
                 {
                     frame.render_widget(
-                        Paragraph::new(large_number(&result))
-                            .style(Style::default().fg(Color::Rgb(164, 223, 144))),
+                        Paragraph::new(large_number(&result)).style(Style::default().fg(SUCCESS)),
                         result_area,
                     );
                 } else {
                     frame.render_widget(
-                        Paragraph::new(format!("= {result}")).style(
-                            Style::default()
-                                .fg(Color::Rgb(164, 223, 144))
-                                .add_modifier(Modifier::BOLD),
-                        ),
+                        Paragraph::new(format!("= {result}"))
+                            .style(Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
                         result_area,
                     );
                 }
@@ -631,7 +636,7 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                     .style(Style::default().fg(if t.complete {
                         MUTED
                     } else {
-                        CREAM
+                        TEXT
                     }))
                 })
                 .collect();
@@ -660,7 +665,7 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                 if body.height >= 12 && large_width(&clock) <= body.width as usize {
                     text = vec![Line::styled(
                         d.title.to_uppercase(),
-                        Style::default().fg(CREAM),
+                        Style::default().fg(TEXT),
                     )];
                     text.extend(large_number(&clock));
                     text.push(Line::styled(
@@ -747,15 +752,13 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                                 let style = if *day == today {
                                     Style::default()
                                         .fg(BG)
-                                        .bg(CREAM)
+                                        .bg(ACCENT)
                                         .add_modifier(Modifier::BOLD)
                                 } else {
-                                    Style::default().fg(if deadline {
-                                        PINK
-                                    } else if entry {
+                                    Style::default().fg(if deadline || entry {
                                         ACCENT
                                     } else {
-                                        CREAM
+                                        TEXT
                                     })
                                 };
                                 Span::styled(
@@ -843,7 +846,7 @@ fn draw_list(frame: &mut Frame, area: Rect, items: Vec<ListItem<'_>>, selected: 
     let mut selection = ListState::default().with_selected(Some(selected.min(items.len() - 1)));
     frame.render_stateful_widget(
         List::new(items)
-            .highlight_style(Style::default().bg(Color::Rgb(45, 51, 64)))
+            .highlight_style(Style::default().bg(SELECTED))
             .highlight_symbol("› "),
         area,
         &mut selection,
@@ -916,7 +919,9 @@ mod tests {
             Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
             _ => fallback.to_owned(),
         };
-        let mut svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\"><title>Jig dashboard — sample data</title><rect width=\"100%\" height=\"100%\" fill=\"#0c131b\"/><g font-family=\"IBM Plex Mono,DejaVu Sans Mono,monospace\" font-size=\"16\">\n", width * 10, height * 20, width * 10, height * 20);
+        let background = color(BG, "");
+        let foreground = color(TEXT, "");
+        let mut svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\"><title>Jig dashboard — sample data</title><rect width=\"100%\" height=\"100%\" fill=\"{background}\"/><g font-family=\"IBM Plex Mono,DejaVu Sans Mono,monospace\" font-size=\"16\">\n", width * 10, height * 20, width * 10, height * 20);
         for (y, row) in buffer.content.chunks(width as usize).enumerate() {
             let mut x = 0;
             while x < row.len() {
@@ -935,7 +940,7 @@ mod tests {
                         start * 10,
                         y * 20,
                         (x - start) * 10,
-                        color(bg, "#0c131b")
+                        color(bg, &background)
                     )
                     .unwrap();
                 }
@@ -943,7 +948,7 @@ mod tests {
                     .replace('&', "&amp;")
                     .replace('<', "&lt;")
                     .replace('>', "&gt;");
-                writeln!(svg, "<text x=\"{}\" y=\"{}\" fill=\"{}\" xml:space=\"preserve\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{text}</text>", start * 10, y * 20 + 16, color(fg, "#f6daae"), (x - start) * 10).unwrap();
+                writeln!(svg, "<text x=\"{}\" y=\"{}\" fill=\"{}\" xml:space=\"preserve\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{text}</text>", start * 10, y * 20 + 16, color(fg, &foreground), (x - start) * 10).unwrap();
             }
         }
         svg.push_str("</g></svg>");

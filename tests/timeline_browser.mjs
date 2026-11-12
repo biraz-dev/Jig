@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
+import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
@@ -48,8 +49,7 @@ const timer = setTimeout(() => {
 }, 360000);
 function progress(message) { phase = message; console.log(`Timeline browser phase: ${message}`); }
 async function paint(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.waitForTimeout(250);
+  await waitForAppPaint(page);
 }
 async function key(page, value) {
   await page.keyboard.press(value);
@@ -73,6 +73,7 @@ const browser = await chromium.launch({ headless: true, args: ["--use-angle=swif
 async function open(label, state = fixture, phone = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch: phone, timezoneId: phone ? "America/New_York" : "Etc/UTC" });
   contexts.push(context);
+  await installFrameFence(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await context.addInitScript(({ raw, storageKey, origin }) => {
     if (location.origin === origin && sessionStorage.getItem("jig-timeline-seeded") !== "yes") {

@@ -1,4 +1,5 @@
 //! egui adapter for the same local utility model used by the CLI and terminal.
+use crate::web_theme::{self, ACCENT, BG, ERROR, MUTED, RULE, SUCCESS, TEXT};
 use crate::{
     browser_storage,
     chart_ui::{ChartAction, ChartPanel},
@@ -17,13 +18,6 @@ use jig::{
 };
 use std::time::Duration;
 
-const BG: Color32 = Color32::from_rgb(12, 19, 27);
-const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
-const PINK: Color32 = Color32::from_rgb(234, 133, 173);
-const BLUE: Color32 = Color32::from_rgb(144, 161, 202);
-const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
-const GREEN: Color32 = Color32::from_rgb(164, 223, 144);
-const RULE: Color32 = Color32::from_rgb(49, 65, 83);
 const UNDO_STEPS: usize = 20;
 const UNDO_BYTES: usize = 64 * 1024 * 1024;
 
@@ -34,15 +28,15 @@ enum UndoEntry {
 
 pub(crate) fn task_color(color: Option<TaskColor>, complete: bool) -> Color32 {
     let color = match color {
-        Some(TaskColor::Rose) => PINK,
+        Some(TaskColor::Rose) => Color32::from_rgb(234, 133, 173),
         Some(TaskColor::Amber) => Color32::from_rgb(218, 185, 126),
         Some(TaskColor::Sage) => Color32::from_rgb(148, 188, 160),
-        Some(TaskColor::Blue) => ACCENT,
+        Some(TaskColor::Blue) => Color32::from_rgb(109, 185, 238),
         Some(TaskColor::Lilac) => Color32::from_rgb(179, 158, 207),
-        None => BLUE,
+        None => Color32::from_rgb(144, 161, 202),
     };
     if complete {
-        color.gamma_multiply(0.6)
+        color.gamma_multiply(0.7)
     } else {
         color
     }
@@ -131,12 +125,29 @@ impl BrowserApp {
         style.visuals = egui::Visuals::dark();
         style.visuals.panel_fill = BG;
         style.visuals.window_fill = BG;
-        style.visuals.override_text_color = Some(CREAM);
-        style.visuals.selection.bg_fill = Color32::from_rgb(40, 72, 101);
-        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(21, 31, 43);
-        style.visuals.widgets.inactive.bg_stroke = Stroke::new(0.5_f32, RULE);
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(38, 54, 73);
-        style.visuals.widgets.active.bg_fill = Color32::from_rgb(43, 66, 90);
+        style.visuals.override_text_color = Some(TEXT);
+        style.visuals.extreme_bg_color = BG;
+        style.visuals.faint_bg_color = web_theme::SURFACE;
+        style.visuals.code_bg_color = web_theme::SURFACE;
+        style.visuals.hyperlink_color = ACCENT;
+        style.visuals.error_fg_color = ERROR;
+        style.visuals.selection.bg_fill = web_theme::SELECTED;
+        style.visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
+        for (widget, fill) in [
+            (
+                &mut style.visuals.widgets.noninteractive,
+                web_theme::SURFACE,
+            ),
+            (&mut style.visuals.widgets.inactive, web_theme::SURFACE),
+            (&mut style.visuals.widgets.hovered, web_theme::HOVER),
+            (&mut style.visuals.widgets.active, web_theme::ACTIVE),
+            (&mut style.visuals.widgets.open, web_theme::ACTIVE),
+        ] {
+            widget.bg_fill = fill;
+            widget.weak_bg_fill = fill;
+            widget.bg_stroke = Stroke::new(1.0_f32, RULE);
+            widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
+        }
         style.spacing.item_spacing = egui::vec2(8.0, 7.0);
         style.interaction.selectable_labels = false;
         style
@@ -1027,7 +1038,7 @@ impl BrowserApp {
             return self.ocr_running || browser_storage::remaining_pdf() > 0;
         }
         for error in &self.pdf_errors {
-            ui.colored_label(PINK, format!("File skipped: {error}"));
+            ui.colored_label(ERROR, format!("File skipped: {error}"));
         }
         let action = self.pdf_preview.as_mut().and_then(|preview| preview.ui(ui));
         match action {
@@ -1193,11 +1204,11 @@ impl BrowserApp {
             ui.label(
                 RichText::new("JIG")
                     .font(FontId::monospace(29.0))
-                    .color(CREAM)
+                    .color(TEXT)
                     .strong(),
             );
             if wide {
-                ui.label(RichText::new("You are a small Small Giant Psionicist.").color(BLUE));
+                ui.label(RichText::new("You are a small Small Giant Psionicist.").color(MUTED));
                 self.workspace_buttons(ui);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1217,21 +1228,21 @@ impl BrowserApp {
                 {
                     self.undo_last(ui.ctx());
                 }
-                ui.label(RichText::new("• local").color(GREEN).small());
+                ui.label(RichText::new("• local").color(SUCCESS).small());
                 ui.label(
                     RichText::new(if self.demo {
                         "sample data"
                     } else {
                         "your data"
                     })
-                    .color(if self.demo { PINK } else { BLUE })
+                    .color(if self.demo { ACCENT } else { MUTED })
                     .small(),
                 );
                 let date_format = if wide { "%a %d %b %Y" } else { "%d %b %Y" };
                 ui.label(
                     RichText::new(Local::now().format(date_format).to_string())
                         .size(if wide { 14.0 } else { 11.0 })
-                        .color(BLUE),
+                        .color(MUTED),
                 );
             });
         });
@@ -1240,7 +1251,7 @@ impl BrowserApp {
                 self.workspace_buttons(ui);
                 ui.label(
                     RichText::new("You are a small Small Giant Psionicist.")
-                        .color(BLUE)
+                        .color(MUTED)
                         .small(),
                 );
             });
@@ -1287,7 +1298,7 @@ impl BrowserApp {
         }
         if let Some(confirm) = self.confirm {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(match confirm { Confirm::Empty => "Replace this browser's saved data with an empty workbench? Export first if needed.", Confirm::Clear => "Delete this browser's saved Jig data? Export a backup first if needed." }).color(PINK));
+                ui.label(RichText::new(match confirm { Confirm::Empty => "Replace this browser's saved data with an empty workbench? Export first if needed.", Confirm::Clear => "Delete this browser's saved Jig data? Export a backup first if needed." }).color(ERROR));
                 if ui.button("Confirm").clicked() {
                     self.confirm = None;
                     match confirm {
@@ -1308,7 +1319,7 @@ impl BrowserApp {
             });
             let summary = format!("Import {sheets} sheets / {cells} cells, {} tasks, {} deadlines and {} calculations? This replaces the browser's saved Jig data.", import.tasks.len(), import.deadlines.len(), import.history.len());
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(summary).color(PINK));
+                ui.label(RichText::new(summary).color(ACCENT));
                 if ui.button("Confirm import").clicked() {
                     if let Some(import) = self.pending_import.take() {
                         self.replace_personal(import);
@@ -1324,11 +1335,7 @@ impl BrowserApp {
     fn tool(&mut self, ui: &mut Ui, index: usize, height: f32) {
         let selected = self.focus == index;
         let frame = egui::Frame::default()
-            .fill(if selected {
-                Color32::from_rgb(15, 24, 35)
-            } else {
-                BG
-            })
+            .fill(if selected { web_theme::SURFACE } else { BG })
             .inner_margin(egui::Margin::same(9))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -1380,7 +1387,7 @@ impl BrowserApp {
             self.focus = index;
             ui.ctx().request_repaint();
         }
-        let color = if self.focus == index { PINK } else { RULE };
+        let color = if self.focus == index { ACCENT } else { RULE };
         if selected != (self.focus == index) {
             ui.ctx().request_repaint();
         }
@@ -1469,7 +1476,7 @@ impl BrowserApp {
                         last.formatted(self.state.preferences.decimals)
                     ))
                     .font(FontId::monospace(28.0))
-                    .color(GREEN),
+                    .color(SUCCESS),
                 );
                 if ui
                     .small_button("Copy")
@@ -1605,7 +1612,7 @@ impl BrowserApp {
                             !row.complete,
                             egui::Button::new(
                                 RichText::new(if featured { "★" } else { "☆" })
-                                    .color(if featured { PINK } else { BLUE }),
+                                    .color(if featured { ACCENT } else { MUTED }),
                             )
                             .small(),
                         )
@@ -1669,7 +1676,7 @@ impl BrowserApp {
                         }
                     }
                     let text =
-                        RichText::new(&row.title).color(if row.complete { BLUE } else { CREAM });
+                        RichText::new(&row.title).color(if row.complete { MUTED } else { TEXT });
                     ui.label(if row.complete {
                         text.strikethrough()
                     } else {
@@ -1972,7 +1979,7 @@ impl BrowserApp {
             }
             let owner = if self.task_date_timeline { 2 } else { 1 };
             let field = egui::Id::new(("task-date-input", id));
-            ui.label(RichText::new("Due").color(BLUE).size(11.0));
+            ui.label(RichText::new("Due").color(MUTED).size(11.0));
             if self.focus_task_date {
                 ui.memory_mut(|memory| memory.request_focus(field));
             }
@@ -1993,7 +2000,7 @@ impl BrowserApp {
             }
             let mut enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            ui.label(RichText::new("Start · optional").color(BLUE).size(11.0));
+            ui.label(RichText::new("Start · optional").color(MUTED).size(11.0));
             let start = ui.add(
                 TextEdit::singleline(&mut self.task_start)
                     .id(egui::Id::new(("task-start-input", id)))
@@ -2054,7 +2061,7 @@ impl BrowserApp {
                 }
             });
             if let Some(error) = &self.task_date_error {
-                ui.label(RichText::new(error).color(PINK).size(11.0));
+                ui.label(RichText::new(error).color(ERROR).size(11.0));
             }
         });
     }
@@ -2064,7 +2071,7 @@ impl BrowserApp {
             Some(deadline.id) == self.state.featured && self.state.is_deadline_active(deadline.id)
         });
         let Some(deadline) = featured else {
-            ui.label(RichText::new("No starred deadline").color(BLUE));
+            ui.label(RichText::new("No starred deadline").color(MUTED));
             return;
         };
         let title = deadline.title.clone();
@@ -2079,10 +2086,10 @@ impl BrowserApp {
         let wide = ui.available_width() >= 700.0;
         let title_width = (ui.available_width() * 0.34).min(400.0);
         let draw_title = |ui: &mut Ui| {
-            ui.label(RichText::new(&title).color(CREAM).strong().size(18.0));
-            ui.label(RichText::new(&date).color(BLUE));
+            ui.label(RichText::new(&title).color(TEXT).strong().size(18.0));
+            ui.label(RichText::new(&date).color(MUTED));
             if seconds < 0 {
-                ui.label(RichText::new("OVERDUE").color(PINK));
+                ui.label(RichText::new("OVERDUE").color(ERROR));
             }
         };
         let draw_countdown = |ui: &mut Ui| {
@@ -2093,7 +2100,7 @@ impl BrowserApp {
                         ui.label(
                             RichText::new(format!("{:02}", values[index]))
                                 .font(FontId::new(size, FontFamily::Monospace))
-                                .color(CREAM),
+                                .color(TEXT),
                         );
                         ui.label(
                             RichText::new(["DAYS", "HOURS", "MINUTES", "SECONDS"][index])
@@ -2228,7 +2235,7 @@ impl BrowserApp {
                 || format!("{} / {}", self.year, self.month),
                 |date| date.format("%B %Y").to_string(),
             );
-            ui.label(RichText::new(month).color(CREAM));
+            ui.label(RichText::new(month).color(TEXT));
             if ui.button("›").clicked() {
                 self.shift_month(1);
             }
@@ -2251,7 +2258,7 @@ impl BrowserApp {
                             egui::vec2(size, 18.0),
                             egui::Layout::top_down(egui::Align::Center),
                             |ui| {
-                                ui.label(RichText::new(day).small().color(BLUE));
+                                ui.label(RichText::new(day).small().color(MUTED));
                             },
                         );
                     }
@@ -2264,17 +2271,17 @@ impl BrowserApp {
                         if let Some(day) = day {
                             let mut tasks = self.state.tasks_on_date(*day, &Local);
                             tasks.sort_by_key(|task| task.complete);
-                            let color = if *day == today { ACCENT } else { CREAM };
+                            let color = if *day == today { ACCENT } else { TEXT };
                             let mut button = egui::Button::new(
                                 RichText::new(day.day().to_string()).size(14.0).color(color),
                             )
                             .fill(BG)
                             .stroke(Stroke::NONE);
                             if *day == today {
-                                button = button.fill(Color32::from_rgb(28, 49, 66));
+                                button = button.fill(web_theme::SELECTED);
                             }
                             if *day == self.selected_date {
-                                button = button.stroke(Stroke::new(1.0_f32, BLUE));
+                                button = button.stroke(Stroke::new(1.0_f32, ACCENT));
                             }
                             let response = ui
                                 .push_id(("calendar-date", *day), |ui| {
@@ -2341,7 +2348,7 @@ impl BrowserApp {
                                     egui::Align2::LEFT_CENTER,
                                     format!("+{overflow}"),
                                     FontId::monospace(9.0),
-                                    BLUE,
+                                    MUTED,
                                 );
                             }
                             let mut tooltip = tasks
@@ -2402,19 +2409,19 @@ impl BrowserApp {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(self.selected_date.format("%a %d %b").to_string())
-                    .color(BLUE)
+                    .color(MUTED)
                     .size(12.0),
             );
             if !tasks.is_empty() {
                 ui.label(
                     RichText::new(format!("{} due", tasks.len()))
-                        .color(BLUE)
+                        .color(MUTED)
                         .size(12.0),
                 );
             }
         });
         if tasks.is_empty() {
-            ui.label(RichText::new("No tasks due").color(BLUE).size(12.0));
+            ui.label(RichText::new("No tasks due").color(MUTED).size(12.0));
             return;
         }
         egui::ScrollArea::vertical()
@@ -2430,11 +2437,11 @@ impl BrowserApp {
                             task_mark(ui, rect.center(), task.color, task.complete, 3.0);
                             ui.label(
                                 RichText::new(if task.complete { "Done" } else { "Open" })
-                                    .color(BLUE)
+                                    .color(MUTED)
                                     .size(11.0),
                             );
                             let text = RichText::new(task.title)
-                                .color(if task.complete { BLUE } else { CREAM })
+                                .color(if task.complete { MUTED } else { TEXT })
                                 .size(12.0);
                             ui.add(
                                 egui::Label::new(if task.complete {
@@ -2467,7 +2474,7 @@ impl BrowserApp {
                             ui.painter().hline(
                                 response.rect.x_range(),
                                 response.rect.bottom(),
-                                Stroke::new(0.5_f32, BLUE),
+                                Stroke::new(0.5_f32, MUTED),
                             );
                         }
                     });
@@ -2733,9 +2740,9 @@ impl eframe::App for BrowserApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(&self.status).size(11.0).color(
                     if self.storage_error || self.dirty {
-                        PINK
+                        ERROR
                     } else {
-                        BLUE
+                        MUTED
                     },
                 ));
                 ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
@@ -2746,7 +2753,7 @@ impl eframe::App for BrowserApp {
                         "Arrows select | Ctrl+M maximize | Esc return"
                     })
                     .size(11.0)
-                    .color(BLUE),
+                    .color(MUTED),
                 );
             });
         });

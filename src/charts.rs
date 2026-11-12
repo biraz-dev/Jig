@@ -1,6 +1,7 @@
 //! Bounded chart data and shared vector scenes for the UI and document exports.
 use crate::{
     model::{State, TaskColor},
+    palette,
     spreadsheet::{CellAddr, CellRange, CellValue, Workbook},
     timeline, Result,
 };
@@ -338,10 +339,10 @@ impl Theme {
             }
         } else {
             Self {
-                background: [12, 19, 27],
-                text: [246, 218, 174],
-                muted: [144, 161, 202],
-                rule: [49, 65, 83],
+                background: palette::BACKGROUND,
+                text: palette::TEXT,
+                muted: palette::MUTED,
+                rule: palette::GRID,
             }
         }
     }

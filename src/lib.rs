@@ -5,6 +5,7 @@ pub mod charts;
 pub mod clay;
 pub mod documents;
 pub mod model;
+pub mod palette;
 pub mod pdf_import;
 pub mod sample;
 pub mod sheet_fonts;

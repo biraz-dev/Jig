@@ -1,18 +1,13 @@
 //! A compact, day-based projection of the ordinary checklist and its dates.
 use crate::web::task_color;
+use crate::web_theme::{ACCENT, BG, MUTED, RULE, TEXT, WEEKEND};
 use chrono::{Datelike, Local, NaiveDate};
-use eframe::egui::{self, Color32, FontId, RichText, Stroke, Ui};
+use eframe::egui::{self, FontId, RichText, Stroke, Ui};
 use jig::{
     model::State,
     timeline::{self, DateRange, Scale, TimelineRow},
 };
 
-const BG: Color32 = Color32::from_rgb(12, 19, 27);
-const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
-const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
-const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
-const RULE: Color32 = Color32::from_rgb(49, 65, 83);
-const WEEKEND: Color32 = Color32::from_rgb(16, 25, 35);
 const ROW_HEIGHT: f32 = 36.0;
 
 #[derive(Clone, Copy)]
@@ -162,7 +157,7 @@ impl TimelinePanel {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(selected.title)
-                    .color(if selected.complete { MUTED } else { CREAM })
+                    .color(if selected.complete { MUTED } else { TEXT })
                     .size(12.0),
             );
             ui.label(
@@ -313,7 +308,7 @@ impl TimelinePanel {
             egui::Align2::LEFT_CENTER,
             &title,
             FontId::monospace(11.0),
-            if row.complete { MUTED } else { CREAM },
+            if row.complete { MUTED } else { TEXT },
         );
         if row.complete {
             painter.hline(

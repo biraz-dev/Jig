@@ -6,6 +6,10 @@ mod browser_storage;
 mod web;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../web_theme.rs"]
+mod web_theme;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../stl_ui.rs"]
 mod stl_ui;
 

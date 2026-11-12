@@ -1,4 +1,5 @@
 //! Inline chart gallery. Rendering and data interpretation share the core scene.
+use crate::web_theme::{ACCENT, BG, ERROR, MUTED, RULE, TEXT};
 use chrono::{Local, NaiveDate};
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
@@ -6,12 +7,6 @@ use jig::{
     model::State,
 };
 use std::collections::BTreeMap;
-
-const BG: Color32 = Color32::from_rgb(12, 19, 27);
-const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
-const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
-const PINK: Color32 = Color32::from_rgb(234, 133, 173);
-const RULE: Color32 = Color32::from_rgb(49, 65, 83);
 
 #[derive(Clone, Debug)]
 pub enum ChartAction {
@@ -61,10 +56,10 @@ impl ChartPanel {
             if ui.button("Back to cells").clicked() {
                 actions.push(ChartAction::BackToGrid);
             }
-            ui.label(RichText::new("Charts").color(PINK));
+            ui.label(RichText::new("Charts").color(ACCENT));
         });
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).color(PINK).size(12.0));
+            ui.label(RichText::new(error).color(ERROR).size(12.0));
         }
         let Some(book) = &state.workbook else {
             ui.label(
@@ -93,7 +88,7 @@ impl ChartPanel {
                             .show(ui, |ui| {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.label(
-                                        RichText::new(chart.kind.label()).color(PINK).size(12.0),
+                                        RichText::new(chart.kind.label()).color(ACCENT).size(12.0),
                                     );
                                     let source = match chart.source {
                                         ChartSource::Tasks => "Live tasks".into(),
@@ -193,8 +188,8 @@ impl ChartPanel {
                                 match &cached.1 {
                                     Ok(scene) => paint_scene(ui, scene),
                                     Err(error) => {
-                                        ui.label(RichText::new(&chart.title).color(CREAM));
-                                        ui.label(RichText::new(error).color(PINK).size(12.0));
+                                        ui.label(RichText::new(&chart.title).color(TEXT));
+                                        ui.label(RichText::new(error).color(ERROR).size(12.0));
                                     }
                                 }
                             });

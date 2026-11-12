@@ -1,15 +1,13 @@
 //! Inline, local review of extracted documents before any workbook mutation.
+use crate::web_theme::{ACCENT, ERROR, MUTED, TEXT};
 use std::collections::HashMap;
 
-use eframe::egui::{self, Color32, RichText, TextEdit, Ui};
+use eframe::egui::{self, RichText, TextEdit, Ui};
 use jig::{
     pdf_import::{self, DateOrder, DecimalMark, ExtractedPdf},
     spreadsheet::{self, CellAddr, MAX_CELL_BYTES, MAX_COLS, MAX_RAW_BYTES, MAX_ROWS},
 };
 
-const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
-const PINK: Color32 = Color32::from_rgb(234, 133, 173);
-const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
 const FIELD_WIDTH: f32 = 156.0;
 
 pub enum PdfImportAction {
@@ -399,8 +397,8 @@ impl PdfImportPanel {
     pub fn ui(&mut self, ui: &mut Ui) -> Option<PdfImportAction> {
         let mut action = None;
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("REVIEW IMPORT").color(PINK));
-            ui.label(RichText::new(&self.document.name).color(CREAM));
+            ui.label(RichText::new("REVIEW IMPORT").color(ACCENT));
+            ui.label(RichText::new(&self.document.name).color(TEXT));
             ui.label(
                 RichText::new(format!("{} pages · local", self.document.pages.len())).color(MUTED),
             );
@@ -527,11 +525,11 @@ impl PdfImportPanel {
             self.check();
         }
         if let Some(error) = self.parse_error.as_ref().or(self.error.as_ref()) {
-            ui.colored_label(PINK, error);
+            ui.colored_label(ERROR, error);
         }
         if self.dirty {
             ui.colored_label(
-                PINK,
+                ERROR,
                 "Extracted text changed. Update preview before importing.",
             );
         }
@@ -695,7 +693,7 @@ impl PdfImportPanel {
                                                     .color(if notes.is_empty() {
                                                         MUTED
                                                     } else {
-                                                        PINK
+                                                        ERROR
                                                     })
                                                     .size(10.0),
                                             )

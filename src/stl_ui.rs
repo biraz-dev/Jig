@@ -1,5 +1,6 @@
 //! Local STL instrument. Meshes and camera state stay in memory; only named
 //! material settings are returned to the ordinary portable application state.
+use crate::web_theme::{ACCENT, BG, ERROR, MUTED, RULE, TEXT};
 use eframe::{
     egui::{self, Color32, FontId, RichText, Stroke, Ui},
     egui_glow, glow,
@@ -13,12 +14,6 @@ use jig::{
 };
 use std::{cell::RefCell, f32::consts::FRAC_PI_2, sync::Arc, time::Duration};
 use wasm_bindgen::prelude::*;
-
-const BG: Color32 = Color32::from_rgb(12, 19, 27);
-const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
-const PINK: Color32 = Color32::from_rgb(234, 133, 173);
-const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
-const RULE: Color32 = Color32::from_rgb(49, 65, 83);
 
 #[wasm_bindgen]
 extern "C" {
@@ -502,7 +497,7 @@ impl StlPanel {
             }
         }
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("STL").color(PINK));
+            ui.label(RichText::new("STL").color(ACCENT));
             if self.focus_open {
                 let id = ui.next_auto_id();
                 ui.memory_mut(|memory| memory.request_focus(id));
@@ -563,7 +558,7 @@ impl StlPanel {
             }
         });
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).color(PINK).size(12.0));
+            ui.label(RichText::new(error).color(ERROR).size(12.0));
         }
         if self.mesh.is_none() {
             ui.add_space(6.0);
@@ -679,7 +674,7 @@ impl StlPanel {
         self.human_toggle(ui);
         self.matcap_toggle(ui);
         if let Some(error) = &self.graphics_error {
-            ui.label(RichText::new(error).color(PINK).size(11.0));
+            ui.label(RichText::new(error).color(ERROR).size(11.0));
         }
         changed
     }
@@ -696,7 +691,7 @@ impl StlPanel {
                         .size(11.0),
                 );
                 if let Some(volume) = measurements.volume_label() {
-                    ui.label(RichText::new(volume).color(CREAM).size(24.0));
+                    ui.label(RichText::new(volume).color(TEXT).size(24.0));
                     ui.label(
                         RichText::new(format!(
                             "Total volume · {}",
@@ -713,18 +708,18 @@ impl StlPanel {
                 } else {
                     ui.label(
                         RichText::new("Total volume unavailable")
-                            .color(PINK)
+                            .color(ERROR)
                             .size(14.0),
                     );
                 }
                 ui.label(
                     RichText::new(format!("Area {}", measurements.area_label()))
-                        .color(CREAM)
+                        .color(TEXT)
                         .size(12.0),
                 );
                 ui.label(
                     RichText::new(measurements.dimensions_label())
-                        .color(CREAM)
+                        .color(TEXT)
                         .size(12.0),
                 );
                 if self.mode != ShrinkMode::Off {
@@ -748,17 +743,17 @@ impl StlPanel {
                                 mesh.metrics.inconsistent_edges,
                                 mesh.metrics.degenerate_triangles
                             ))
-                            .color(PINK)
+                            .color(ERROR)
                             .size(11.0),
                         );
                         if mesh.metrics.mixed_component_winding {
-                            ui.label(RichText::new("Mixed shell orientation / possible cavity; enclosed volume unverified").color(PINK).size(11.0));
+                            ui.label(RichText::new("Mixed shell orientation / possible cavity; enclosed volume unverified").color(ERROR).size(11.0));
                         }
                     }
                 }
             }
             Err(error) => {
-                ui.label(RichText::new(error).color(PINK).size(12.0));
+                ui.label(RichText::new(error).color(ERROR).size(12.0));
             }
         }
         ui.add_space(5.0);
@@ -1401,7 +1396,7 @@ impl StlPanel {
             .circle_filled(center, 36.0, BG.gamma_multiply(0.92));
         let (right, up, depth) = stl_camera::axes(self.yaw, self.pitch);
         let mut axes = [
-            (Axis::X, PINK),
+            (Axis::X, Color32::from_rgb(234, 133, 173)),
             (Axis::Y, Color32::from_rgb(148, 188, 160)),
             (Axis::Z, Color32::from_rgb(109, 185, 238)),
         ];
@@ -1447,7 +1442,7 @@ impl StlPanel {
                 ui.ctx().request_repaint();
             }
         }
-        ui.painter().circle_filled(center, 2.0, CREAM);
+        ui.painter().circle_filled(center, 2.0, TEXT);
     }
 
     fn report(&self, settings: &Settings) -> String {
@@ -1853,7 +1848,13 @@ impl Renderer {
                 gl.depth_mask(true);
                 gl.depth_func(glow::LESS);
                 gl.disable(glow::CULL_FACE);
-                gl.clear_color(12.0 / 255.0, 19.0 / 255.0, 27.0 / 255.0, 1.0);
+                let [r, g, b] = jig::palette::BACKGROUND;
+                gl.clear_color(
+                    f32::from(r) / 255.0,
+                    f32::from(g) / 255.0,
+                    f32::from(b) / 255.0,
+                    1.0,
+                );
                 gl.clear_depth_f32(1.0);
                 gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
                 gl.use_program(Some(self.mesh_program));

@@ -242,14 +242,36 @@ async function tapToday(page) {
     const context = canvas.getContext("2d");
     context.drawImage(bitmap, 0, 0);
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
-    const points = [];
-    for (let y = 100; y < Math.min(500, bitmap.height); y++) for (let x = 20; x < bitmap.width - 20; x++) {
-      const offset = (y * bitmap.width + x) * 4;
-      if ([28, 49, 66].every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 2)) points.push([x, y]);
+    const near = (offset, color, tolerance) => color.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= tolerance);
+    const top = 100, bottom = Math.min(500, bitmap.height), left = 20, right = bitmap.width - 20;
+    const seen = new Uint8Array(bitmap.width * bitmap.height), dates = [];
+    for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+      const start = y * bitmap.width + x;
+      if (seen[start] || !near(start * 4, [38, 60, 55], 2)) continue;
+      const stack = [start], region = { left: x, right: x, top: y, bottom: y, count: 0 };
+      seen[start] = 1;
+      while (stack.length) {
+        const index = stack.pop(), px = index % bitmap.width, py = Math.floor(index / bitmap.width);
+        region.left = Math.min(region.left, px); region.right = Math.max(region.right, px);
+        region.top = Math.min(region.top, py); region.bottom = Math.max(region.bottom, py); region.count++;
+        for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
+          if (nx < left || nx >= right || ny < top || ny >= bottom) continue;
+          const next = ny * bitmap.width + nx;
+          if (!seen[next] && near(next * 4, [38, 60, 55], 2)) { seen[next] = 1; stack.push(next); }
+        }
+      }
+      if (region.count < 400 || region.bottom - region.top < 20 || region.bottom - region.top > 36) continue;
+      // The shared selection fill can appear elsewhere. Today's date also has
+      // a teal number; task markers keep their separate data colors.
+      let accent = 0;
+      for (let py = region.top; py <= region.bottom; py++) for (let px = region.left; px <= region.right; px++) {
+        if (near((py * bitmap.width + px) * 4, [123, 184, 170], 3)) accent++;
+      }
+      if (accent >= 4) dates.push(region);
     }
     bitmap.close();
-    if (points.length < 400) return null;
-    return { x: (Math.min(...points.map(point => point[0])) + Math.max(...points.map(point => point[0]))) / 2, y: (Math.min(...points.map(point => point[1])) + Math.max(...points.map(point => point[1]))) / 2 };
+    const date = dates.sort((a, b) => b.count - a.count)[0];
+    return date ? { x: (date.left + date.right) / 2, y: (date.top + date.bottom) / 2 } : null;
   }, png.toString("base64"));
   assert.ok(point, "Today's calendar button must be visibly present before touching it");
   await page.touchscreen.tap(point.x, point.y);

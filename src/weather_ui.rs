@@ -1,12 +1,10 @@
 //! Optional live weather, isolated from sample and personal workbench records.
 use crate::weather_client::{self, CachedForecast};
+use crate::web_theme::{ACCENT, ERROR, MUTED};
 use chrono::{DateTime, Local, NaiveDate, Utc};
-use eframe::egui::{self, Color32, RichText, TextEdit, Ui};
+use eframe::egui::{self, RichText, TextEdit, Ui};
 use jig::weather::{DayWeather, TemperatureUnit, WeatherConfig};
 
-const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
-const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
-const ERROR: Color32 = Color32::from_rgb(234, 133, 173);
 const REFRESH_SECONDS: i64 = 3600;
 
 pub struct WeatherPanel {

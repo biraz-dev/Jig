@@ -1,4 +1,5 @@
 //! Spreadsheet presentation only. Workbook values and formulas live in the core.
+use crate::web_theme::{ACCENT, BG, ERROR, GRID as RULE, MUTED, SELECTED, SURFACE as HEADER, TEXT};
 use chrono::{Local, NaiveDate};
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
@@ -10,14 +11,6 @@ use jig::{
     },
 };
 
-const BG: Color32 = Color32::from_rgb(12, 19, 27);
-const HEADER: Color32 = Color32::from_rgb(17, 27, 39);
-const CREAM: Color32 = Color32::from_rgb(246, 218, 174);
-const MUTED: Color32 = Color32::from_rgb(144, 161, 202);
-const PINK: Color32 = Color32::from_rgb(234, 133, 173);
-const ACCENT: Color32 = Color32::from_rgb(109, 185, 238);
-const RULE: Color32 = Color32::from_rgb(36, 49, 64);
-const SELECTED: Color32 = Color32::from_rgb(27, 46, 64);
 const COL_WIDTH: f32 = 112.0;
 const ROW_HEIGHT: f32 = 27.0;
 const ROW_HEAD: f32 = 44.0;
@@ -189,8 +182,8 @@ impl SheetPanel {
             expanded_selection: CellRange::new(CellAddr::new(0, 0), CellAddr::new(0, 0)),
             pending_copy: false,
             color_menu_key: None,
-            text_color_draft: [246, 218, 174],
-            fill_color_draft: [12, 19, 27],
+            text_color_draft: jig::palette::TEXT,
+            fill_color_draft: jig::palette::BACKGROUND,
             show_gridlines: true,
             calculated_day: None,
         }
@@ -519,7 +512,7 @@ impl SheetPanel {
         self.commands(ui, book, &mut actions);
         self.format_toolbar(ui, book, &mut actions);
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).color(PINK).size(11.0));
+            ui.label(RichText::new(error).color(ERROR).size(11.0));
         }
         let reserve = if self.renaming || self.confirm_delete {
             98.0
@@ -1077,9 +1070,9 @@ impl SheetPanel {
             let key = (self.active, range.start, range.end, fill);
             if self.color_menu_key != Some(key) {
                 let color = if fill {
-                    style.fill_color.unwrap_or([12, 19, 27])
+                    style.fill_color.unwrap_or(jig::palette::BACKGROUND)
                 } else {
-                    style.text_color.unwrap_or([246, 218, 174])
+                    style.text_color.unwrap_or(jig::palette::TEXT)
                 };
                 if fill {
                     self.fill_color_draft = color;
@@ -1255,7 +1248,7 @@ impl SheetPanel {
                     Err(error) => self.error = Some(error),
                 }
             }
-            ui.label(RichText::new("fx").color(PINK));
+            ui.label(RichText::new("fx").color(ACCENT));
             let field = egui::Id::new(("spreadsheet-formula-input", self.active, self.cursor));
             let width = (ui.available_width() - 58.0).max(60.0);
             if self.editing == Some(EditOrigin::Cell) {
@@ -1527,7 +1520,7 @@ impl SheetPanel {
                             style
                                 .text_color
                                 .map(rgb)
-                                .unwrap_or(if error { PINK } else { CREAM });
+                                .unwrap_or(if error { ERROR } else { TEXT });
                         let mut job = egui::text::LayoutJob::simple_singleline(
                             text,
                             cell_font(&style),
@@ -1831,7 +1824,7 @@ impl SheetPanel {
                         book.sheet(self.active)
                             .map_or("sheet", |sheet| sheet.name.as_str())
                     ))
-                    .color(PINK),
+                    .color(ERROR),
                 );
                 if self.delete_focus {
                     let id = ui.next_auto_id();
@@ -1884,7 +1877,7 @@ impl SheetPanel {
                 if count > 0 && sum.is_finite() {
                     ui.label(
                         RichText::new(format!("Sum {sum:.decimals$}"))
-                            .color(CREAM)
+                            .color(TEXT)
                             .size(11.0),
                     );
                 }

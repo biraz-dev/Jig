@@ -30,6 +30,7 @@ jobs:
       - name: Inspect static artifact
         run: |
           test -f dist/index.html
+          test -f dist/favicon.svg
           test -f dist/bridge.js
           test -f dist/document_bridge.js
           test -f dist/ocr_bridge.js

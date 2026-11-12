@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
+import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
@@ -51,8 +52,7 @@ const watchdog = setTimeout(() => {
 }, 360000);
 function progress(message) { phase = message; console.log(`Human browser phase: ${message}`); }
 async function paint(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.waitForTimeout(250);
+  await waitForAppPaint(page);
 }
 async function key(page, value) {
   await page.keyboard.press(value);
@@ -76,6 +76,7 @@ const browser = await chromium.launch({ headless: true, args: ["--use-angle=swif
 async function open(label, viewport = { width: 1440, height: 1000 }, sourceDivisor = 1) {
   const context = await browser.newContext({ viewport, acceptDownloads: true, hasTouch: viewport.width < 500, timezoneId: "Etc/UTC" });
   contexts.push(context);
+  await installFrameFence(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await context.addInitScript(({ raw, storageKey, origin }) => {
     if (location.origin === origin && !sessionStorage.getItem("jig-human-seeded")) {
@@ -195,7 +196,7 @@ async function visual(page, kind) {
       const accepts = offset => name === "model"
         ? pixels[offset] > 55 && pixels[offset] > pixels[offset + 1] + 8 && pixels[offset + 1] > pixels[offset + 2] + 8
         : name === "person" ? near(offset, [148, 188, 160])
-          : [[21, 31, 43], [38, 54, 73], [43, 66, 90], [40, 72, 101], [60, 60, 60]].some(color => near(offset, color, 3));
+          : [[37, 42, 45], [48, 56, 57], [53, 73, 67], [38, 60, 55]].some(color => near(offset, color, 3));
       const seen = new Uint8Array(image.width * image.height);
       const components = [];
       for (let y = bounds.top; y < bounds.bottom; y++) for (let x = bounds.left; x < bounds.right; x++) {

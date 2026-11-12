@@ -227,7 +227,7 @@ async function clickAxis(page, axis) {
     const top = Math.max(0, Math.min(...all.map(point => point.y)) - 8), bottom = Math.min(bitmap.height - 1, Math.max(...all.map(point => point.y)) + 8);
     const centers = [];
     for (let y = top; y <= bottom; y++) for (let x = left; x <= right; x++) {
-      if (near((y * bitmap.width + x) * 4, [231, 233, 231])) centers.push({ x, y });
+      if (near((y * bitmap.width + x) * 4, [230, 225, 219])) centers.push({ x, y });
     }
     if (!centers.length) return { error: "The gnomon's visible text-colored pivot was absent" };
     const pivot = { x: centers.reduce((sum, point) => sum + point.x, 0) / centers.length, y: centers.reduce((sum, point) => sum + point.y, 0) / centers.length };
@@ -258,7 +258,7 @@ async function matcapVisual(page, kind) {
       : { left: phone ? 100 : 130, right: phone ? bitmap.width - 20 : 780, top: phone ? 350 : 190, bottom: phone ? 610 : 850 };
     const near = (offset, target) => target.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 3);
     const accepts = offset => kind === "button"
-      ? [[37, 42, 45], [48, 56, 57], [53, 73, 67], [38, 60, 55]].some(color => near(offset, color))
+      ? [[41, 37, 34], [56, 49, 44], [77, 49, 39], [67, 42, 34]].some(color => near(offset, color))
       : pixels[offset] >= 45 && pixels[offset] <= 245 && Math.abs(pixels[offset] - pixels[offset + 1]) <= 2 && Math.abs(pixels[offset] - pixels[offset + 2]) <= 2;
     const seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
     for (let y = bounds.top; y < bounds.bottom; y++) for (let x = bounds.left; x < bounds.right; x++) {

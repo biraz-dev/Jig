@@ -214,7 +214,8 @@ async function pixels(page) {
 }
 async function modelAspect(page) {
   // Read the public rendered pixels, excluding the labels and corner gnomon.
-  // The warm model fill is distinct from Jig's blue/charcoal background.
+  // Solid material preserves the shader's RGB ratios under lighting. Warm
+  // controls and text have different ratios and must not enlarge these bounds.
   const png = await page.screenshot({ ...screenshotOptions, clip: { x: 50, y: 190, width: 750, height: 690 } });
   return page.evaluate(async encoded => {
     const bytes = Uint8Array.from(atob(encoded), value => value.charCodeAt(0));
@@ -227,7 +228,8 @@ async function modelAspect(page) {
     for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
       const offset = (y * image.width + x) * 4;
       const [red, green, blue] = data.subarray(offset, offset + 3);
-      if (red > 40 && red > green + 5 && green > blue + 5) {
+      if (red > 40 && Math.abs(red / green - 0.965 / 0.855) <= 0.06
+        && Math.abs(green / blue - 0.855 / 0.682) <= 0.08) {
         left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
       }
     }

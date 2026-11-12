@@ -190,13 +190,20 @@ async function visual(page, kind) {
       ? { left: phone ? image.width - 150 : Math.floor(image.width * 0.47), right: phone ? image.width - 12 : Math.floor(image.width * 0.58), top: phone ? 180 : 115, bottom: phone ? 650 : 235 }
       : { left: phone ? 95 : 130, right: phone ? image.width - 12 : Math.floor(image.width * 0.58) - 6, top: phone ? 270 : 160, bottom: image.height - 35 };
     const near = (offset, target, tolerance = 5) => target.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= tolerance);
+    // Lighting scales all Solid material channels together. Match those
+    // ratios so warm controls and borders cannot join the model silhouette.
+    const warmModel = offset => {
+      const red = pixels[offset], green = pixels[offset + 1], blue = pixels[offset + 2];
+      return red > 55 && Math.abs(red / green - 0.965 / 0.855) <= 0.06
+        && Math.abs(green / blue - 0.855 / 0.682) <= 0.08;
+    };
     const classes = kind === "toggle" ? ["button"] : ["model", "person"];
     const answer = {};
     for (const name of classes) {
       const accepts = offset => name === "model"
-        ? pixels[offset] > 55 && pixels[offset] > pixels[offset + 1] + 8 && pixels[offset + 1] > pixels[offset + 2] + 8
+        ? warmModel(offset)
         : name === "person" ? near(offset, [148, 188, 160])
-          : [[37, 42, 45], [48, 56, 57], [53, 73, 67], [38, 60, 55]].some(color => near(offset, color, 3));
+          : [[41, 37, 34], [56, 49, 44], [77, 49, 39], [67, 42, 34]].some(color => near(offset, color, 3));
       const seen = new Uint8Array(image.width * image.height);
       const components = [];
       for (let y = bounds.top; y < bounds.bottom; y++) for (let x = bounds.left; x < bounds.right; x++) {

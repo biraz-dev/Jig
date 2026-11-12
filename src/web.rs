@@ -1476,7 +1476,7 @@ impl BrowserApp {
                         last.formatted(self.state.preferences.decimals)
                     ))
                     .font(FontId::monospace(28.0))
-                    .color(SUCCESS),
+                    .color(TEXT),
                 );
                 if ui
                     .small_button("Copy")

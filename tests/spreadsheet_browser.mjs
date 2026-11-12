@@ -729,7 +729,7 @@ async function tapFirstCell(page) {
     const mask = new Uint8Array(canvas.width * canvas.height);
     for (let index = 0; index < mask.length; index++) {
       const offset = index * 4;
-      mask[index] = Math.abs(data[offset] - 38) <= 1 && Math.abs(data[offset + 1] - 60) <= 1 && Math.abs(data[offset + 2] - 55) <= 1 ? 1 : 0;
+      mask[index] = Math.abs(data[offset] - 67) <= 1 && Math.abs(data[offset + 1] - 42) <= 1 && Math.abs(data[offset + 2] - 34) <= 1 ? 1 : 0;
     }
     const queue = new Int32Array(mask.length), shapes = [];
     for (let index = 0; index < mask.length; index++) {

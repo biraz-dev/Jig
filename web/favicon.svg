@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <title>Jig</title>
-  <rect width="32" height="32" rx="6" fill="#191b1d"/>
-  <path fill="#e7e9e7" d="M8 6H26V10H24V22A6 6 0 0 1 18 28H12A6 6 0 0 1 6 22V20H10V22A2 2 0 0 0 12 24H18A2 2 0 0 0 20 22V10H8Z"/>
-  <path fill="#7bb8aa" d="M10 14H14V18H10Z"/>
+  <rect width="32" height="32" rx="6" fill="#1e1b19"/>
+  <path fill="#e6e1db" d="M8 6H26V10H24V22A6 6 0 0 1 18 28H12A6 6 0 0 1 6 22V20H10V22A2 2 0 0 0 12 24H18A2 2 0 0 0 20 22V10H8Z"/>
+  <path fill="#f46b4a" d="M10 14H14V18H10Z"/>
 </svg>

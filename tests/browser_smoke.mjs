@@ -247,7 +247,7 @@ async function tapToday(page) {
     const seen = new Uint8Array(bitmap.width * bitmap.height), dates = [];
     for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
       const start = y * bitmap.width + x;
-      if (seen[start] || !near(start * 4, [38, 60, 55], 2)) continue;
+      if (seen[start] || !near(start * 4, [67, 42, 34], 2)) continue;
       const stack = [start], region = { left: x, right: x, top: y, bottom: y, count: 0 };
       seen[start] = 1;
       while (stack.length) {
@@ -257,15 +257,15 @@ async function tapToday(page) {
         for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
           if (nx < left || nx >= right || ny < top || ny >= bottom) continue;
           const next = ny * bitmap.width + nx;
-          if (!seen[next] && near(next * 4, [38, 60, 55], 2)) { seen[next] = 1; stack.push(next); }
+          if (!seen[next] && near(next * 4, [67, 42, 34], 2)) { seen[next] = 1; stack.push(next); }
         }
       }
       if (region.count < 400 || region.bottom - region.top < 20 || region.bottom - region.top > 36) continue;
       // The shared selection fill can appear elsewhere. Today's date also has
-      // a teal number; task markers keep their separate data colors.
+      // an orange number; task markers keep their separate data colors.
       let accent = 0;
       for (let py = region.top; py <= region.bottom; py++) for (let px = region.left; px <= region.right; px++) {
-        if (near((py * bitmap.width + px) * 4, [123, 184, 170], 3)) accent++;
+        if (near((py * bitmap.width + px) * 4, [244, 107, 74], 3)) accent++;
       }
       if (accent >= 4) dates.push(region);
     }

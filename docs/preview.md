@@ -7,8 +7,8 @@ they are never copied into a second task store. ODS is the portable document,
 CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 [spreadsheet guide](../README.md#spreadsheet) for controls and limits.
 
-The Graphite palette uses neutral charcoal surfaces, soft white text and a
-restrained teal focus color. Shared RGB constants keep browser and terminal
+The warm Graphite palette uses charcoal surfaces, soft warm white text and a
+blood-orange red focus color. Shared RGB constants keep browser and terminal
 chrome consistent, including the 3D viewport and loading screen. Task and chart
 category colors, explicit cell formatting and light document exports retain
 their own colors. The matching SVG favicon has an opaque charcoal interior.

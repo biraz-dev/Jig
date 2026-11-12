@@ -31,7 +31,6 @@ const MUTED: Color = rgb(palette::MUTED);
 const BORDER: Color = rgb(palette::BORDER);
 const ACCENT: Color = rgb(palette::ACCENT);
 const SELECTED: Color = rgb(palette::SELECTED);
-const SUCCESS: Color = rgb(palette::SUCCESS);
 const NAMES: [&str; 5] = [
     "CALCULATOR",
     "LENGTH",
@@ -564,13 +563,13 @@ fn tool(frame: &mut Frame, area: Rect, index: usize, state: &State, app: &App) {
                     && large_width(&result) <= result_area.width as usize
                 {
                     frame.render_widget(
-                        Paragraph::new(large_number(&result)).style(Style::default().fg(SUCCESS)),
+                        Paragraph::new(large_number(&result)).style(Style::default().fg(TEXT)),
                         result_area,
                     );
                 } else {
                     frame.render_widget(
                         Paragraph::new(format!("= {result}"))
-                            .style(Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
+                            .style(Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
                         result_area,
                     );
                 }

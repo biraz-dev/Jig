@@ -192,9 +192,9 @@ async function readReport(page) {
         return total;
       };
       const answer = {
-        heading: count(16, 55, 45, 75, [123, 184, 170], 12),
-        fill: count(288, 55, 384, 75, [37, 42, 45], 6),
-        label: count(288, 55, 384, 75, [231, 233, 231], 12),
+        heading: count(16, 55, 45, 75, [244, 107, 74], 12),
+        fill: count(288, 55, 384, 75, [41, 37, 34], 6),
+        label: count(288, 55, 384, 75, [230, 225, 219], 12),
       };
       bitmap.close();
       return answer;

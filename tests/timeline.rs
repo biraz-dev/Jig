@@ -369,3 +369,375 @@ fn windows_and_navigation_handle_leap_months_years_and_bounds() {
         assert!(timeline::shift(day("2026-01-01"), scale, i32::MIN).is_err());
     }
 }
+
+mod resizing {
+    use super::{day, json};
+    use chrono::{
+        DateTime, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
+    };
+    use jig::{
+        model::{parse_deadline, State, TaskColor},
+        timeline::{self, ResizeEdge},
+    };
+
+    fn scheduled(start: &str, due: &str) -> (State, u64) {
+        let mut state = State::default();
+        let task = state.add_task("Prepare installation").unwrap();
+        state
+            .set_task_schedule(task, Some(start), Some(due))
+            .unwrap();
+        (state, task)
+    }
+
+    fn schedule(state: &State, task: u64) -> (DateTime<Utc>, DateTime<Utc>) {
+        (
+            state
+                .tasks
+                .iter()
+                .find(|item| item.id == task)
+                .unwrap()
+                .start
+                .unwrap(),
+            state.task_deadline(task).unwrap().at,
+        )
+    }
+
+    #[test]
+    fn either_edge_can_lengthen_shorten_or_collapse_without_moving_the_other_instant() {
+        let start = "2026-11-03T18:15:30.123456789+05:30";
+        let due = "2026-11-07T10:45:12.987654321+05:30";
+        let (state, task) = scheduled(start, due);
+        let before = json(&state);
+        let timezone = FixedOffset::east_opt(5 * 3600 + 30 * 60).unwrap();
+        for (edge, target, expected_start, expected_due) in [
+            (
+                ResizeEdge::Start,
+                "2026-11-01",
+                "2026-11-01T18:15:30.123456789+05:30",
+                due,
+            ),
+            (
+                ResizeEdge::Start,
+                "2026-11-05",
+                "2026-11-05T18:15:30.123456789+05:30",
+                due,
+            ),
+            (ResizeEdge::Start, "2026-11-09", due, due),
+            (ResizeEdge::Start, "2026-11-03", start, due),
+            (
+                ResizeEdge::Due,
+                "2026-11-09",
+                start,
+                "2026-11-09T10:45:12.987654321+05:30",
+            ),
+            (
+                ResizeEdge::Due,
+                "2026-11-05",
+                start,
+                "2026-11-05T10:45:12.987654321+05:30",
+            ),
+            (ResizeEdge::Due, "2026-11-01", start, start),
+            (ResizeEdge::Due, "2026-11-07", start, due),
+        ] {
+            assert_eq!(
+                timeline::resize_schedule(&state, task, edge, day(target), &timezone).unwrap(),
+                (
+                    parse_deadline(expected_start).unwrap(),
+                    parse_deadline(expected_due).unwrap()
+                ),
+                "{edge:?} to {target}"
+            );
+            assert_eq!(
+                json(&state),
+                before,
+                "A resize proposal must not change state"
+            );
+        }
+        // Crossing dates still preserves the moved edge's clock when it fits
+        // before/after the opposite clock on that final shared day.
+        let (state, task) = scheduled("2026-11-03T09:00:00Z", "2026-11-07T17:00:00Z");
+        assert_eq!(
+            timeline::resize_schedule(&state, task, ResizeEdge::Start, day("2026-11-09"), &Utc)
+                .unwrap(),
+            (
+                parse_deadline("2026-11-07T09:00:00Z").unwrap(),
+                schedule(&state, task).1
+            )
+        );
+        assert_eq!(
+            timeline::resize_schedule(&state, task, ResizeEdge::Due, day("2026-11-01"), &Utc)
+                .unwrap(),
+            (
+                schedule(&state, task).0,
+                parse_deadline("2026-11-03T17:00:00Z").unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn applying_a_resize_reuses_records_and_preserves_task_metadata() {
+        for complete in [false, true] {
+            let (mut state, task) = scheduled("2026-11-03T09:00:00Z", "2026-11-07T17:00:00Z");
+            state.add_task("Keep the checklist order").unwrap();
+            state.calculate("1 / 3").unwrap();
+            state.set_task_color(task, Some(TaskColor::Lilac)).unwrap();
+            state.feature_task(task).unwrap();
+            if complete {
+                state.toggle_task(task).unwrap();
+            }
+            let deadline = state.task_deadline(task).unwrap().id;
+            let before = json(&state);
+            let (start, due) =
+                timeline::resize_schedule(&state, task, ResizeEdge::Start, day("2026-11-01"), &Utc)
+                    .unwrap();
+            assert_eq!(json(&state), before);
+            let mut expected = state.clone();
+            expected.tasks[0].start = Some(start);
+            expected.deadlines[0].at = due;
+            state
+                .set_task_schedule(task, Some(&start.to_rfc3339()), Some(&due.to_rfc3339()))
+                .unwrap();
+            state.validate().unwrap();
+            assert_eq!(json(&state), json(&expected));
+            assert_eq!(state.task_deadline(task).unwrap().id, deadline);
+            assert_eq!(state.tasks[0].complete, complete);
+            assert_eq!(state.tasks[0].color, Some(TaskColor::Lilac));
+            assert_eq!(state.featured, (!complete).then_some(deadline));
+            assert_eq!(timeline::rows(&state, &Utc).len(), 2);
+            assert_eq!(state.deadlines.len(), 1);
+        }
+    }
+
+    // Deterministic 2026 US Eastern transitions avoid changing process-wide TZ
+    // and exercise gap/fold handling without another timezone dependency.
+    #[derive(Clone, Copy, Debug)]
+    struct Eastern2026;
+
+    fn eastern_offset(daylight: bool) -> FixedOffset {
+        FixedOffset::west_opt(if daylight { 4 * 3600 } else { 5 * 3600 }).unwrap()
+    }
+
+    impl TimeZone for Eastern2026 {
+        type Offset = FixedOffset;
+
+        fn from_offset(_: &Self::Offset) -> Self {
+            Self
+        }
+
+        fn offset_from_local_date(&self, date: &NaiveDate) -> LocalResult<Self::Offset> {
+            self.offset_from_local_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
+        }
+
+        fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> LocalResult<Self::Offset> {
+            if local.date() == day("2026-03-08") && local.hour() == 2 {
+                return LocalResult::None;
+            }
+            if local.date() == day("2026-11-01") && local.hour() == 1 {
+                return LocalResult::Ambiguous(eastern_offset(true), eastern_offset(false));
+            }
+            let daylight = *local >= day("2026-03-08").and_hms_opt(3, 0, 0).unwrap()
+                && *local < day("2026-11-01").and_hms_opt(1, 0, 0).unwrap();
+            LocalResult::Single(eastern_offset(daylight))
+        }
+
+        fn offset_from_utc_date(&self, date: &NaiveDate) -> Self::Offset {
+            self.offset_from_utc_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
+        }
+
+        fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> Self::Offset {
+            let daylight = *utc >= day("2026-03-08").and_hms_opt(7, 0, 0).unwrap()
+                && *utc < day("2026-11-01").and_hms_opt(6, 0, 0).unwrap();
+            eastern_offset(daylight)
+        }
+    }
+
+    #[test]
+    fn resizing_across_dst_preserves_each_edges_local_clock() {
+        let (state, task) = scheduled("2026-03-06T09:30:00-05:00", "2026-03-10T17:45:00-04:00");
+        let original = schedule(&state, task);
+        let start = timeline::resize_schedule(
+            &state,
+            task,
+            ResizeEdge::Start,
+            day("2026-03-08"),
+            &Eastern2026,
+        )
+        .unwrap();
+        assert_eq!(
+            start,
+            (
+                parse_deadline("2026-03-08T09:30:00-04:00").unwrap(),
+                original.1
+            )
+        );
+        assert_eq!((start.0 - original.0).num_hours(), 47);
+        let due = timeline::resize_schedule(
+            &state,
+            task,
+            ResizeEdge::Due,
+            day("2026-03-07"),
+            &Eastern2026,
+        )
+        .unwrap();
+        assert_eq!(
+            due,
+            (
+                original.0,
+                parse_deadline("2026-03-07T17:45:00-05:00").unwrap()
+            )
+        );
+        assert_eq!((original.1 - due.1).num_hours(), 71);
+    }
+
+    #[test]
+    fn ambiguous_days_preserve_existing_instants_and_choose_earliest_for_new_dates() {
+        let (state, task) = scheduled("2026-11-01T01:30:00-05:00", "2026-11-01T01:45:00-05:00");
+        for edge in [ResizeEdge::Start, ResizeEdge::Due] {
+            assert_eq!(
+                timeline::resize_schedule(&state, task, edge, day("2026-11-01"), &Eastern2026)
+                    .unwrap(),
+                schedule(&state, task),
+                "No-op must retain the second occurrence of the local clock"
+            );
+        }
+        let (state, task) = scheduled("2026-10-30T01:30:00-04:00", "2026-11-04T01:45:00-05:00");
+        assert_eq!(
+            timeline::resize_schedule(
+                &state,
+                task,
+                ResizeEdge::Start,
+                day("2026-11-01"),
+                &Eastern2026
+            )
+            .unwrap(),
+            (
+                parse_deadline("2026-11-01T01:30:00-04:00").unwrap(),
+                schedule(&state, task).1
+            )
+        );
+        assert_eq!(
+            timeline::resize_schedule(
+                &state,
+                task,
+                ResizeEdge::Due,
+                day("2026-11-01"),
+                &Eastern2026
+            )
+            .unwrap(),
+            (
+                schedule(&state, task).0,
+                parse_deadline("2026-11-01T01:45:00-04:00").unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn nonexistent_local_clock_rejects_the_edit_without_changing_either_endpoint() {
+        let (state, task) = scheduled("2026-03-07T02:30:00-05:00", "2026-03-10T02:30:00-04:00");
+        let before = json(&state);
+        for edge in [ResizeEdge::Start, ResizeEdge::Due] {
+            assert!(
+                timeline::resize_schedule(&state, task, edge, day("2026-03-08"), &Eastern2026)
+                    .is_err()
+            );
+            assert_eq!(json(&state), before);
+        }
+    }
+
+    #[test]
+    fn resizing_requires_an_existing_ranged_task_and_supported_calendar_dates() {
+        let (mut state, task) = scheduled("2026-11-03T09:00:00Z", "2026-11-07T17:00:00Z");
+        let undated = state.add_task("Undated task").unwrap();
+        let milestone = state.add_task("Deadline-only task").unwrap();
+        state
+            .set_task_deadline(milestone, Some("2026-11-07T17:00:00Z"))
+            .unwrap();
+        let legacy = state
+            .set_deadline(None, "Legacy deadline", "2026-11-07T17:00:00Z")
+            .unwrap();
+        let before = json(&state);
+        for task_id in [undated, milestone, legacy, 9999] {
+            for edge in [ResizeEdge::Start, ResizeEdge::Due] {
+                assert!(
+                    timeline::resize_schedule(&state, task_id, edge, day("2026-11-05"), &Utc)
+                        .is_err()
+                );
+                assert_eq!(json(&state), before);
+            }
+        }
+        for date in [
+            NaiveDate::MIN,
+            NaiveDate::MAX,
+            day("0000-01-01"),
+            NaiveDate::from_ymd_opt(10000, 1, 1).unwrap(),
+        ] {
+            for edge in [ResizeEdge::Start, ResizeEdge::Due] {
+                assert!(timeline::resize_schedule(&state, task, edge, date, &Utc).is_err());
+                assert_eq!(json(&state), before);
+            }
+        }
+        let mut invalid = state.clone();
+        invalid.tasks[0].start = Some(parse_deadline("2026-11-08T09:00:00Z").unwrap());
+        assert!(timeline::resize_schedule(
+            &invalid,
+            task,
+            ResizeEdge::Start,
+            day("2026-11-05"),
+            &Utc
+        )
+        .is_err());
+        invalid.tasks[0].start = Some(DateTime::<Utc>::MIN_UTC);
+        assert!(timeline::resize_schedule(
+            &invalid,
+            task,
+            ResizeEdge::Start,
+            day("2026-11-05"),
+            &FixedOffset::west_opt(3600).unwrap()
+        )
+        .is_err());
+
+        let (state, task) = scheduled("0001-01-02T09:00:00Z", "9999-12-30T17:00:00Z");
+        assert_eq!(
+            timeline::resize_schedule(&state, task, ResizeEdge::Start, day("0001-01-01"), &Utc)
+                .unwrap()
+                .0,
+            parse_deadline("0001-01-01T09:00:00Z").unwrap()
+        );
+        assert_eq!(
+            timeline::resize_schedule(&state, task, ResizeEdge::Due, day("9999-12-31"), &Utc)
+                .unwrap()
+                .1,
+            parse_deadline("9999-12-31T17:00:00Z").unwrap()
+        );
+        // A supported local date must also produce portable UTC schedule
+        // inputs at the bounds; UTC year 10000 cannot be parsed as RFC3339.
+        for (start, due, edge, date, offset) in [
+            (
+                "0001-01-02T00:30:00+01:00",
+                "0001-01-03T17:00:00+01:00",
+                ResizeEdge::Start,
+                "0001-01-01",
+                3600,
+            ),
+            (
+                "9999-12-29T09:00:00-01:00",
+                "9999-12-30T23:30:00-01:00",
+                ResizeEdge::Due,
+                "9999-12-31",
+                -3600,
+            ),
+        ] {
+            let (state, task) = scheduled(start, due);
+            let before = json(&state);
+            assert!(timeline::resize_schedule(
+                &state,
+                task,
+                edge,
+                day(date),
+                &FixedOffset::east_opt(offset).unwrap()
+            )
+            .is_err());
+            assert_eq!(json(&state), before);
+        }
+    }
+}

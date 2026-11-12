@@ -198,6 +198,24 @@ on bars, with deadline-only diamonds and explicit No date rows. Tab, Enter/Space
 pointer and touch open an inline editor. Selection is independent of featuring.
 The checklist and timeline share the same date editor and global Undo journal.
 
+Inside the timeline, a draggable title/grid divider saves the optional
+`Preferences.timeline_label_percent` (10–80); absent values retain the original
+layout. Pointer moves preview a width and release commits one Undo step.
+Double-click resets it; focused Left/Right and Shift arrows adjust it by 1 or 5
+percentage points. This preference is independent of the outer Tasks/timeline
+split, and both travel in JSON and embedded ODS state.
+
+Ranged task bars have start/due handles with day-snapped previews, release-only
+saves, Escape cancellation and keyboard changes of one day or Shift for a week.
+Only real visible endpoints have handles; clipped edges and deadline-only
+diamonds cannot be resized. The portable `timeline::resize_schedule` proposes a
+validated range, preserving the opposite instant and the moved end's local
+clock, including exact no-ops during repeated DST hours. Crossings clamp to a
+one-day range; nonexistent local times are rejected. The existing schedule
+setter updates the original linked records. No duplicate task, deadline or
+selection change is created. Dataset, viewport, range and row changes cancel
+stale gestures; the browser tests cover both ends, live preview, Undo and reload.
+
 `Task.start` is an optional UTC instant, omitted when absent. The browser's start
 field converts YYYY-MM-DD to local midnight; date-only due edits retain the old
 local time or use 09:00 for a new deadline. An unchanged due day preserves the

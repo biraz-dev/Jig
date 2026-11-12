@@ -59,9 +59,9 @@ async function key(page, value) {
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-mobile", "timeline-edit", "timeline-failure"]);
+  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-mobile", "timeline-edit", "timeline-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  const requestedDivider = name === "timeline-divider" && requested.has("timeline-dashboard");
+  const requestedDivider = ["timeline-divider", "timeline-label-divider", "timeline-range-drag"].includes(name) && requested.has("timeline-dashboard");
   if (allowed.has(name) && (requested.has(name) || requestedDivider) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
@@ -203,9 +203,9 @@ async function tasks(page) {
   await key(page, "ArrowLeft");
   await key(page, "Control+m");
 }
-async function bar(page, color = "rose") {
+async function bar(page, color = "rose", timeout = 60000) {
   // Locate actual rendered task bars, independent of application data/hooks.
-  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  const png = await page.screenshot({ timeout, animations: "disabled", caret: "hide" });
   return page.evaluate(async ({ encoded, color }) => {
     const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
     const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
@@ -233,6 +233,25 @@ async function bar(page, color = "rose") {
     bitmap.close();
     return groups.filter(group => group.bottom - group.top >= 5).sort((a, b) => b.count - a.count).map(group => ({ ...group, width: group.right - group.left + 1, height: group.bottom - group.top + 1 }))[0] ?? null;
   }, { encoded: png.toString("base64"), color });
+}
+async function waitForBar(page, expected = () => true) {
+  const until = Date.now() + 60000;
+  let bounds;
+  do {
+    bounds = await bar(page, "rose", Math.max(1, until - Date.now()));
+  } while ((!bounds || !expected(bounds)) && Date.now() < until);
+  assert.ok(bounds && expected(bounds), `The rendered task duration must reach its expected position; found ${JSON.stringify(bounds)}`);
+  return bounds;
+}
+async function startBarResize(page, bounds, edge, distance) {
+  const x = edge === "due" ? bounds.right - 1 : bounds.left + 1;
+  const y = (bounds.top + bounds.bottom) / 2;
+  await page.mouse.move(x, y);
+  await page.waitForFunction(() => document.body.style.cursor === "ew-resize", undefined, { timeout: 10000, polling: 25 });
+  await page.mouse.down();
+  await paint(page);
+  await page.mouse.move(x + distance, y, { steps: 5 });
+  await paint(page);
 }
 async function openFirstRow(page, touch = false) {
   const bounds = await bar(page);
@@ -342,6 +361,68 @@ async function importData(page, imported, confirm = true) {
 }
 
 try {
+  progress("widen timeline titles and retain the label preference across reload");
+  current = await open("timeline-label-divider");
+  await timeline(current.page);
+  const labelInitialBar = await waitForBar(current.page);
+  const labelRaw = await raw(current.page);
+  // This fixture starts on Monday, so the duration's left edge locates the
+  // visible day-lane boundary. The divider hit region is on its title side.
+  const labelGrip = { x: labelInitialBar.left - 4, y: labelInitialBar.top - 20 };
+  await current.page.mouse.move(labelGrip.x, labelGrip.y);
+  await current.page.waitForFunction(() => document.body.style.cursor === "ew-resize", undefined, { timeout: 10000, polling: 25 });
+  await current.page.mouse.down();
+  await paint(current.page);
+  await current.page.mouse.move(labelGrip.x + 160, labelGrip.y, { steps: 6 });
+  await paint(current.page);
+  const labelPreview = await waitForBar(current.page, item => item.left - labelInitialBar.left >= 50);
+  assert.equal(await raw(current.page), labelRaw, "Changing the title-width preview must not save before the divider is released");
+  await current.page.mouse.up();
+  await paint(current.page);
+  await current.page.waitForFunction(key => Number.isInteger(JSON.parse(localStorage.getItem(key)).preferences.timeline_label_percent), storageKey);
+  const labelState = await state(current.page);
+  assert.ok(labelState.preferences.timeline_label_percent >= 10 && labelState.preferences.timeline_label_percent <= 80, "The title divider must save a bounded label-width percentage");
+  const labelUnrelated = structuredClone(labelState); delete labelUnrelated.preferences.timeline_label_percent;
+  assert.deepEqual(labelUnrelated, fixture, "Widening titles must preserve all task dates, identities, colors, completion and the featured countdown");
+  await capture(current.page, "timeline-label-divider");
+  await boot(current.page, true);
+  await timeline(current.page);
+  await expectState(current.page, labelState, "The title-width preference must survive reloading saved data");
+  const labelRestored = await waitForBar(current.page, item => Math.abs(item.left - labelPreview.left) <= 12);
+  await current.page.mouse.dblclick(labelRestored.left - 4, labelRestored.top - 20);
+  await paint(current.page);
+  await expectState(current.page, fixture, "Double-clicking the title divider must omit its preference and preserve all original records");
+  await waitForBar(current.page, item => Math.abs(item.left - labelInitialBar.left) <= 3);
+
+  progress("resize each visible duration end by one day and undo the complete schedule change");
+  let rangeBar = await waitForBar(current.page);
+  const dayPixels = (rangeBar.width + 1) / 5; // Five inclusive days, with the renderer's half-pixel inset at each end.
+  const rangeRaw = await raw(current.page);
+  await startBarResize(current.page, rangeBar, "due", dayPixels);
+  await waitForBar(current.page, item => item.width - rangeBar.width >= dayPixels * 0.5);
+  assert.equal(await raw(current.page), rangeRaw, "Dragging the due-date end must preview without changing saved dates");
+  await capture(current.page, "timeline-range-drag");
+  await current.page.mouse.up();
+  await paint(current.page);
+  const resizedDue = structuredClone(fixture); resizedDue.deadlines[0].at = "2026-10-31T18:00:00Z";
+  await expectState(current.page, resizedDue, "Moving the due end one day must retain its 18:00 time and the exact opposite start instant");
+  await key(current.page, "Escape");
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "One Undo must restore every record after dragging the due-date end");
+  await timeline(current.page);
+  rangeBar = await waitForBar(current.page);
+  await startBarResize(current.page, rangeBar, "start", dayPixels);
+  await waitForBar(current.page, item => item.left - rangeBar.left >= dayPixels * 0.5 && rangeBar.width - item.width >= dayPixels * 0.5);
+  assert.equal(await raw(current.page), rangeRaw, "Dragging the start-date end must preview without changing saved dates");
+  await current.page.mouse.up();
+  await paint(current.page);
+  const resizedStart = structuredClone(fixture); resizedStart.tasks[0].start = "2026-10-27T12:34:56Z";
+  await expectState(current.page, resizedStart, "Moving the start end one day must preserve its 12:34:56 time and exact due instant");
+  await key(current.page, "Escape");
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "One Undo must restore every record after dragging the start-date end");
+  await current.context.close();
+
   progress("resize the Tasks and Gantt panes, persist their width, and restore the default");
   current = await open("timeline-divider");
   await key(current.page, "Control+Alt+2");
@@ -564,7 +645,7 @@ try {
   await boot(current.page, true);
   await expectState(current.page, phone);
   assert.deepEqual(issues, [], "The local timeline must emit no app errors or network requests");
-  console.log("Timeline browser checks passed: draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
+  console.log("Timeline browser checks passed: persistent timeline title widths and duration-end date resizing with live previews and atomic Undo; draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
 } catch (error) {
   originalError = error;
   console.error(`Timeline browser failed during: ${phase}`);

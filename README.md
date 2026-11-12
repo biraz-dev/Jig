@@ -272,6 +272,18 @@ CLI/terminal note functions remain available.
 Choose **Timeline** beside Calendar, or **Ctrl-Alt-T**, for the task Gantt view.
 Week/Month, arrows and Today change the visible range. Tasks with start and due
 dates are bars; due-only tasks are diamonds. Completed rows are labelled Done.
+Drag the divider between task titles and the date grid to make room for longer
+names. Its width is saved; double-click resets it. The focused divider also
+accepts Left/Right and Shift-Left/Right, like the outer panel divider.
+
+Drag either end of a task bar to change its start or due day. The chart previews
+the range while dragging and saves on release as one Undo step. The opposite
+date stays fixed, and crossing it stops at a one-day range. Existing clock times,
+task colors, completion and the starred countdown are preserved. Focus an end
+handle and use Left/Right to change one day, or Shift-Left/Right for a week;
+Esc cancels a drag. A clipped end must be brought into view before resizing it.
+Deadline-only diamonds still use the date editor.
+
 Select a row to edit dates inline. Start accepts `YYYY-MM-DD`; due accepts that
 format or timezone-qualified RFC3339. Changing a due day keeps its existing time;
 new date-only deadlines use 09:00 local time. Saving the range is one undo step.

@@ -5,7 +5,7 @@ use crate::{
     model::{State, TaskColor},
     Result,
 };
-use chrono::{Datelike, Duration, NaiveDate, TimeZone};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scale {
@@ -17,6 +17,82 @@ pub enum Scale {
 pub struct DateRange {
     pub start: NaiveDate,
     pub end: NaiveDate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResizeEdge {
+    Start,
+    Due,
+}
+
+/// Propose one day-based edge edit for an existing task with a start and due date.
+/// The opposite instant stays exact. The edited edge keeps its local clock time,
+/// except when clamped against the opposite edge to keep the schedule ordered.
+///
+/// An unchanged local date preserves the original instant, including the second
+/// occurrence of an ambiguous clock time. New ambiguous times choose the earlier
+/// instant; nonexistent times and local or UTC dates outside years 1 through
+/// 9999 are errors, so returned UTC instants remain portable schedule inputs.
+/// Callers can apply the returned pair once through `State::set_task_schedule`.
+pub fn resize_schedule<Tz: TimeZone>(
+    state: &State,
+    task_id: u64,
+    edge: ResizeEdge,
+    date: NaiveDate,
+    timezone: &Tz,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let outside = "Task schedule is outside the supported date range";
+    if !(1..=9999).contains(&date.year()) {
+        return Err(outside.into());
+    }
+    let task = state
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .ok_or("Task not found")?;
+    let ranged = "Only tasks with a start and deadline can be resized";
+    let start = task.start.ok_or(ranged)?;
+    let due = state.task_deadline(task_id).ok_or(ranged)?.at;
+    if start > due {
+        return Err("Task start must be on or before its deadline".into());
+    }
+    let local_time = |instant: DateTime<Utc>| -> Result<NaiveDateTime> {
+        let utc = instant.naive_utc();
+        let local = utc
+            .checked_add_offset(timezone.offset_from_utc_datetime(&utc).fix())
+            .ok_or(outside)?;
+        if !(1..=9999).contains(&local.year()) {
+            return Err(outside.into());
+        }
+        Ok(local)
+    };
+    let start_local = local_time(start)?;
+    let due_local = local_time(due)?;
+    let on_date =
+        |instant: DateTime<Utc>, local: NaiveDateTime, date: NaiveDate| -> Result<DateTime<Utc>> {
+            if date == local.date() {
+                return Ok(instant);
+            }
+            timezone
+                .from_local_datetime(&date.and_time(local.time()))
+                .earliest()
+                .map(|changed| changed.with_timezone(&Utc))
+                .ok_or_else(|| "This clock time does not exist on the selected local date".into())
+        };
+    let resized = match edge {
+        ResizeEdge::Start => {
+            let changed = on_date(start, start_local, date.min(due_local.date()))?;
+            (changed.min(due), due)
+        }
+        ResizeEdge::Due => {
+            let changed = on_date(due, due_local, date.max(start_local.date()))?;
+            (start, changed.max(start))
+        }
+    };
+    if !(1..=9999).contains(&resized.0.year()) || !(1..=9999).contains(&resized.1.year()) {
+        return Err(outside.into());
+    }
+    Ok(resized)
 }
 
 impl DateRange {

@@ -1,19 +1,102 @@
 //! A compact, day-based projection of the ordinary checklist and its dates.
 use crate::web::task_color;
 use crate::web_theme::{ACCENT, BG, MUTED, RULE, TEXT, WEEKEND};
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate};
+use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, FontId, RichText, Stroke, Ui};
 use jig::{
     model::State,
-    timeline::{self, DateRange, Scale, TimelineRow},
+    timeline::{self, DateRange, ResizeEdge, Scale, TimelineRow},
 };
 
 const ROW_HEIGHT: f32 = 36.0;
+
+pub fn label_split_id() -> egui::Id {
+    egui::Id::new("timeline-label-divider")
+}
+
+fn edge_id(task: u64, edge: ResizeEdge) -> egui::Id {
+    egui::Id::new(("timeline-resize", task, matches!(edge, ResizeEdge::Due)))
+}
+
+#[derive(Clone)]
+struct GestureView {
+    header: egui::Rect,
+    clip: egui::Rect,
+    window: DateRange,
+    data: Vec<u8>,
+}
+
+impl GestureView {
+    fn new(header: egui::Rect, clip: egui::Rect, window: DateRange, state: &State) -> Self {
+        Self {
+            header,
+            clip,
+            window,
+            data: serde_json::to_vec(&(
+                &state.tasks,
+                &state.deadlines,
+                state.preferences.timeline_label_percent,
+            ))
+            .unwrap_or_default(),
+        }
+    }
+
+    fn matches(
+        &self,
+        header: egui::Rect,
+        clip: egui::Rect,
+        window: DateRange,
+        state: &State,
+    ) -> bool {
+        self.header == header
+            && self.clip == clip
+            && self.window == window
+            && self.data == Self::new(header, clip, window, state).data
+    }
+}
+
+struct BarDrag {
+    task: u64,
+    edge: ResizeEdge,
+    original: NaiveDate,
+    preview: NaiveDate,
+    pointer_origin: f32,
+    row_y: f32,
+    cell: f32,
+    view: GestureView,
+}
+
+enum Gesture {
+    Label {
+        percent: f32,
+        original: f32,
+        view: GestureView,
+    },
+    Bar(BarDrag),
+}
+
+struct ResizeHandle {
+    task: u64,
+    edge: ResizeEdge,
+    start: NaiveDate,
+    due: NaiveDate,
+    hit: egui::Rect,
+    cap: egui::Rect,
+    clip: egui::Rect,
+    cell: f32,
+}
 
 #[derive(Clone, Copy)]
 pub enum TimelineAction {
     EditTask(u64),
     EditDeadline(u64),
+    LabelWidth(Option<u8>),
+    ResizeTask {
+        task: u64,
+        edge: ResizeEdge,
+        date: NaiveDate,
+    },
 }
 
 pub struct TimelinePanel {
@@ -21,6 +104,8 @@ pub struct TimelinePanel {
     scale: Scale,
     selected: Option<(Option<u64>, Option<u64>)>,
     focus_requested: bool,
+    gesture: Option<Gesture>,
+    keyboard_ids: Vec<egui::Id>,
     pub focused: bool,
 }
 
@@ -31,11 +116,14 @@ impl TimelinePanel {
             scale: Scale::Week,
             selected: None,
             focus_requested: false,
+            gesture: None,
+            keyboard_ids: Vec::new(),
             focused: false,
         }
     }
 
     pub fn reveal(&mut self, date: NaiveDate) {
+        self.cancel_gesture();
         self.anchor = date;
     }
 
@@ -43,8 +131,36 @@ impl TimelinePanel {
         self.focus_requested = true;
     }
 
+    pub fn cancel_gesture(&mut self) -> bool {
+        self.gesture.take().is_some()
+    }
+
+    pub fn owns_keyboard(&self, ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| {
+            memory
+                .focused()
+                .is_some_and(|id| id == label_split_id() || self.keyboard_ids.contains(&id))
+        })
+    }
+
     pub fn ui(&mut self, ui: &mut Ui, state: &State, today: NaiveDate) -> Option<TimelineAction> {
         self.focused = false;
+        self.keyboard_ids.clear();
+        if ui.input(|input| {
+            !input.focused
+                || input.key_pressed(egui::Key::Escape)
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                })
+        }) {
+            self.cancel_gesture();
+        }
         ui.horizontal_wrapped(|ui| {
             if self.focus_requested {
                 let id = ui.next_auto_id();
@@ -87,69 +203,141 @@ impl TimelinePanel {
         // Dated work remains immediately visible even with many undated notes.
         rows.sort_by_key(|row| row.due.is_none());
         let width = (ui.available_width() - 16.0).max(1.0);
-        let label_width = (width * 0.40).clamp(88.0, 190.0).min(width * 0.52);
         let (header, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+        if self.gesture.as_ref().is_some_and(|gesture| {
+            let view = match gesture {
+                Gesture::Label { view, .. } => view,
+                Gesture::Bar(drag) => &drag.view,
+            };
+            !view.matches(header, ui.clip_rect(), window, state)
+        }) {
+            self.cancel_gesture();
+        }
+        let default_label = (width * 0.40).clamp(88.0, 190.0).min(width * 0.52);
+        let label_percent = match &self.gesture {
+            Some(Gesture::Label { percent, .. }) => Some(*percent),
+            _ => state.preferences.timeline_label_percent.map(f32::from),
+        };
+        let label_width = label_percent
+            .map_or(default_label, |percent| width * percent / 100.0)
+            .clamp(88.0_f32.min(width * 0.5), (width - 90.0).max(width * 0.5));
         self.header(ui, header, label_width, window, today);
         if rows.is_empty() {
             ui.label(RichText::new("No tasks yet").color(MUTED).size(12.0));
-            return None;
+            return self.label_splitter(ui, header, header.bottom(), label_width, window, state);
         }
         let mut action = None;
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            egui::ScrollArea::vertical()
-                .id_salt("timeline-rows")
-                .max_height(if width >= 760.0 { 420.0 } else { 220.0 })
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for row in &rows {
-                        let key = (row.task_id, row.deadline_id);
-                        let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(width, ROW_HEIGHT),
-                            egui::Sense::hover(),
-                        );
-                        let response = ui.interact(
-                            rect,
-                            ui.id().with(("timeline-row", key)),
-                            egui::Sense::click(),
-                        );
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::Button,
-                                ui.is_enabled(),
-                                format!("{} · {} · {}", row.title, status(row), dates(row)),
-                            )
-                        });
-                        self.focused |= response.has_focus();
-                        if response.gained_focus() {
-                            response.scroll_to_me(None);
-                        }
-                        let selected = self.selected == Some(key);
-                        self.row(ui, rect, label_width, window, today, row, selected);
-                        if response.hovered() || response.has_focus() {
-                            ui.painter().hline(
-                                rect.x_range(),
-                                rect.bottom() - 1.0,
-                                Stroke::new(0.8_f32, ACCENT),
+        let mut handles = Vec::new();
+        let bottom = ui
+            .scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                egui::ScrollArea::vertical()
+                    .id_salt("timeline-rows")
+                    .max_height(if width >= 760.0 { 420.0 } else { 220.0 })
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for row in &rows {
+                            let key = (row.task_id, row.deadline_id);
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(width, ROW_HEIGHT),
+                                egui::Sense::hover(),
                             );
+                            let response = ui.interact(
+                                rect,
+                                ui.id().with(("timeline-row", key)),
+                                egui::Sense::click(),
+                            );
+                            response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    ui.is_enabled(),
+                                    format!("{} · {} · {}", row.title, status(row), dates(row)),
+                                )
+                            });
+                            self.focused |= response.has_focus();
+                            if response.gained_focus() {
+                                response.scroll_to_me(None);
+                            }
+                            let selected = self.selected == Some(key);
+                            let mut display_row = *row;
+                            if let Some(Gesture::Bar(drag)) = &self.gesture {
+                                if Some(drag.task) == row.task_id {
+                                    match drag.edge {
+                                        ResizeEdge::Start => display_row.start = Some(drag.preview),
+                                        ResizeEdge::Due => display_row.due = Some(drag.preview),
+                                    }
+                                }
+                            }
+                            self.row(ui, rect, label_width, window, today, &display_row, selected);
+                            self.resize_handles(
+                                rect,
+                                ui.clip_rect(),
+                                label_width,
+                                window,
+                                row,
+                                &display_row,
+                                &mut handles,
+                            );
+                            if response.hovered() || response.has_focus() {
+                                ui.painter().hline(
+                                    rect.x_range(),
+                                    rect.bottom() - 1.0,
+                                    Stroke::new(0.8_f32, ACCENT),
+                                );
+                            }
+                            if response.clicked() {
+                                self.selected = Some(key);
+                                ui.ctx().request_repaint();
+                                action = row
+                                    .task_id
+                                    .map(TimelineAction::EditTask)
+                                    .or_else(|| row.deadline_id.map(TimelineAction::EditDeadline));
+                            }
+                            response.on_hover_text(format!(
+                                "{}\n{} · {}",
+                                row.title,
+                                status(row),
+                                dates(row)
+                            ));
                         }
-                        if response.clicked() {
-                            self.selected = Some(key);
-                            ui.ctx().request_repaint();
-                            action = row
-                                .task_id
-                                .map(TimelineAction::EditTask)
-                                .or_else(|| row.deadline_id.map(TimelineAction::EditDeadline));
-                        }
-                        response.on_hover_text(format!(
-                            "{}\n{} · {}",
-                            row.title,
-                            status(row),
-                            dates(row)
-                        ));
-                    }
-                });
-        });
+                    })
+                    .inner_rect
+                    .bottom()
+            })
+            .inner;
+        // Keep the established toolbar-to-row Tab order. Resize controls follow
+        // all row buttons and take pointer priority over their broad hitboxes.
+        if let Some(Gesture::Bar(drag)) = &self.gesture {
+            if !handles.iter().any(|handle| {
+                handle.task == drag.task
+                    && handle.edge == drag.edge
+                    && handle.cap.center().y == drag.row_y
+            }) {
+                self.cancel_gesture();
+            }
+        }
+        for handle in handles {
+            if let Some(resize) = self.resize_handle(ui, &handle, header, window, state) {
+                action = Some(resize);
+            }
+        }
+        if let Some(split) = self.label_splitter(ui, header, bottom, label_width, window, state) {
+            action = Some(split);
+        }
+        if let Some(Gesture::Bar(drag)) = &self.gesture {
+            if let Some(row) = rows.iter().find(|row| row.task_id == Some(drag.task)) {
+                let mut preview = *row;
+                match drag.edge {
+                    ResizeEdge::Start => preview.start = Some(drag.preview),
+                    ResizeEdge::Due => preview.due = Some(drag.preview),
+                }
+                ui.label(
+                    RichText::new(format!("Preview · {}", dates(&preview)))
+                        .color(ACCENT)
+                        .size(11.0),
+                );
+            }
+        }
         if let Some(selected) = rows
             .iter()
             .find(|row| self.selected == Some((row.task_id, row.deadline_id)))
@@ -168,6 +356,325 @@ impl TimelinePanel {
         } else {
             self.selected = None;
         }
+        action
+    }
+
+    fn label_splitter(
+        &mut self,
+        ui: &mut Ui,
+        header: egui::Rect,
+        bottom: f32,
+        label_width: f32,
+        window: DateRange,
+        state: &State,
+    ) -> Option<TimelineAction> {
+        let boundary = header.left() + label_width;
+        let hit = egui::Rect::from_min_max(
+            egui::pos2(boundary - 8.0, header.top()),
+            egui::pos2(boundary, bottom.max(header.bottom())),
+        );
+        let response = ui.interact(hit, label_split_id(), egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+            .on_hover_text("Resize timeline titles · Left/Right arrows · Shift for larger steps · Double-click to reset");
+        self.focused |= response.has_focus();
+        lock_horizontal(ui, &response);
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        let width = header.width();
+        let bounded = |desired: f32| {
+            desired.clamp(
+                (width * 0.1).max(88.0_f32.min(width * 0.5)),
+                (width * 0.8).min((width - 90.0).max(width * 0.5)),
+            )
+        };
+        let mut action = None;
+        if response.double_clicked() {
+            self.cancel_gesture();
+            if state.preferences.timeline_label_percent.is_some() {
+                action = Some(TimelineAction::LabelWidth(None));
+            }
+        } else {
+            if response.drag_started() {
+                let percent = label_width / width * 100.0;
+                self.gesture = Some(Gesture::Label {
+                    percent,
+                    original: percent,
+                    view: GestureView::new(header, ui.clip_rect(), window, state),
+                });
+            }
+            if response.dragged() || response.drag_stopped() {
+                if let Some(Gesture::Label { percent, .. }) = &mut self.gesture {
+                    // A release event can carry the final pointer movement.
+                    let delta = ui.input(|input| input.pointer.delta().x);
+                    *percent = bounded(label_width + delta) / width * 100.0;
+                    ui.ctx().request_repaint();
+                }
+            }
+            if response.drag_stopped() {
+                if let Some(Gesture::Label {
+                    percent, original, ..
+                }) = self.gesture.take()
+                {
+                    let value = percent.round().clamp(10.0, 80.0) as u8;
+                    if ui.input(|input| input.pointer.button_released(egui::PointerButton::Primary))
+                        && (percent - original).abs() > 0.01
+                        && state.preferences.timeline_label_percent != Some(value)
+                    {
+                        action = Some(TimelineAction::LabelWidth(Some(value)));
+                    }
+                }
+            }
+            if response.has_focus() && self.gesture.is_none() && !response.drag_stopped() {
+                let delta = arrow_delta(ui, 5);
+                if delta != 0 {
+                    let next = bounded(label_width + delta as f32 * width / 100.0);
+                    let value = (next / width * 100.0).round().clamp(10.0, 80.0) as u8;
+                    if (next - label_width).abs() > 0.01
+                        && state.preferences.timeline_label_percent != Some(value)
+                    {
+                        action = Some(TimelineAction::LabelWidth(Some(value)));
+                    }
+                }
+            }
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::slider(
+                ui.is_enabled(),
+                f64::from(label_width / width * 100.0),
+                "Timeline title width",
+            )
+        });
+        let active = response.hovered() || response.has_focus() || response.dragged();
+        let color = if active { ACCENT } else { RULE };
+        let x = boundary.round_to_pixel_center(ui.painter().pixels_per_point());
+        ui.painter()
+            .vline(x, hit.y_range(), Stroke::new(1.0_f32, color));
+        let grip = egui::Rect::from_center_size(
+            egui::pos2(boundary - 4.0, header.center().y),
+            egui::vec2(8.0, 18.0),
+        );
+        ui.painter().rect_filled(grip, 2.0, BG);
+        for dy in [-3.0, 0.0, 3.0] {
+            ui.painter().hline(
+                (boundary - 6.0)..=(boundary - 2.0),
+                header.center().y + dy,
+                Stroke::new(1.0_f32, if active { ACCENT } else { MUTED }),
+            );
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                grip,
+                2.0,
+                Stroke::new(1.0_f32, ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        }
+        action
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resize_handles(
+        &self,
+        rect: egui::Rect,
+        clip: egui::Rect,
+        label_width: f32,
+        window: DateRange,
+        row: &TimelineRow<'_>,
+        display: &TimelineRow<'_>,
+        handles: &mut Vec<ResizeHandle>,
+    ) {
+        let (Some(task), Some(start), Some(due), Some(span)) = (
+            row.task_id,
+            row.start,
+            row.due,
+            timeline::clipped(row, window),
+        ) else {
+            return;
+        };
+        if start > due {
+            return;
+        }
+        let lane =
+            egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
+        let cell = lane.width() / window.days() as f32;
+        let inset = (cell * 0.15).min(0.5);
+        let base_left = lane.left() + span.offset as f32 * cell + inset;
+        let base_right = lane.left() + (span.offset + span.days) as f32 * cell - inset;
+        let middle = (base_left + base_right) * 0.5;
+        for (edge, visible, original_x) in [
+            (ResizeEdge::Start, !span.clipped_start, base_left),
+            (ResizeEdge::Due, !span.clipped_end, base_right),
+        ] {
+            if !visible {
+                continue;
+            }
+            let date = match edge {
+                ResizeEdge::Start => display.start.unwrap_or(start),
+                ResizeEdge::Due => display.due.unwrap_or(due),
+            };
+            let offset = (date - window.start).num_days() as f32
+                + if edge == ResizeEdge::Due { 1.0 } else { 0.0 };
+            let cap_x = (lane.left()
+                + offset * cell
+                + if edge == ResizeEdge::Start {
+                    inset
+                } else {
+                    -inset
+                })
+            .clamp(lane.left(), lane.right());
+            let mut hit = egui::Rect::from_center_size(
+                egui::pos2(original_x, rect.center().y),
+                egui::vec2(12.0, 24.0),
+            );
+            match edge {
+                ResizeEdge::Start => hit.max.x = hit.max.x.min(middle),
+                ResizeEdge::Due => hit.min.x = hit.min.x.max(middle),
+            };
+            hit = hit.intersect(lane).intersect(clip);
+            if !hit.is_positive() {
+                continue;
+            }
+            handles.push(ResizeHandle {
+                task,
+                edge,
+                start,
+                due,
+                hit,
+                cap: egui::Rect::from_center_size(
+                    egui::pos2(cap_x, rect.center().y),
+                    egui::vec2(2.0, 12.0),
+                ),
+                clip: clip.intersect(lane),
+                cell,
+            });
+        }
+    }
+
+    fn resize_handle(
+        &mut self,
+        ui: &mut Ui,
+        handle: &ResizeHandle,
+        header: egui::Rect,
+        window: DateRange,
+        state: &State,
+    ) -> Option<TimelineAction> {
+        let id = edge_id(handle.task, handle.edge);
+        self.keyboard_ids.push(id);
+        let response = ui
+            .interact(handle.hit, id, egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        self.focused |= response.has_focus();
+        lock_horizontal(ui, &response);
+        let original = match handle.edge {
+            ResizeEdge::Start => handle.start,
+            ResizeEdge::Due => handle.due,
+        };
+        let clamp = |date: NaiveDate| match handle.edge {
+            ResizeEdge::Start => date.min(handle.due),
+            ResizeEdge::Due => date.max(handle.start),
+        };
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        if response.drag_started() {
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let origin = ui
+                    .input(|input| input.pointer.press_origin())
+                    .unwrap_or(pointer);
+                self.gesture = Some(Gesture::Bar(BarDrag {
+                    task: handle.task,
+                    edge: handle.edge,
+                    original,
+                    preview: original,
+                    pointer_origin: origin.x,
+                    row_y: handle.cap.center().y,
+                    cell: handle.cell,
+                    view: GestureView::new(header, ui.clip_rect(), window, state),
+                }));
+            }
+        }
+        let mut action = None;
+        if let Some(Gesture::Bar(drag)) = &mut self.gesture {
+            if drag.task == handle.task && drag.edge == handle.edge {
+                if response.dragged() || response.drag_stopped() {
+                    if let Some(pointer) = response
+                        .interact_pointer_pos()
+                        .or_else(|| ui.input(|input| input.pointer.interact_pos()))
+                    {
+                        let days = ((pointer.x - drag.pointer_origin) / drag.cell).round() as i64;
+                        if let Some(date) = drag.original.checked_add_signed(Duration::days(days)) {
+                            drag.preview = clamp(date);
+                        }
+                        ui.ctx().request_repaint();
+                    }
+                }
+                if response.drag_stopped() {
+                    if ui.input(|input| input.pointer.button_released(egui::PointerButton::Primary))
+                        && drag.preview != drag.original
+                    {
+                        action = Some(TimelineAction::ResizeTask {
+                            task: drag.task,
+                            edge: drag.edge,
+                            date: drag.preview,
+                        });
+                    }
+                    self.gesture = None;
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+        if response.has_focus() && self.gesture.is_none() && !response.drag_stopped() {
+            let days = arrow_delta(ui, 7);
+            if days != 0 {
+                if let Some(date) = original.checked_add_signed(Duration::days(days)) {
+                    let date = clamp(date);
+                    if date != original {
+                        action = Some(TimelineAction::ResizeTask {
+                            task: handle.task,
+                            edge: handle.edge,
+                            date,
+                        });
+                    }
+                }
+            }
+        }
+        let date = match &self.gesture {
+            Some(Gesture::Bar(drag)) if drag.task == handle.task && drag.edge == handle.edge => {
+                drag.preview
+            }
+            _ => original,
+        };
+        let label = format!(
+            "Resize {} date for {}",
+            if handle.edge == ResizeEdge::Start {
+                "start"
+            } else {
+                "due"
+            },
+            state
+                .tasks
+                .iter()
+                .find(|task| task.id == handle.task)
+                .map_or("task", |task| task.text.as_str())
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+        });
+        let active = response.hovered() || response.dragged() || response.has_focus();
+        let painter = ui.painter().with_clip_rect(handle.clip);
+        painter.rect_filled(handle.cap, 0.5, if active { ACCENT } else { TEXT });
+        if response.has_focus() {
+            painter.rect_stroke(
+                handle.hit.shrink(1.0),
+                1.0,
+                Stroke::new(1.0_f32, ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        }
+        response.on_hover_text(format!(
+            "{label}\n{date} · Drag by days · Left/Right arrows · Shift for one week"
+        ));
         action
     }
 
@@ -413,6 +920,55 @@ impl TimelinePanel {
             painter.vline(rect.left(), rect.y_range(), Stroke::new(1.0_f32, ACCENT));
         }
     }
+}
+
+fn lock_horizontal(ui: &Ui, response: &egui::Response) {
+    if response.has_focus() {
+        ui.memory_mut(|memory| {
+            memory.set_focus_lock_filter(
+                response.id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    ..Default::default()
+                },
+            )
+        });
+    }
+}
+
+fn arrow_delta(ui: &mut Ui, coarse: i64) -> i64 {
+    ui.input_mut(|input| {
+        if input.pointer.any_down() {
+            return 0;
+        }
+        let arrow = input.events.iter().find_map(|event| match event {
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight)
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && !modifiers.command =>
+            {
+                Some((*key, *modifiers))
+            }
+            _ => None,
+        });
+        let Some((key, modifiers)) = arrow else {
+            return 0;
+        };
+        if !input.consume_key(modifiers, key) {
+            return 0;
+        }
+        let amount = if modifiers.shift { coarse } else { 1 };
+        if key == egui::Key::ArrowLeft {
+            -amount
+        } else {
+            amount
+        }
+    })
 }
 
 fn status(row: &TimelineRow<'_>) -> &'static str {

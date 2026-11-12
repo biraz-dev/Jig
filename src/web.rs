@@ -16,6 +16,7 @@ use jig::{
     calendar,
     model::{State, TaskColor},
     spreadsheet::{self, CellAddr, Workbook},
+    timeline,
 };
 use std::time::Duration;
 
@@ -393,6 +394,7 @@ impl BrowserApp {
 
     fn reset_editors(&mut self) {
         self.task_split_draft = None;
+        self.timeline.cancel_gesture();
         self.sheet.restore_data();
         self.charts.invalidate();
         self.task_edit = None;
@@ -615,6 +617,7 @@ impl BrowserApp {
         self.sheet_workspace = sheet;
         self.tasks_workspace = false;
         self.task_split_draft = None;
+        self.timeline.cancel_gesture();
         browser_storage::set_workspace(if sheet { "sheet" } else { "workbench" });
         self.focus_calculator = false;
         self.focus_task_date = false;
@@ -672,6 +675,7 @@ impl BrowserApp {
         if !self.flush_sheet_edit() {
             return false;
         }
+        self.timeline.cancel_gesture();
         self.sheet_workspace = false;
         self.tasks_workspace = true;
         self.focus = 1;
@@ -839,9 +843,10 @@ impl BrowserApp {
             self.commit_task_split(None);
             ui.ctx().request_repaint();
         } else {
-            if response.dragged() {
-                // egui's drag delta is the pointer movement for this frame.
-                let next = bounded_width(tasks + direction * response.drag_delta().x);
+            if response.dragged() || response.drag_stopped() {
+                // The release event can include the final pointer movement.
+                let delta = ui.input(|input| input.pointer.delta().x);
+                let next = bounded_width(tasks + direction * delta);
                 if (next - tasks).abs() > 0.01 {
                     self.task_split_draft = Some(next / available * 100.0);
                     ui.ctx().request_repaint();
@@ -2090,6 +2095,33 @@ impl BrowserApp {
         self.focus_task_date = false;
     }
 
+    fn resize_task_dates(
+        &mut self,
+        id: u64,
+        edge: timeline::ResizeEdge,
+        date: NaiveDate,
+    ) -> Result<(), String> {
+        let (start, due) = timeline::resize_schedule(&self.state, id, edge, date, &Local)?;
+        let old_start = self
+            .state
+            .tasks
+            .iter()
+            .find(|task| task.id == id)
+            .and_then(|task| task.start);
+        let old_due = self.state.task_deadline(id).map(|deadline| deadline.at);
+        if old_start == Some(start) && old_due == Some(due) {
+            return Ok(());
+        }
+        let mut next = self.state.clone();
+        next.set_task_schedule(id, Some(&start.to_rfc3339()), Some(&due.to_rfc3339()))?;
+        self.state = next;
+        if self.task_date_edit == Some(id) {
+            self.close_task_dates();
+        }
+        self.changed();
+        Ok(())
+    }
+
     fn save_task_dates(&mut self, id: u64) -> Result<u64, String> {
         let input = self.task_date.trim();
         let due = if input.len() == 10 {
@@ -2360,6 +2392,7 @@ impl BrowserApp {
             }
         });
         if !self.timeline_view {
+            self.timeline.cancel_gesture();
             self.calendar_month(ui);
             return;
         }
@@ -2369,6 +2402,17 @@ impl BrowserApp {
             self.focus = 2;
         }
         match action {
+            Some(TimelineAction::LabelWidth(percent)) => {
+                if self.state.preferences.timeline_label_percent != percent {
+                    self.state.preferences.timeline_label_percent = percent;
+                    self.changed();
+                }
+            }
+            Some(TimelineAction::ResizeTask { task, edge, date }) => {
+                if let Err(error) = self.resize_task_dates(task, edge, date) {
+                    self.status = error;
+                }
+            }
             Some(TimelineAction::EditTask(id)) => {
                 self.begin_task_date(id, false);
                 self.task_date_timeline = true;
@@ -2833,6 +2877,7 @@ impl eframe::App for BrowserApp {
             self.focus_task_date = false;
             self.scroll_selected = true;
             self.timeline_view = !self.timeline_view;
+            self.timeline.cancel_gesture();
             ctx.memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
                     memory.surrender_focus(id);
@@ -2853,6 +2898,7 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M))
         {
+            self.timeline.cancel_gesture();
             self.expanded = !self.expanded;
             self.focus_after_resize(ctx);
             ctx.request_repaint();
@@ -2860,6 +2906,7 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
+            self.timeline.cancel_gesture();
             self.expanded = !self.expanded;
             self.focus_after_resize(ctx);
         }
@@ -2869,7 +2916,9 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
-            self.expanded = false;
+            if !self.timeline.cancel_gesture() {
+                self.expanded = false;
+            }
             self.confirm = None;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -2887,7 +2936,8 @@ impl eframe::App for BrowserApp {
             if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
                 self.undo_last(ctx);
             }
-            let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()));
+            let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()))
+                || self.timeline.owns_keyboard(ctx);
             let previous = !self.sheet_workspace
                 && !divider_focused
                 && ctx.input_mut(|input| {

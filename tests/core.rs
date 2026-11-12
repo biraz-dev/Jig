@@ -212,22 +212,31 @@ fn portable_state_roundtrip_preserves_precision_and_entries() {
 }
 
 #[test]
-fn task_panel_preference_preserves_legacy_and_portable_state_and_rejects_bad_bounds() {
+fn task_layout_preferences_preserve_legacy_and_portable_state_and_reject_bad_bounds() {
     let mut state = State::default();
     state.add_task("Keep the studio checklist").unwrap();
     state.calculate("1 / 3").unwrap();
     let legacy = serde_json::to_value(&state).unwrap();
     assert!(legacy["preferences"].get("task_panel_percent").is_none());
+    assert!(legacy["preferences"]
+        .get("timeline_label_percent")
+        .is_none());
     let restored = State::from_json(&legacy.to_string()).unwrap();
     assert_eq!(restored.preferences.task_panel_percent, None);
+    assert_eq!(restored.preferences.timeline_label_percent, None);
     assert_eq!(serde_json::to_value(&restored).unwrap(), legacy);
 
-    for percent in [20, 57, 80] {
-        state.preferences.task_panel_percent = Some(percent);
+    for (panel_percent, label_percent) in [(20, 80), (80, 10), (57, 13), (80, 80)] {
+        state.preferences.task_panel_percent = Some(panel_percent);
+        state.preferences.timeline_label_percent = Some(label_percent);
         state.validate().unwrap();
         let json = serde_json::to_string(&state).unwrap();
         let restored = State::from_json(&json).unwrap();
-        assert_eq!(restored.preferences.task_panel_percent, Some(percent));
+        assert_eq!(restored.preferences.task_panel_percent, Some(panel_percent));
+        assert_eq!(
+            restored.preferences.timeline_label_percent,
+            Some(label_percent)
+        );
         assert_eq!(
             serde_json::to_value(&restored).unwrap(),
             serde_json::to_value(&state).unwrap()
@@ -244,25 +253,34 @@ fn task_panel_preference_preserves_legacy_and_portable_state_and_rejects_bad_bou
     );
 
     let before = serde_json::to_value(&state).unwrap();
-    for percent in [0, 19, 81, 100, 255] {
-        let mut invalid = state.clone();
-        invalid.preferences.task_panel_percent = Some(percent);
-        assert!(invalid.validate().is_err(), "{percent}");
-        assert!(
-            State::from_json(&serde_json::to_string(&invalid).unwrap()).is_err(),
-            "{percent}"
-        );
-        assert_eq!(serde_json::to_value(&state).unwrap(), before);
-    }
-    for percent in [
-        serde_json::json!(-1),
-        serde_json::json!(256),
-        serde_json::json!(57.5),
+    for (preference, invalid_percents) in [
+        ("task_panel_percent", [0, 19, 81, 100, 255]),
+        ("timeline_label_percent", [0, 9, 81, 100, 255]),
     ] {
-        let mut invalid = before.clone();
-        invalid["preferences"]["task_panel_percent"] = percent;
-        assert!(State::from_json(&invalid.to_string()).is_err());
-        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        for percent in invalid_percents {
+            let mut invalid = state.clone();
+            if preference == "task_panel_percent" {
+                invalid.preferences.task_panel_percent = Some(percent);
+            } else {
+                invalid.preferences.timeline_label_percent = Some(percent);
+            }
+            assert!(invalid.validate().is_err(), "{preference}: {percent}");
+            assert!(
+                State::from_json(&serde_json::to_string(&invalid).unwrap()).is_err(),
+                "{preference}: {percent}"
+            );
+            assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        }
+        for percent in [
+            serde_json::json!(-1),
+            serde_json::json!(256),
+            serde_json::json!(57.5),
+        ] {
+            let mut invalid = before.clone();
+            invalid["preferences"][preference] = percent;
+            assert!(State::from_json(&invalid.to_string()).is_err());
+            assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        }
     }
 }
 

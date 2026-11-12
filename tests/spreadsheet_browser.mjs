@@ -59,9 +59,10 @@ async function confirmDraft(page, expected) {
 }
 async function capture(page, name, timeout = 60000) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["sheet-desktop", "sheet-mobile", "sheet-edit", "sheet-chart", "sheet-formats", "sheet-import", "sheet-failure"]);
+  const allowed = new Set(["sheet-desktop", "sheet-mobile", "sheet-edit", "sheet-chart", "sheet-formats", "sheet-import", "sheet-failure", "sheet-header-before", "sheet-header-menu", "sheet-header-after"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
+  const requestedHeader = name.startsWith("sheet-header-") && requested.has("sheet-failure");
+  if (allowed.has(name) && (requested.has(name) || requestedHeader) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
     for (let offset = 0; offset < encoded.length; offset += 2048) console.log(encoded.slice(offset, offset + 2048));
@@ -369,6 +370,87 @@ async function renderedBarWidths(page) {
 }
 
 try {
+  let saved;
+  progress("keep legacy foreign currency readable while offering the five USD-only number formats");
+  const legacy = structuredClone(fixture);
+  legacy.workbook = {
+    version: 1, charts: [], sheets: [{ id: 1, name: "Legacy formats", cells: { A1: "12.5", B1: "100", C4: "7", D5: "9", E6: "5", F1: "=C4+D5+E6" }, styles: { A1: { number_format: { currency: "EUR" } } } }],
+  };
+  current = await open("sheet-legacy-formats", legacy);
+  await value(current.page, "A1", 12.5);
+  await value(current.page, "F1", 21);
+  const offeredFormats = [undefined, "number", "percent", { currency: "USD" }, "date"];
+  for (let index = 0; index < offeredFormats.length; index++) {
+    await select(current.page, "B1");
+    await numberFormat(current.page, index);
+    saved = await state(current.page);
+    assert.deepEqual(sheet(saved).styles?.B1?.number_format, offeredFormats[index], "The menu must offer General, Number, Percent, USD, then Date without foreign currency entries");
+    assert.deepEqual(sheet(saved).styles.A1.number_format, { currency: "EUR" }, "Changing another cell must preserve a loaded legacy foreign currency format");
+    assert.equal(sheet(saved).cells.B1, "100");
+  }
+  await boot(current.page, true);
+  assert.deepEqual(sheet(await state(current.page)).styles.A1.number_format, { currency: "EUR" }, "Legacy foreign currency must also survive restart");
+
+  progress("use the bottom plus and minus controls and double-click the sheet name");
+  await sheetControl(current.page, "plus");
+  saved = await state(current.page);
+  assert.equal(saved.workbook.sheets.length, 2, "Clicking the bottom + must add and activate a sheet");
+  const pointerSheet = saved.workbook.sheets.at(-1).id;
+  await enter(current.page, "A1", "31");
+  assert.equal(sheet(await state(current.page), pointerSheet).cells.A1, "31");
+  await renameSheet(current.page, "Pointer sheet");
+  assert.equal(sheet(await state(current.page), pointerSheet).name, "Pointer sheet", "Double-clicking the tab must open its real rename editor");
+  await sheetControl(current.page, "minus");
+  assert.equal((await state(current.page)).workbook.sheets.length, 2, "The bottom - must show confirmation before deleting the active sheet");
+  await key(current.page, "Space");
+  assert.equal((await state(current.page)).workbook.sheets.length, 1);
+  await undo(current.page);
+  assert.equal(sheet(await state(current.page), pointerSheet).cells.A1, "31", "Undo must restore the sheet deleted with the bottom -");
+  // Removing the active sheet selected the first sheet; Undo restores the data
+  // while the visible first sheet remains active for the header tests below.
+  await value(current.page, "F1", 21);
+
+  progress("right-click row and column headers to insert or delete whole selected spans and Undo");
+  await select(current.page, "A1");
+  const firstCell = await selectedCellBounds(current.page);
+  const beforeHeaders = await state(current.page);
+  assert.equal(sheet(beforeHeaders).cells.F1, "=C4+D5+E6", "Header actions must begin with the original formula on sheet 1");
+  for (const [axis, header, beforeFormula, afterFormula, deletedFormula] of [
+    ["row", { x: firstCell.left - 22, y: firstCell.top + 3 * 27 + 13 }, "=C6+D7+E8", "=C4+D5+E8", "=#REF!+#REF!+E4"],
+    ["column", { x: firstCell.left + 2 * 112 + 56, y: firstCell.top - 13 }, "=E4+F5+G6", "=C4+D5+G6", "=#REF!+#REF!+C6"],
+  ]) {
+    for (const [index, expected] of [[0, beforeFormula], [1, afterFormula], [2, deletedFormula]]) {
+      await select(current.page, "A1");
+      await current.page.mouse.click(header.x, header.y);
+      await paint(current.page);
+      await current.page.keyboard.down("Shift");
+      await paint(current.page);
+      await current.page.mouse.click(header.x + (axis === "column" ? 112 : 0), header.y + (axis === "row" ? 27 : 0));
+      await paint(current.page);
+      await current.page.keyboard.up("Shift");
+      await paint(current.page);
+      const diagnoseHeader = axis === "row" && index === 0;
+      if (diagnoseHeader) await capture(current.page, "sheet-header-before", 10000).catch(error => console.error("Header pre-action capture:", error.message));
+      interaction = `right-click ${axis} header, action ${index}`;
+      await current.page.mouse.click(header.x, header.y, { button: "right" });
+      await paint(current.page);
+      if (diagnoseHeader) await capture(current.page, "sheet-header-menu", 10000).catch(error => console.error("Header menu capture:", error.message));
+      await tab(current.page, index + 1); // Insert before, Insert after, Delete.
+      await key(current.page, "Space");
+      if (diagnoseHeader) await capture(current.page, "sheet-header-after", 10000).catch(error => console.error("Header post-action capture:", error.message));
+      const formulaAddress = axis === "column" ? (index === 2 ? "D1" : "H1") : "F1";
+      const afterHeader = await state(current.page);
+      if (diagnoseHeader || sheet(afterHeader).cells[formulaAddress] !== expected) console.log("Sheet header action state:", JSON.stringify({ axis, index, header, formulaAddress, expected, workbook: afterHeader.workbook }));
+      assert.equal(sheet(afterHeader).cells[formulaAddress], expected, `${axis} header action must update formula references for the whole two-header selection`);
+      await value(current.page, formulaAddress, index === 2 ? "#REF!" : 21);
+      await undo(current.page);
+      await expectState(current.page, beforeHeaders, `One Undo must restore every cell, style, and reference after ${axis} header action ${index}`);
+    }
+  }
+  assert.deepEqual(toolsOnly(await state(current.page)), fixture);
+  const legacyForStandardOds = await state(current.page);
+  await current.context.close();
+
   progress("open older Jig data in the main spreadsheet without changing any records");
   current = await open("sheet-desktop");
   assert.equal(await raw(current.page), fixtureRaw);
@@ -380,7 +462,7 @@ try {
 
   progress("edit real cells and recalculate formulas through references and ranges");
   for (const [address, contents] of [["A1", "2"], ["A2", "3"], ["B1", "=SUM(A1:A2)"], ["C1", "=B1*1.5"], ["C2", "=AVERAGE(A1:A2)"], ["C3", "=MIN(A1:A2)+MAX(A1:A2)"], ["D1", "Sample sculpture"], ["B2", "=1/0"]]) await enter(current.page, address, contents);
-  let saved = await state(current.page);
+  saved = await state(current.page);
   assert.deepEqual(toolsOnly(saved), fixture, "Spreadsheet edits must preserve tasks, deadlines, calendar notes, preferences, history, and the featured countdown");
   assert.equal(saved.workbook.version, 1);
   assert.equal(sheet(saved).cells.B1, "=SUM(A1:A2)", "Formulas must be saved as user-owned source text");
@@ -712,78 +794,9 @@ try {
   await expectState(current.page, beforeStatement, "One global Undo must restore all cells and Jig data before a multirow PDF import");
   await current.context.close();
 
-  progress("keep legacy foreign currency readable while offering the five USD-only number formats");
-  const legacy = structuredClone(fixture);
-  legacy.workbook = {
-    version: 1, charts: [], sheets: [{ id: 1, name: "Legacy formats", cells: { A1: "12.5", B1: "100", C4: "7", D5: "9", E6: "5", F1: "=C4+D5+E6" }, styles: { A1: { number_format: { currency: "EUR" } } } }],
-  };
-  current = await open("sheet-legacy-formats", legacy);
-  await value(current.page, "A1", 12.5);
-  await value(current.page, "F1", 21);
-  const offeredFormats = [undefined, "number", "percent", { currency: "USD" }, "date"];
-  for (let index = 0; index < offeredFormats.length; index++) {
-    await select(current.page, "B1");
-    await numberFormat(current.page, index);
-    saved = await state(current.page);
-    assert.deepEqual(sheet(saved).styles?.B1?.number_format, offeredFormats[index], "The menu must offer General, Number, Percent, USD, then Date without foreign currency entries");
-    assert.deepEqual(sheet(saved).styles.A1.number_format, { currency: "EUR" }, "Changing another cell must preserve a loaded legacy foreign currency format");
-    assert.equal(sheet(saved).cells.B1, "100");
-  }
-  await boot(current.page, true);
-  assert.deepEqual(sheet(await state(current.page)).styles.A1.number_format, { currency: "EUR" }, "Legacy foreign currency must also survive restart");
-
-  progress("use the bottom plus and minus controls and double-click the sheet name");
-  await sheetControl(current.page, "plus");
-  saved = await state(current.page);
-  assert.equal(saved.workbook.sheets.length, 2, "Clicking the bottom + must add and activate a sheet");
-  const pointerSheet = saved.workbook.sheets.at(-1).id;
-  await enter(current.page, "A1", "31");
-  assert.equal(sheet(await state(current.page), pointerSheet).cells.A1, "31");
-  await renameSheet(current.page, "Pointer sheet");
-  assert.equal(sheet(await state(current.page), pointerSheet).name, "Pointer sheet", "Double-clicking the tab must open its real rename editor");
-  await sheetControl(current.page, "minus");
-  assert.equal((await state(current.page)).workbook.sheets.length, 2, "The bottom - must show confirmation before deleting the active sheet");
-  await key(current.page, "Space");
-  assert.equal((await state(current.page)).workbook.sheets.length, 1);
-  await undo(current.page);
-  assert.equal(sheet(await state(current.page), pointerSheet).cells.A1, "31", "Undo must restore the sheet deleted with the bottom -");
-  // Removing the active sheet selected the first sheet; Undo restores the data
-  // while the visible first sheet remains active for the header tests below.
-  await value(current.page, "F1", 21);
-
-  progress("right-click row and column headers to insert or delete whole selected spans and Undo");
-  await select(current.page, "A1");
-  const firstCell = await selectedCellBounds(current.page);
-  const beforeHeaders = await state(current.page);
-  for (const [axis, header, beforeFormula, afterFormula, deletedFormula] of [
-    ["row", { x: firstCell.left - 22, y: firstCell.top + 3 * 27 + 13 }, "=C6+D7+E8", "=C4+D5+E8", "=#REF!+#REF!+E4"],
-    ["column", { x: firstCell.left + 2 * 112 + 56, y: firstCell.top - 13 }, "=E4+F5+G6", "=C4+D5+G6", "=#REF!+#REF!+C6"],
-  ]) {
-    for (const [index, expected] of [[0, beforeFormula], [1, afterFormula], [2, deletedFormula]]) {
-      await select(current.page, "A1");
-      await current.page.mouse.click(header.x, header.y);
-      await paint(current.page);
-      await current.page.keyboard.down("Shift");
-      await paint(current.page);
-      await current.page.mouse.click(header.x + (axis === "column" ? 112 : 0), header.y + (axis === "row" ? 27 : 0));
-      await paint(current.page);
-      await current.page.keyboard.up("Shift");
-      await paint(current.page);
-      interaction = `right-click ${axis} header, action ${index}`;
-      await current.page.mouse.click(header.x, header.y, { button: "right" });
-      await paint(current.page);
-      await tab(current.page, index + 1); // Insert before, Insert after, Delete.
-      await key(current.page, "Space");
-      const formulaAddress = axis === "column" ? (index === 2 ? "D1" : "H1") : "F1";
-      assert.equal(sheet(await state(current.page)).cells[formulaAddress], expected, `${axis} header action must update formula references for the whole two-header selection`);
-      await value(current.page, formulaAddress, index === 2 ? "#REF!" : 21);
-      await undo(current.page);
-      await expectState(current.page, beforeHeaders, `One Undo must restore every cell, style, and reference after ${axis} header action ${index}`);
-    }
-  }
-  assert.deepEqual(toolsOnly(await state(current.page)), fixture);
-
   progress("restore alignment, strike and borders through standard ODS XML without the private backup");
+  current = await open("sheet-standard-ods", legacyForStandardOds);
+  await enter(current.page, "Z1", "Sample: standard ODS import Undo journal");
   await importOds(current.page, odsWithOnlyStandardWorkbook(ods));
   await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await key(current.page, "Escape");

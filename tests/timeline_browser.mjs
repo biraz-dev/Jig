@@ -378,7 +378,7 @@ try {
   const labelPreview = await waitForBar(current.page, item => item.left - labelInitialBar.left >= 50);
   assert.equal(await raw(current.page), labelRaw, "Changing the title-width preview must not save before the divider is released");
   await current.page.mouse.up();
-  await paint(current.page);
+  // The saved state below acknowledges release without depending on GL timing.
   await current.page.waitForFunction(key => Number.isInteger(JSON.parse(localStorage.getItem(key)).preferences.timeline_label_percent), storageKey);
   const labelState = await state(current.page);
   assert.ok(labelState.preferences.timeline_label_percent >= 10 && labelState.preferences.timeline_label_percent <= 80, "The title divider must save a bounded label-width percentage");
@@ -403,7 +403,6 @@ try {
   assert.equal(await raw(current.page), rangeRaw, "Dragging the due-date end must preview without changing saved dates");
   await capture(current.page, "timeline-range-drag");
   await current.page.mouse.up();
-  await paint(current.page);
   const resizedDue = structuredClone(fixture); resizedDue.deadlines[0].at = "2026-10-31T18:00:00Z";
   await expectState(current.page, resizedDue, "Moving the due end one day must retain its 18:00 time and the exact opposite start instant");
   await key(current.page, "Escape");
@@ -415,7 +414,6 @@ try {
   await waitForBar(current.page, item => item.left - rangeBar.left >= dayPixels * 0.5 && rangeBar.width - item.width >= dayPixels * 0.5);
   assert.equal(await raw(current.page), rangeRaw, "Dragging the start-date end must preview without changing saved dates");
   await current.page.mouse.up();
-  await paint(current.page);
   const resizedStart = structuredClone(fixture); resizedStart.tasks[0].start = "2026-10-27T12:34:56Z";
   await expectState(current.page, resizedStart, "Moving the start end one day must preserve its 12:34:56 time and exact due instant");
   await key(current.page, "Escape");
@@ -436,7 +434,6 @@ try {
   await paint(current.page);
   assert.equal(await raw(current.page), beforeResize, "Dragging the divider must wait until release before saving its preference");
   await current.page.mouse.up();
-  await paint(current.page);
   await current.page.waitForFunction(key => Number.isInteger(JSON.parse(localStorage.getItem(key)).preferences.task_panel_percent), storageKey);
   const resized = await state(current.page);
   const percent = resized.preferences.task_panel_percent;
@@ -649,7 +646,25 @@ try {
 } catch (error) {
   originalError = error;
   console.error(`Timeline browser failed during: ${phase}`);
-  if (current?.page && !current.page.isClosed()) await capture(current.page, "timeline-failure").catch(() => {});
+  if (current?.page && !current.page.isClosed()) {
+    let diagnosticTimer;
+    try {
+      const diagnostics = await Promise.race([
+        current.page.evaluate(key => ({
+          frames: window.jigTestFrames ?? null,
+          savedStateRaw: localStorage.getItem(key),
+          focused: document.hasFocus(),
+          visibility: document.visibilityState,
+          activeElement: document.activeElement ? { tag: document.activeElement.tagName, id: document.activeElement.id } : null,
+        }), storageKey),
+        new Promise((_, reject) => { diagnosticTimer = setTimeout(() => reject(new Error("Timeline diagnostics exceeded 3 seconds")), 3000); }),
+      ]);
+      console.error("Timeline public browser diagnostics:", JSON.stringify(diagnostics));
+    } catch (diagnosticError) {
+      console.error("Timeline diagnostics unavailable:", String(diagnosticError));
+    } finally { clearTimeout(diagnosticTimer); }
+    await capture(current.page, "timeline-failure").catch(() => {});
+  }
   throw error;
 } finally {
   progress("close timeline contexts and Chromium");

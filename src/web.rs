@@ -108,6 +108,7 @@ pub struct BrowserApp {
     year: i32,
     month: u32,
     selected_date: NaiveDate,
+    calendar_weather_date: Option<NaiveDate>,
     timeline_view: bool,
     task_split_draft: Option<f32>,
     timeline: TimelinePanel,
@@ -242,6 +243,7 @@ impl BrowserApp {
             year: today.year(),
             month: today.month(),
             selected_date: today,
+            calendar_weather_date: None,
             timeline_view: false,
             task_split_draft: None,
             timeline: TimelinePanel::new(today),
@@ -355,6 +357,7 @@ impl BrowserApp {
         self.pending_csv_target = None;
         browser_storage::cancel_csv();
         self.timeline = TimelinePanel::new(Local::now().date_naive());
+        self.calendar_weather_date = None;
         self.undo_history.clear();
         self.stl.clear_undo();
         self.undo_baseline = self.state.clone();
@@ -2362,6 +2365,7 @@ impl BrowserApp {
 
     fn reveal_task_date(&mut self, id: u64) {
         if let Some(deadline) = self.state.task_deadline(id) {
+            self.calendar_weather_date = None;
             let date = deadline.at.with_timezone(&Local).date_naive();
             self.selected_date = date;
             self.year = date.year();
@@ -2414,6 +2418,7 @@ impl BrowserApp {
                 }
             }
             Some(TimelineAction::EditTask(id)) => {
+                self.calendar_weather_date = None;
                 self.begin_task_date(id, false);
                 self.task_date_timeline = true;
                 if let Some(deadline) = self.state.task_deadline(id) {
@@ -2423,6 +2428,7 @@ impl BrowserApp {
                 }
             }
             Some(TimelineAction::EditDeadline(id)) => {
+                self.calendar_weather_date = None;
                 if let Some(deadline) = self.state.deadlines.iter().find(|item| item.id == id) {
                     self.task_date = deadline
                         .at
@@ -2450,14 +2456,6 @@ impl BrowserApp {
                 self.task_date_editor(ui, id);
             }
         }
-        ui.add_space(6.0);
-        if self.weather.controls(ui) {
-            self.state.preferences.weather = self.weather.config().cloned();
-            if !self.demo {
-                self.changed();
-            }
-        }
-        self.weather.selected_day(ui, self.selected_date);
     }
 
     fn calendar_month(&mut self, ui: &mut Ui) {
@@ -2479,6 +2477,7 @@ impl BrowserApp {
                 self.year = today.year();
                 self.month = today.month();
                 self.selected_date = today;
+                self.calendar_weather_date = Some(today);
             }
         });
         let today = Local::now().date_naive();
@@ -2617,6 +2616,7 @@ impl BrowserApp {
                             }
                             if clicked {
                                 self.selected_date = *day;
+                                self.calendar_weather_date = Some(*day);
                             }
                         } else {
                             ui.allocate_space(egui::vec2(size, 34.0));
@@ -2629,14 +2629,19 @@ impl BrowserApp {
         }
         ui.add_space(6.0);
         self.calendar_tasks(ui);
-        ui.add_space(6.0);
-        if self.weather.controls(ui) {
-            self.state.preferences.weather = self.weather.config().cloned();
-            if !self.demo {
-                self.changed();
+        if self.calendar_weather_date == Some(self.selected_date)
+            && self.selected_date.year() == self.year
+            && self.selected_date.month() == self.month
+        {
+            ui.add_space(6.0);
+            if self.weather.controls(ui) {
+                self.state.preferences.weather = self.weather.config().cloned();
+                if !self.demo {
+                    self.changed();
+                }
             }
+            self.weather.selected_day(ui, self.selected_date);
         }
-        self.weather.selected_day(ui, self.selected_date);
     }
 
     fn calendar_tasks(&mut self, ui: &mut Ui) {
@@ -2722,6 +2727,7 @@ impl BrowserApp {
             Ok((year, month)) => {
                 self.year = year;
                 self.month = month;
+                self.calendar_weather_date = None;
             }
             Err(error) => self.status = error,
         }

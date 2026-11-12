@@ -231,17 +231,19 @@ impl TimelinePanel {
         let bottom = ui
             .scope(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                egui::ScrollArea::vertical()
+                let scroll = egui::ScrollArea::vertical()
                     .id_salt("timeline-rows")
                     .max_height(if width >= 760.0 { 420.0 } else { 220.0 })
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
+                        let mut bottom = header.bottom();
                         for row in &rows {
                             let key = (row.task_id, row.deadline_id);
                             let (rect, _) = ui.allocate_exact_size(
                                 egui::vec2(width, ROW_HEIGHT),
                                 egui::Sense::hover(),
                             );
+                            bottom = rect.bottom();
                             let response = ui.interact(
                                 rect,
                                 ui.id().with(("timeline-row", key)),
@@ -300,9 +302,14 @@ impl TimelinePanel {
                                 dates(row)
                             ));
                         }
-                    })
-                    .inner_rect
-                    .bottom()
+                        bottom
+                    });
+                // The scroll viewport can exceed its visible row content.
+                // Keep the divider and its hit area inside the actual chart.
+                scroll
+                    .inner
+                    .min(scroll.inner_rect.bottom())
+                    .min(ui.clip_rect().bottom())
             })
             .inner;
         // Keep the established toolbar-to-row Tab order. Resize controls follow

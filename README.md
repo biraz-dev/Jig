@@ -296,16 +296,17 @@ cleared when switching datasets or reloading; it is not saved in documents.
 
 ## Weather calendar
 
-Weather starts disabled. Choose **Set location**, search for a town or
-postcode, and select a result. You can change location, switch °F/°C, refresh or
-disable it at any time. Settings stay in this browser; personal JSON exports
+Weather starts disabled. Select a calendar day, choose **Set location**, search
+for a town or postcode, and select a result. You can change location, switch
+°F/°C, refresh or disable it at any time. Settings stay in this browser; personal JSON exports
 also carry the chosen weather preference. Changing weather in sample mode does
 not save the sample checklist as personal data.
 
-The month grid stays compact with day numbers and task marks. Select a date for forecast
-high/low, rain probability and mean relative humidity beneath the grid. Dates
-outside the returned forecast range have no forecast. Calendar entry controls
-remain hidden and existing entries are preserved.
+The month grid stays compact with day numbers and task marks. Select a date for
+forecast high/low, rain probability and mean relative humidity beneath the grid. Weather
+controls and details appear after selecting a day; Timeline keeps the chart
+without a weather footer. Dates outside the returned forecast range have no
+forecast. Calendar entry controls remain hidden and existing entries are preserved.
 
 Weather data comes from [Open-Meteo](https://open-meteo.com/) without a key or
 account, using national forecast models. It is a forecast, not a guarantee for

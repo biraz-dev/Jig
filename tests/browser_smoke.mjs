@@ -69,6 +69,7 @@ async function capture(page, name) {
     "task-colors-calendar-empty", "task-colors-calendar-selected", "task-colors-mobile-touch",
     "task-colors-list-scroll",
     "task-colors-date-focus", "task-colors-failure",
+    "calendar-weather-unselected", "calendar-weather-selected",
   ]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
@@ -808,7 +809,7 @@ try {
   const weatherMock = { config: celsius, requests: [] };
   const weather = await newPage("weather-celsius", {
     raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: weatherMock,
-    viewport: { width: 1440, height: 1000 },
+    viewport: { width: 1440, height: 1000 }, hasTouch: true,
   });
   await boot(weather.page);
   const cached = await expectWeatherCache(weather.page, celsius);
@@ -821,6 +822,28 @@ try {
   await weather.page.waitForTimeout(1600);
   assert.equal(weatherMock.requests.length, 1, "A fresh cached forecast should survive restart without another provider request");
   checkWeather(await expectWeatherCache(weather.page, celsius), celsius);
+  progress("select a calendar day before using its weather controls");
+  await maximizeApplet(weather.page, "calendar");
+  await capture(weather.page, "calendar-weather-unselected");
+  await tapToday(weather.page);
+  await paint(weather.page);
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Selecting a day must not edit records or the featured countdown");
+  await capture(weather.page, "calendar-weather-selected");
+  const remainingDays = await weather.page.evaluate(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() - today.getDate();
+  });
+  // After the selected date: the remaining dates, location, then Fahrenheit.
+  await tab(weather.page, remainingDays + 2);
+  weatherMock.config = { ...celsius, unit: "fahrenheit" };
+  await navigateKey(weather.page, "Space");
+  checkWeather(await expectWeatherCache(weather.page, weatherMock.config), weatherMock.config);
+  assert.equal(JSON.parse(await saved(weather.page)).preferences.weather.unit, "fahrenheit");
+  weatherMock.config = celsius;
+  await tab(weather.page);
+  await navigateKey(weather.page, "Space");
+  checkWeather(await expectWeatherCache(weather.page, celsius), celsius);
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Restoring Celsius must preserve tasks, deadlines, notes and the featured countdown");
   await weather.page.setViewportSize({ width: 390, height: 844 });
   await weather.page.waitForTimeout(500);
   assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);

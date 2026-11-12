@@ -969,32 +969,19 @@ async function selectedSheetBounds(page) {
 }
 async function sheetControl(page, control) {
   // These operations use the last tab, so the next two rendered button fills
-  // belong to + and -. Locate their pixels rather than assuming label widths.
+  // belong to + and -. Find their complete rectangles: a scan through one
+  // pixel row can be split into narrow fragments by the + or - glyph itself.
   await select(page, "A1");
   const bounds = await selectedSheetBounds(page);
-  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  const buttons = await page.evaluate(async ({ encoded, bounds }) => {
-    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
-    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
-    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
-    const y = Math.round(bounds.bottom - 3), { data } = context.getImageData(0, y, canvas.width, 1);
-    const runs = []; let start;
-    for (let x = bounds.right + 1; x < canvas.width; x++) {
-      const offset = x * 4;
-      const filled = Math.abs(data[offset] - 41) <= 1 && Math.abs(data[offset + 1] - 37) <= 1 && Math.abs(data[offset + 2] - 34) <= 1;
-      if (filled && start === undefined) start = x;
-      if ((!filled || x + 1 === canvas.width) && start !== undefined) {
-        if (x - start >= 8 && x - start <= 100) runs.push({ x: (start + x - 1) / 2, y: (bounds.top + bounds.bottom) / 2 });
-        start = undefined;
-      }
-    }
-    return runs.slice(0, 2);
-  }, { encoded: png.toString("base64"), bounds });
+  const { shapes } = await selectedShapes(page, [41, 37, 34]);
+  const buttons = shapes.filter(item => item.left > bounds.right && item.right - item.left <= 100
+    && Math.abs(item.top - bounds.top) <= 4 && Math.abs(item.bottom - bounds.bottom) <= 4)
+    .sort((a, b) => a.left - b.left).slice(0, 2);
   const target = control === "plus" ? 0 : 1;
+  interaction = `click bottom sheet ${control}; tab ${JSON.stringify(bounds)}; buttons ${JSON.stringify(buttons)}`;
   assert.ok(buttons.length > target, `The visible bottom tab strip must offer an enabled ${control} button after the last sheet`);
-  const point = buttons[target];
-  interaction = `click bottom sheet ${control}`;
-  await page.mouse.click(point.x, point.y);
+  const button = buttons[target];
+  await page.mouse.click((button.left + button.right) / 2, (button.top + button.bottom) / 2);
   await paint(page);
 }
 async function cellInk(page, bounds) {

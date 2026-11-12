@@ -133,6 +133,7 @@ async function timeline(page) {
   await tab(page, 4);
   await key(page, "Space"); // Today anchors this deterministic fixture.
   for (let index = 0; index < 4; index++) await key(page, "Shift+Tab");
+  await key(page, "Space"); // Apply deferred Week focus.
 }
 async function tasks(page) {
   await resetFocus(page);

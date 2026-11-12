@@ -898,7 +898,14 @@ async function borderFormat(page, index) {
 async function autoAlignment(page) {
   await topMenu(page, 3); // Format, before Insert and View.
   await tab(page, 7); // Font, size, B, I, U, S, Alignment.
-  await key(page, "Space");
+  // egui 0.31 opens nested menus on pointer hover. Space activates top-level
+  // menus but does not open this submenu. Its keyboard focus is visibly ACTIVE.
+  const { shapes } = await selectedShapes(page, [77, 49, 39]);
+  const alignment = shapes.find(item => item.top > 60 && item.right - item.left >= 90 && item.bottom - item.top <= 26);
+  assert.ok(alignment, "Format must visibly focus its Alignment submenu before opening it");
+  interaction = `open focused Alignment submenu ${JSON.stringify(alignment)} and choose Auto`;
+  await page.mouse.click((alignment.left + alignment.right) / 2, (alignment.top + alignment.bottom) / 2);
+  await paint(page);
   await tab(page); // Auto is the first choice.
   await key(page, "Space");
 }
@@ -913,11 +920,11 @@ function borderEdges(preset, row, col) {
   };
   return Object.fromEntries(Object.entries(choices[preset]).filter(([, enabled]) => enabled));
 }
-async function selectedShapes(page) {
+async function selectedShapes(page, color = [67, 42, 34]) {
   // Read rendered pixels, never application state or a synthetic UI hook. The
   // selected fill identifies both cells and the active sheet tab on any layout.
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  return page.evaluate(async encoded => {
+  return page.evaluate(async ({ encoded, color }) => {
     const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`;
     await picture.decode();
     const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
@@ -926,7 +933,7 @@ async function selectedShapes(page) {
     const mask = new Uint8Array(canvas.width * canvas.height);
     for (let pixel = 0; pixel < mask.length; pixel++) {
       const offset = pixel * 4;
-      mask[pixel] = Math.abs(data[offset] - 67) <= 1 && Math.abs(data[offset + 1] - 42) <= 1 && Math.abs(data[offset + 2] - 34) <= 1 ? 1 : 0;
+      mask[pixel] = Math.abs(data[offset] - color[0]) <= 1 && Math.abs(data[offset + 1] - color[1]) <= 1 && Math.abs(data[offset + 2] - color[2]) <= 1 ? 1 : 0;
     }
     const queue = new Int32Array(mask.length), shapes = [];
     for (let pixel = 0; pixel < mask.length; pixel++) {
@@ -944,7 +951,7 @@ async function selectedShapes(page) {
       if (right - left >= 10 && bottom - top >= 12) shapes.push({ left, right, top, bottom, pixels: end });
     }
     return { shapes, height: canvas.height };
-  }, png.toString("base64"));
+  }, { encoded: png.toString("base64"), color });
 }
 async function selectedCellBounds(page) {
   const { shapes } = await selectedShapes(page);

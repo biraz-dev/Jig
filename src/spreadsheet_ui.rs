@@ -1403,6 +1403,7 @@ impl SheetPanel {
         egui::ScrollArea::both()
             .id_salt(("spreadsheet-scroll", active))
             .max_height(height)
+            .drag_to_scroll(ui.input(|input| input.any_touches()))
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, _viewport| {
                 let size = egui::vec2(

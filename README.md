@@ -227,6 +227,12 @@ backup compatible with the native CLI. **Import JSON** validates the complete
 state and asks before replacement. Older files without spreadsheets, task colors
 or start dates still load. **Clear saved data** also requires confirmation.
 
+A normal refresh or application update keeps personal data. Press **Enter** to
+commit a spreadsheet cell before leaving. Check the header: **your data** is
+saved, while **sample data** is temporary. To keep work already entered in sample
+mode, **Export JSON**, then **Import JSON** that file and confirm the import.
+Use **Start empty** only when you intend to begin with an empty dataset.
+
 Browser JSON saves/imports have a 2 MiB limit. Invalid saved data is preserved and
 reported. Failed saves leave edits in memory with **Retry save** available; export
 before closing the page. A stale tab cannot overwrite a newer save. Storage is
@@ -234,6 +240,13 @@ specific to this profile and origin, so keep portable file backups. Opened
 PDF/image/STL source bytes are session-only and are not embedded in saved state.
 
 ## Workbench, tasks and timeline
+
+Drag the divider between tasks and the timeline to adjust their widths. Its
+grip shows horizontal resize arrows; focus it and use **Left/Right** for small
+adjustments or **Shift-Left/Right** for larger ones. Double-click to reset the
+default split. A finished resize is one Undo step, and the preferred width is
+saved with your local preferences and portable backups. Narrow screens stack
+the panels without replacing your saved split.
 
 **Workbench** keeps the fixed applets: featured countdown, unified task/deadline
 checklist, compact calendar/timeline, calculator/converter and STL viewer.

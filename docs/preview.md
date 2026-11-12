@@ -123,6 +123,11 @@ Successful personal edits save to localStorage key `jig.personal.v1` in this
 browser profile and origin. Another computer, browser or profile has independent
 storage.
 
+Normal refreshes and deployed application updates retain that saved dataset.
+Commit a sheet editor with Enter before leaving. Existing sample-mode edits can
+be kept by exporting JSON and importing that file as personal data; Start empty
+deliberately starts an empty dataset.
+
 **Import JSON** reads a local file, validates a complete Jig state, displays its
 item counts and asks for confirmation before replacing the personal dataset.
 **Export JSON** downloads the displayed dataset as `jig.json`, using the same
@@ -143,6 +148,15 @@ can also remove it. JSON downloads are user-owned backups; localStorage is not a
 backup service.
 
 ## Browser controls
+
+The wide Tasks workspace and Workbench timeline have a draggable separator
+between the task list and timeline. It has a horizontal resize cursor and grip,
+keyboard Left/Right adjustment (Shift for larger steps), and double-click reset.
+Resizing commits one preference change at the end of the drag; it does not write
+or add Undo entries for each mouse movement. The optional task-panel percentage
+is saved in the existing preferences, including JSON and Jig ODS backups. Older
+documents omit it and use the original layout. Panel minimum widths adapt to the
+available space, and the narrow stacked layout preserves the preferred split.
 
 Click an applet to highlight it. Outside text editors, the arrow keys move the
 highlight between applets. Ctrl-M maximizes or restores the selection; Esc leaves

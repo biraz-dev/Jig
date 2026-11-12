@@ -10,6 +10,7 @@ use crate::{
     weather_ui::WeatherPanel,
 };
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Utc};
+use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
     calendar,
@@ -20,6 +21,11 @@ use std::time::Duration;
 
 const UNDO_STEPS: usize = 20;
 const UNDO_BYTES: usize = 64 * 1024 * 1024;
+const TASK_SPLIT_WIDTH: f32 = 12.0;
+
+fn task_split_id() -> egui::Id {
+    egui::Id::new("task-timeline-divider")
+}
 
 enum UndoEntry {
     Data { state: Box<State>, bytes: usize },
@@ -102,6 +108,7 @@ pub struct BrowserApp {
     month: u32,
     selected_date: NaiveDate,
     timeline_view: bool,
+    task_split_draft: Option<f32>,
     timeline: TimelinePanel,
     sheet: SheetPanel,
     sheet_workspace: bool,
@@ -235,6 +242,7 @@ impl BrowserApp {
             month: today.month(),
             selected_date: today,
             timeline_view: false,
+            task_split_draft: None,
             timeline: TimelinePanel::new(today),
             sheet: SheetPanel::new(),
             sheet_workspace: true,
@@ -384,6 +392,7 @@ impl BrowserApp {
     }
 
     fn reset_editors(&mut self) {
+        self.task_split_draft = None;
         self.sheet.restore_data();
         self.charts.invalidate();
         self.task_edit = None;
@@ -605,6 +614,7 @@ impl BrowserApp {
         }
         self.sheet_workspace = sheet;
         self.tasks_workspace = false;
+        self.task_split_draft = None;
         browser_storage::set_workspace(if sheet { "sheet" } else { "workbench" });
         self.focus_calculator = false;
         self.focus_task_date = false;
@@ -730,27 +740,208 @@ impl BrowserApp {
             }
         });
         if self.expanded {
+            self.cancel_task_split(ui.ctx());
             self.tool(ui, if self.focus == 2 { 2 } else { 1 }, height);
         } else if ui.available_width() >= 800.0 {
-            let left = (ui.available_width() * 0.43).clamp(330.0, 600.0);
-            let right = ui.available_width() - left - 12.0;
+            self.task_timeline_panels(ui, height, true);
+        } else {
+            self.cancel_task_split(ui.ctx());
+            self.tool(ui, 1, 300.0);
+            ui.add_space(8.0);
+            self.tool(ui, 2, 350.0);
+        }
+    }
+
+    fn cancel_task_split(&mut self, ctx: &egui::Context) {
+        self.task_split_draft = None;
+        ctx.memory_mut(|memory| memory.surrender_focus(task_split_id()));
+    }
+
+    fn commit_task_split(&mut self, percent: Option<u8>) {
+        self.task_split_draft = None;
+        if self.state.preferences.task_panel_percent != percent {
+            self.state.preferences.task_panel_percent = percent;
+            self.changed();
+        }
+    }
+
+    fn task_timeline_panels(&mut self, ui: &mut Ui, height: f32, tasks_left: bool) {
+        let width = ui.available_width();
+        let available = width - TASK_SPLIT_WIDTH;
+        let default = if tasks_left {
+            (width * 0.43).clamp(330.0, 600.0)
+        } else {
+            available - 330.0
+        };
+        let percent = self
+            .task_split_draft
+            .or_else(|| self.state.preferences.task_panel_percent.map(f32::from));
+        let tasks = percent
+            .map_or(default, |percent| available * percent / 100.0)
+            .clamp(300.0, available - 330.0);
+        let (left, right) = if tasks_left {
+            (tasks, available - tasks)
+        } else {
+            (available - tasks, tasks)
+        };
+        let item_spacing = ui.spacing().item_spacing;
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
                     egui::vec2(left, height),
                     egui::Layout::top_down(egui::Align::Min),
-                    |ui| self.tool(ui, 1, height),
+                    |ui| {
+                        ui.spacing_mut().item_spacing = item_spacing;
+                        self.tool(ui, if tasks_left { 1 } else { 2 }, height)
+                    },
                 );
-                ui.add_space(8.0);
+                self.task_splitter(ui, height, available, tasks, tasks_left);
                 ui.allocate_ui_with_layout(
                     egui::vec2(right, height),
                     egui::Layout::top_down(egui::Align::Min),
-                    |ui| self.tool(ui, 2, height),
+                    |ui| {
+                        ui.spacing_mut().item_spacing = item_spacing;
+                        self.tool(ui, if tasks_left { 2 } else { 1 }, height)
+                    },
                 );
             });
+        });
+    }
+
+    fn task_splitter(
+        &mut self,
+        ui: &mut Ui,
+        height: f32,
+        available: f32,
+        tasks: f32,
+        tasks_left: bool,
+    ) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(TASK_SPLIT_WIDTH, height), egui::Sense::hover());
+        let response = ui
+            .interact(rect, task_split_id(), egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+            .on_hover_text(
+                "Resize Tasks and timeline · Left/Right arrows · Shift for larger steps · Double-click to reset",
+            );
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        let direction = if tasks_left { 1.0 } else { -1.0 };
+        let bounded_width = |width: f32| {
+            width.clamp(
+                (available * 0.2).max(300.0),
+                (available * 0.8).min(available - 330.0),
+            )
+        };
+        if response.double_clicked() {
+            self.commit_task_split(None);
+            ui.ctx().request_repaint();
         } else {
-            self.tool(ui, 1, 300.0);
-            ui.add_space(8.0);
-            self.tool(ui, 2, 350.0);
+            if response.dragged() {
+                // egui's drag delta is the pointer movement for this frame.
+                let next = bounded_width(tasks + direction * response.drag_delta().x);
+                if (next - tasks).abs() > 0.01 {
+                    self.task_split_draft = Some(next / available * 100.0);
+                    ui.ctx().request_repaint();
+                }
+            }
+            if response.drag_stopped() {
+                if let Some(percent) = self.task_split_draft {
+                    self.commit_task_split(Some(percent.round().clamp(20.0, 80.0) as u8));
+                    ui.ctx().request_repaint();
+                }
+            }
+            if response.has_focus() {
+                ui.memory_mut(|memory| {
+                    memory.set_focus_lock_filter(
+                        task_split_id(),
+                        egui::EventFilter {
+                            horizontal_arrows: true,
+                            ..Default::default()
+                        },
+                    );
+                });
+                let keyboard = ui.input_mut(|input| {
+                    // A pointer gesture owns its draft until release, including
+                    // when an arrow key is pressed during that gesture.
+                    if input.pointer.any_down() || response.drag_stopped() {
+                        return 0.0;
+                    }
+                    let arrow = input.events.iter().find_map(|event| match event {
+                        egui::Event::Key {
+                            key,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight)
+                            && !modifiers.ctrl
+                            && !modifiers.alt
+                            && !modifiers.command =>
+                        {
+                            Some((*key, *modifiers))
+                        }
+                        _ => None,
+                    });
+                    let Some((key, modifiers)) = arrow else {
+                        return 0.0;
+                    };
+                    if !input.consume_key(modifiers, key) {
+                        return 0.0;
+                    }
+                    let step = if modifiers.shift { 5.0 } else { 1.0 };
+                    if key == egui::Key::ArrowLeft {
+                        -step
+                    } else {
+                        step
+                    }
+                });
+                if keyboard != 0.0 {
+                    let next = bounded_width(tasks + direction * keyboard * available / 100.0);
+                    if (next - tasks).abs() > 0.01 {
+                        self.commit_task_split(Some(
+                            (next / available * 100.0).round().clamp(20.0, 80.0) as u8,
+                        ));
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::slider(
+                ui.is_enabled(),
+                f64::from(tasks / available * 100.0),
+                "Tasks panel width",
+            )
+        });
+        let active = response.hovered() || response.dragged() || response.has_focus();
+        let color = if active { ACCENT } else { RULE };
+        let center = rect.center();
+        let line_x = center
+            .x
+            .round_to_pixel_center(ui.painter().pixels_per_point());
+        ui.painter()
+            .vline(line_x, rect.y_range(), Stroke::new(1.0_f32, color));
+        let grip = egui::Rect::from_center_size(center, egui::vec2(TASK_SPLIT_WIDTH, 22.0));
+        ui.painter().rect_filled(grip, 2.0, web_theme::SURFACE);
+        for sign in [-1.0, 1.0] {
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    center + egui::vec2(sign * 2.0, -3.0),
+                    center + egui::vec2(sign * 5.0, 0.0),
+                    center + egui::vec2(sign * 2.0, 3.0),
+                ],
+                Stroke::new(1.2_f32, if active { ACCENT } else { MUTED }),
+            ));
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                grip,
+                2.0,
+                Stroke::new(1.0_f32, ACCENT),
+                egui::StrokeKind::Inside,
+            );
         }
     }
 
@@ -2696,12 +2887,15 @@ impl eframe::App for BrowserApp {
             if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
                 self.undo_last(ctx);
             }
+            let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()));
             let previous = !self.sheet_workspace
+                && !divider_focused
                 && ctx.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
                         || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
                 });
             let next = !self.sheet_workspace
+                && !divider_focused
                 && ctx.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
                         || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
@@ -2769,6 +2963,7 @@ impl eframe::App for BrowserApp {
                     if self.tasks_workspace {
                         self.tasks_main(ui, height - 8.0);
                     } else if self.expanded {
+                        self.cancel_task_split(ui.ctx());
                         self.tool(ui, self.focus, height - 8.0);
                     } else if ui.available_width() >= 760.0 {
                         let featured = self
@@ -2777,23 +2972,30 @@ impl eframe::App for BrowserApp {
                             .is_some_and(|id| self.state.is_deadline_active(id));
                         self.tool(ui, 0, if featured { 104.0 } else { 48.0 });
                         ui.add_space(8.0);
-                        let calendar_width = 330.0;
                         let width = ui.available_width();
                         let main_height = 350.0;
-                        let calendar_height = if self.timeline_view { main_height } else { 0.0 };
-                        ui.horizontal_top(|ui| {
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(calendar_width, calendar_height),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| self.tool(ui, 2, calendar_height),
-                            );
-                            ui.add_space(12.0);
-                            ui.allocate_ui_with_layout(
-                                egui::vec2((width - calendar_width - 20.0).max(250.0), main_height),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| self.tool(ui, 1, main_height),
-                            );
-                        });
+                        if self.timeline_view {
+                            self.task_timeline_panels(ui, main_height, false);
+                        } else {
+                            self.cancel_task_split(ui.ctx());
+                            let calendar_width = 330.0;
+                            ui.horizontal_top(|ui| {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(calendar_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| self.tool(ui, 2, 0.0),
+                                );
+                                ui.add_space(12.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(
+                                        (width - calendar_width - 20.0).max(250.0),
+                                        main_height,
+                                    ),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| self.tool(ui, 1, main_height),
+                                );
+                            });
+                        }
                         ui.add_space(8.0);
                         if width >= 1120.0 {
                             let math_width = (width * 0.35).max(380.0);
@@ -2816,6 +3018,7 @@ impl eframe::App for BrowserApp {
                             self.tool(ui, 4, 380.0);
                         }
                     } else {
+                        self.cancel_task_split(ui.ctx());
                         let featured = self
                             .state
                             .featured

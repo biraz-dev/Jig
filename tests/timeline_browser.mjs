@@ -59,9 +59,10 @@ async function key(page, value) {
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-mobile", "timeline-edit", "timeline-failure"]);
+  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-mobile", "timeline-edit", "timeline-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
+  const requestedDivider = name === "timeline-divider" && requested.has("timeline-dashboard");
+  if (allowed.has(name) && (requested.has(name) || requestedDivider) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
     for (let offset = 0; offset < encoded.length; offset += 2048) console.log(encoded.slice(offset, offset + 2048));
@@ -89,6 +90,7 @@ async function open(label, state = fixture, phone = false) {
   const page = await context.newPage();
   page.on("pageerror", error => issues.push(`${label}: ${error.message}`));
   page.setDefaultTimeout(15000);
+  page.setDefaultNavigationTimeout(60000);
   await page.clock.setFixedTime(new Date("2026-10-30T12:00:00Z"));
   await boot(page);
   return { context, page };
@@ -108,6 +110,64 @@ async function boot(page, reload = false) {
 }
 async function state(page) { return page.evaluate(key => JSON.parse(localStorage.getItem(key)), storageKey); }
 async function raw(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
+async function dividerBounds(page, timeout = 60000) {
+  const png = await page.screenshot({ timeout, animations: "disabled", caret: "hide" });
+  return page.evaluate(async encoded => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const matches = (pixel, color) => color.every((value, axis) => Math.abs(data[pixel * 4 + axis] - value) <= 3);
+    const mask = new Uint8Array(canvas.width * canvas.height);
+    for (let pixel = 0; pixel < mask.length; pixel++) mask[pixel] = matches(pixel, [113, 102, 93]) || matches(pixel, [244, 107, 74]) ? 1 : 0;
+    const queue = new Int32Array(mask.length), lines = [];
+    for (let pixel = 0; pixel < mask.length; pixel++) {
+      if (!mask[pixel]) continue;
+      let start = 0, end = 1, left = canvas.width, right = 0, top = canvas.height, bottom = 0;
+      queue[0] = pixel; mask[pixel] = 0;
+      while (start < end) {
+        const current = queue[start++], x = current % canvas.width, y = Math.floor(current / canvas.width);
+        left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
+        for (const neighbour of [x ? current - 1 : -1, x + 1 < canvas.width ? current + 1 : -1, y ? current - canvas.width : -1, y + 1 < canvas.height ? current + canvas.width : -1]) {
+          if (neighbour >= 0 && mask[neighbour]) { mask[neighbour] = 0; queue[end++] = neighbour; }
+        }
+      }
+      if (right - left <= 14 && bottom - top >= 80 && left > canvas.width * 0.18 && right < canvas.width * 0.82) lines.push({ x: (left + right) / 2, top, bottom });
+    }
+    // The visible grip interrupts a tall separator line. Join its upper/lower
+    // pieces, then require the grip's surface at the center to exclude pane edges.
+    const joined = [];
+    for (const line of lines) {
+      const existing = joined.find(item => Math.abs(item.x - line.x) <= 2);
+      if (existing) { existing.top = Math.min(existing.top, line.top); existing.bottom = Math.max(existing.bottom, line.bottom); }
+      else joined.push({ ...line });
+    }
+    const grips = [];
+    for (const item of joined) {
+      if (item.bottom - item.top < 200) continue;
+      let start;
+      for (let y = item.top + 40; y <= item.bottom - 40; y++) {
+        const surface = matches(y * canvas.width + Math.round(item.x), [41, 37, 34]);
+        if (surface && start === undefined) start = y;
+        if (!surface && start !== undefined) {
+          const center = (start + y - 1) / 2;
+          if (y - start >= 8 && y - start <= 30 && Math.abs(center - (item.top + item.bottom) / 2) <= 80) grips.push({ ...item, y: center });
+          start = undefined;
+        }
+      }
+    }
+    return grips.sort((a, b) => (b.bottom - b.top) - (a.bottom - a.top))[0] ?? null;
+  }, png.toString("base64"));
+}
+async function waitForDivider(page, expected = () => true) {
+  const until = Date.now() + 60000;
+  let bounds;
+  do {
+    bounds = await dividerBounds(page, Math.max(1, until - Date.now()));
+  } while ((!bounds || !expected(bounds)) && Date.now() < until);
+  assert.ok(bounds && expected(bounds), `The rendered Tasks/timeline divider must reach its expected position; found ${JSON.stringify(bounds)}`);
+  return bounds;
+}
 async function expectState(page, expected, message) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
@@ -282,6 +342,50 @@ async function importData(page, imported, confirm = true) {
 }
 
 try {
+  progress("resize the Tasks and Gantt panes, persist their width, and restore the default");
+  current = await open("timeline-divider");
+  await key(current.page, "Control+Alt+2");
+  const initialDivider = await waitForDivider(current.page);
+  const beforeResize = await raw(current.page);
+  await current.page.mouse.move(initialDivider.x, initialDivider.y);
+  await current.page.waitForFunction(() => document.body.style.cursor === "ew-resize", undefined, { timeout: 10000, polling: 25 });
+  await current.page.mouse.down();
+  await paint(current.page);
+  await current.page.mouse.move(initialDivider.x + 160, initialDivider.y, { steps: 6 });
+  await paint(current.page);
+  assert.equal(await raw(current.page), beforeResize, "Dragging the divider must wait until release before saving its preference");
+  await current.page.mouse.up();
+  await paint(current.page);
+  await current.page.waitForFunction(key => Number.isInteger(JSON.parse(localStorage.getItem(key)).preferences.task_panel_percent), storageKey);
+  const resized = await state(current.page);
+  const percent = resized.preferences.task_panel_percent;
+  assert.ok(percent >= 20 && percent <= 80, "A released divider must save a bounded Tasks width percentage");
+  const unrelated = structuredClone(resized); delete unrelated.preferences.task_panel_percent;
+  assert.deepEqual(unrelated, fixture, "Resizing must preserve every task, deadline, featured countdown and unrelated preference");
+  const movedDivider = await waitForDivider(current.page, item => item.x - initialDivider.x >= 50);
+  await capture(current.page, "timeline-divider");
+  await key(current.page, "ArrowRight");
+  const wider = structuredClone(resized); wider.preferences.task_panel_percent = percent + 1;
+  await expectState(current.page, wider, "Right Arrow on the focused divider must widen Tasks by one percentage point");
+  await key(current.page, "ArrowLeft");
+  await expectState(current.page, resized, "Left Arrow must restore the previous divider preference without editing records");
+  await boot(current.page, true);
+  await key(current.page, "Control+Alt+2");
+  await expectState(current.page, resized, "The divider preference must survive reloading the ordinary saved workbench");
+  await waitForDivider(current.page, item => Math.abs(item.x - movedDivider.x) <= 12);
+  await current.page.setViewportSize({ width: 390, height: 844 });
+  await key(current.page, "Escape");
+  await expectState(current.page, resized, "The narrow stacked layout must not overwrite the saved wide-panel preference");
+  assert.equal(await current.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "The stacked Tasks workspace must remain within the narrow viewport");
+  await current.page.setViewportSize({ width: 1440, height: 1000 });
+  await key(current.page, "Escape");
+  const restoredDivider = await waitForDivider(current.page, item => Math.abs(item.x - movedDivider.x) <= 12);
+  await current.page.mouse.dblclick(restoredDivider.x, restoredDivider.y);
+  await paint(current.page);
+  await expectState(current.page, fixture, "Double-clicking the divider must omit the preference and restore the original data exactly");
+  await waitForDivider(current.page, item => Math.abs(item.x - initialDivider.x) <= 3);
+  await current.context.close();
+
   progress("inspect overlapping durations, completion and deadline-only work without changing records");
   current = await open("timeline-desktop");
   const originalRaw = JSON.stringify(fixture);
@@ -460,7 +564,7 @@ try {
   await boot(current.page, true);
   await expectState(current.page, phone);
   assert.deepEqual(issues, [], "The local timeline must emit no app errors or network requests");
-  console.log("Timeline browser checks passed: overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
+  console.log("Timeline browser checks passed: draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
 } catch (error) {
   originalError = error;
   console.error(`Timeline browser failed during: ${phase}`);

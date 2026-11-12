@@ -212,6 +212,61 @@ fn portable_state_roundtrip_preserves_precision_and_entries() {
 }
 
 #[test]
+fn task_panel_preference_preserves_legacy_and_portable_state_and_rejects_bad_bounds() {
+    let mut state = State::default();
+    state.add_task("Keep the studio checklist").unwrap();
+    state.calculate("1 / 3").unwrap();
+    let legacy = serde_json::to_value(&state).unwrap();
+    assert!(legacy["preferences"].get("task_panel_percent").is_none());
+    let restored = State::from_json(&legacy.to_string()).unwrap();
+    assert_eq!(restored.preferences.task_panel_percent, None);
+    assert_eq!(serde_json::to_value(&restored).unwrap(), legacy);
+
+    for percent in [20, 57, 80] {
+        state.preferences.task_panel_percent = Some(percent);
+        state.validate().unwrap();
+        let json = serde_json::to_string(&state).unwrap();
+        let restored = State::from_json(&json).unwrap();
+        assert_eq!(restored.preferences.task_panel_percent, Some(percent));
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&state).unwrap()
+        );
+    }
+    let ods = jig::documents::save_ods(&state).unwrap();
+    let restored = jig::documents::read_ods(&ods)
+        .unwrap()
+        .embedded_state
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&restored).unwrap(),
+        serde_json::to_value(&state).unwrap()
+    );
+
+    let before = serde_json::to_value(&state).unwrap();
+    for percent in [0, 19, 81, 100, 255] {
+        let mut invalid = state.clone();
+        invalid.preferences.task_panel_percent = Some(percent);
+        assert!(invalid.validate().is_err(), "{percent}");
+        assert!(
+            State::from_json(&serde_json::to_string(&invalid).unwrap()).is_err(),
+            "{percent}"
+        );
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+    for percent in [
+        serde_json::json!(-1),
+        serde_json::json!(256),
+        serde_json::json!(57.5),
+    ] {
+        let mut invalid = before.clone();
+        invalid["preferences"]["task_panel_percent"] = percent;
+        assert!(State::from_json(&invalid.to_string()).is_err());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+}
+
+#[test]
 fn imported_history_rejects_terminal_controls_and_preserves_ascii_whitespace() {
     let expression = "1 +\n 2\t* 3";
     let mut state = State::default();

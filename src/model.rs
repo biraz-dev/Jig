@@ -90,6 +90,9 @@ pub struct Preferences {
     pub weather: Option<WeatherConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clay: Option<crate::clay::Settings>,
+    /// Preferred share of the Tasks panel when shown beside the timeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_panel_percent: Option<u8>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -98,6 +101,7 @@ impl Default for Preferences {
             focus: 3,
             weather: None,
             clay: None,
+            task_panel_percent: None,
         }
     }
 }
@@ -180,7 +184,13 @@ impl State {
         if self.version != 1 {
             return Err("Unsupported state version".into());
         }
-        if self.preferences.decimals > 10 || self.preferences.focus > 4 {
+        if self.preferences.decimals > 10
+            || self.preferences.focus > 4
+            || self
+                .preferences
+                .task_panel_percent
+                .is_some_and(|percent| !(20..=80).contains(&percent))
+        {
             return Err("Invalid preferences".into());
         }
         if let Some(config) = &self.preferences.weather {

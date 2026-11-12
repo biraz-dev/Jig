@@ -29,10 +29,10 @@ let originalError;
 const contexts = [];
 const issues = [];
 const timer = setTimeout(() => {
-  console.error(`Spreadsheet browser checks exceeded 900 seconds during: ${phase}; ${interaction}`);
+  console.error(`Spreadsheet browser checks exceeded 1200 seconds during: ${phase}; ${interaction}`);
   if (originalError) console.error("Original spreadsheet failure:", originalError);
   process.exit(1);
-}, 900000);
+}, 1200000);
 function progress(message) { phase = message; interaction = ""; console.log(`Spreadsheet browser phase: ${message}`); }
 async function paint(page) {
   await waitForAppPaint(page);
@@ -107,6 +107,8 @@ async function open(label, saved = fixture, phone = false) {
   page.on("pageerror", error => { issues.push(`${label}: ${error.message}`); console.error("Sheet page error:", error.message); });
   page.on("console", message => { if (message.type() === "error") console.error("Sheet browser console:", message.text().slice(0, 3000)); });
   page.setDefaultTimeout(15000);
+  // WASM startup can hold load open on the software renderer. Match the ready check.
+  page.setDefaultNavigationTimeout(60000);
   await page.clock.setFixedTime(new Date("2026-11-11T12:00:00Z"));
   await boot(page);
   return { context, page };

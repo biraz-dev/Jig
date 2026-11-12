@@ -81,12 +81,13 @@ async function open(label, saved = fixture, phone = false) {
   await installFrameFence(context);
   await context.addInitScript(() => {
     window.jigTestKeys = [];
-    for (const type of ["keydown", "keyup", "focusin", "focusout"]) {
+    for (const type of ["keydown", "keyup", "focusin", "focusout", "pointerdown", "pointerup"]) {
       document.addEventListener(type, event => {
         const entry = { type, key: event.key, tag: event.target?.tagName, id: event.target?.id };
+        if (type.startsWith("pointer")) Object.assign(entry, { x: event.clientX, y: event.clientY, time: performance.now() });
         queueMicrotask(() => { entry.prevented = event.defaultPrevented; });
         window.jigTestKeys.push(entry);
-        if (window.jigTestKeys.length > 16) window.jigTestKeys.shift();
+        if (window.jigTestKeys.length > 24) window.jigTestKeys.shift();
       }, true);
     }
   });
@@ -874,7 +875,11 @@ async function pageImportCsv(page, contents) {
 async function renameSheet(page, name) {
   await select(page, "A1");
   const bounds = await selectedSheetBounds(page);
-  await page.mouse.dblclick((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2, { delay: 80 });
+  interaction = `double-click sheet tab ${JSON.stringify(bounds)} to rename ${JSON.stringify(name)}`;
+  // eframe runs the WASM UI synchronously on every down/up event. egui counts
+  // releases less than 300 ms apart rather than reading the DOM dblclick event;
+  // an artificial hold can exhaust that interval on the software renderer.
+  await page.mouse.dblclick((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
   await paint(page);
   await pageTextInput(page, name);
   await key(page, "Enter");

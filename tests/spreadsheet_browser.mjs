@@ -950,8 +950,15 @@ async function borderFormat(page, index) {
   await key(page, "Space");
 }
 async function assertToolbarIcons(page) {
-  const { shapes } = await selectedShapes(page);
-  const left = shapes.find(item => item.top > 100 && item.bottom < 160 && item.right - item.left >= 18 && item.right - item.left <= 28 && item.bottom - item.top >= 18 && item.bottom - item.top <= 28);
+  // Style actions save after drawing the current UI. Wait for the selected
+  // icon itself to be painted, including the following data repaint.
+  const until = Date.now() + 60000;
+  interaction = "inspect the selected left-alignment toolbar icon";
+  let left;
+  do {
+    const { shapes } = await selectedShapes(page, [67, 42, 34], Math.max(1, until - Date.now()));
+    left = shapes.find(item => item.top > 100 && item.bottom < 160 && item.right - item.left >= 18 && item.right - item.left <= 28 && item.bottom - item.top >= 18 && item.bottom - item.top <= 28);
+  } while (!left && Date.now() < until);
   assert.ok(left, "The selected left-alignment control must visibly be a compact toolbar icon");
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
   const marks = await page.evaluate(async ({ encoded, left }) => {

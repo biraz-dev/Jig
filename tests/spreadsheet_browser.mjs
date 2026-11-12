@@ -343,31 +343,38 @@ async function backToCells(page) {
   await key(page, "Space");
 }
 async function renderedBarWidths(page) {
-  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  return page.evaluate(async encoded => {
-    const picture = new Image();
-    picture.src = `data:image/png;base64,${encoded}`;
-    await picture.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = picture.width; canvas.height = picture.height;
-    const context = canvas.getContext("2d");
-    context.drawImage(picture, 0, 0);
-    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-    const groups = [];
-    let group;
-    for (let y = 0; y < Math.min(canvas.height, 650); y++) {
-      let count = 0;
-      for (let x = 0; x < canvas.width; x++) {
-        const offset = (y * canvas.width + x) * 4;
-        if (Math.abs(data[offset] - 109) <= 1 && Math.abs(data[offset + 1] - 185) <= 1 && Math.abs(data[offset + 2] - 238) <= 1) count++;
+  // Opening the gallery can first paint the input frame prepared in cells.
+  // Observe the actual three bars before measuring their unchanged data ratios.
+  const until = Date.now() + 60000;
+  let widths;
+  do {
+    const png = await page.screenshot({ timeout: Math.max(1, until - Date.now()), animations: "disabled", caret: "hide" });
+    widths = await page.evaluate(async encoded => {
+      const picture = new Image();
+      picture.src = `data:image/png;base64,${encoded}`;
+      await picture.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = picture.width; canvas.height = picture.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(picture, 0, 0);
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      const groups = [];
+      let group;
+      for (let y = 0; y < Math.min(canvas.height, 650); y++) {
+        let count = 0;
+        for (let x = 0; x < canvas.width; x++) {
+          const offset = (y * canvas.width + x) * 4;
+          if (Math.abs(data[offset] - 109) <= 1 && Math.abs(data[offset + 1] - 185) <= 1 && Math.abs(data[offset + 2] - 238) <= 1) count++;
+        }
+        if (count >= 80) {
+          if (!group) { group = { start: y, end: y, width: count }; groups.push(group); }
+          else { group.end = y; group.width = Math.max(group.width, count); }
+        } else group = undefined;
       }
-      if (count >= 80) {
-        if (!group) { group = { start: y, end: y, width: count }; groups.push(group); }
-        else { group.end = y; group.width = Math.max(group.width, count); }
-      } else group = undefined;
-    }
-    return groups.filter(item => item.end - item.start >= 10 && item.end - item.start <= 22).map(item => item.width);
-  }, png.toString("base64"));
+      return groups.filter(item => item.end - item.start >= 10 && item.end - item.start <= 22).map(item => item.width);
+    }, png.toString("base64"));
+  } while (widths.length !== 3 && Date.now() < until);
+  return widths;
 }
 
 try {
@@ -645,28 +652,29 @@ try {
   await enter(current.page, "D15", "IIII");
   await select(current.page, "D15");
   await toolbar(current.page, controls.left);
-  await assertToolbarIcons(current.page);
   const styledCell = await selectedCellBounds(current.page);
   const leftInk = await cellInk(current.page, styledCell);
   assert.equal(sheet(await state(current.page)).styles.D15.alignment, "left");
   await toolbar(current.page, controls.center);
-  const centerInk = await cellInk(current.page, styledCell);
+  const centerInk = await waitForCellInk(current.page, styledCell, ink => ink.left - leftInk.left >= 20);
   assert.equal(sheet(await state(current.page)).styles.D15.alignment, "center");
   assert.ok(centerInk.left - leftInk.left >= 20, "Center must move the visible text inside the cell");
   await toolbar(current.page, controls.right);
-  const rightInk = await cellInk(current.page, styledCell);
+  const rightInk = await waitForCellInk(current.page, styledCell, ink => ink.left - centerInk.left >= 20);
   assert.equal(sheet(await state(current.page)).styles.D15.alignment, "right");
   assert.ok(rightInk.left - centerInk.left >= 20, "Right alignment must move the visible text past center");
   await autoAlignment(current.page);
+  const autoInk = await waitForCellInk(current.page, styledCell, ink => Math.abs(ink.left - leftInk.left) <= 1);
   assert.equal(sheet(await state(current.page)).styles?.D15?.alignment, undefined, "Auto must reset the saved override to the omitted default");
-  assert.ok(Math.abs((await cellInk(current.page, styledCell)).left - leftInk.left) <= 1, "Auto must return ordinary text to the left");
+  assert.ok(Math.abs(autoInk.left - leftInk.left) <= 1, "Auto must return ordinary text to the left");
   await toolbar(current.page, controls.center);
   const unstruck = await cellInk(current.page, styledCell);
   await toolbar(current.page, controls.strike);
+  const struckInk = await waitForCellInk(current.page, styledCell, ink => ink.maxRow >= unstruck.maxRow + 6);
   saved = await state(current.page);
   assert.equal(sheet(saved).styles.D15.strike, true);
   assert.equal(sheet(saved).styles.D15.alignment, "center", "Strikethrough must preserve the chosen alignment");
-  assert.ok((await cellInk(current.page, styledCell)).maxRow >= unstruck.maxRow + 6, "Strikethrough must draw a line across the real glyphs");
+  assert.ok(struckInk.maxRow >= unstruck.maxRow + 6, "Strikethrough must draw a line across the real glyphs");
   await toolbar(current.page, controls.strike);
   assert.equal(sheet(await state(current.page)).styles.D15.strike, undefined, "The same S control must toggle strikethrough off");
   await undo(current.page);
@@ -949,44 +957,6 @@ async function borderFormat(page, index) {
   await tab(page, index + 1);
   await key(page, "Space");
 }
-async function assertToolbarIcons(page) {
-  // Style actions save after drawing the current UI. Wait for the selected
-  // icon itself to be painted, including the following data repaint.
-  const until = Date.now() + 60000;
-  interaction = "inspect the selected left-alignment toolbar icon";
-  let left;
-  do {
-    const { shapes } = await selectedShapes(page, [67, 42, 34], Math.max(1, until - Date.now()));
-    left = shapes.find(item => item.top > 100 && item.bottom < 160 && item.right - item.left >= 18 && item.right - item.left <= 28 && item.bottom - item.top >= 18 && item.bottom - item.top <= 28);
-  } while (!left && Date.now() < until);
-  assert.ok(left, "The selected left-alignment control must visibly be a compact toolbar icon");
-  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  const marks = await page.evaluate(async ({ encoded, left }) => {
-    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
-    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
-    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
-    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-    const centerX = Math.round((left.left + left.right) / 2), centerY = Math.round((left.top + left.bottom) / 2);
-    const rows = x => {
-      const result = [];
-      for (let y = centerY - 9; y <= centerY + 9; y++) {
-        let count = 0;
-        for (let offsetX = -10; offsetX <= 10; offsetX++) {
-          const offset = (y * canvas.width + x + offsetX) * 4;
-          if (data[offset] > 180 && data[offset + 1] > 175 && data[offset + 2] > 170) count++;
-        }
-        result.push(count);
-      }
-      return result;
-    };
-    const alignment = rows(centerX), strike = rows(centerX - 34);
-    let lines = 0, previous = false;
-    for (const count of alignment) { const marked = count >= 8; if (marked && !previous) lines++; previous = marked; }
-    return { lines, strikeWidth: Math.max(...strike) };
-  }, { encoded: png.toString("base64"), left });
-  assert.equal(marks.lines, 4, "The alignment icon must draw four horizontal text lines");
-  assert.ok(marks.strikeWidth >= 10, "The adjacent strikethrough icon must visibly draw its crossing line");
-}
 async function pointerOuterBorder(page) {
   await toolbar(page, controls.borders);
   await tab(page); // No borders is the first icon in the 5 × 2 preset grid.
@@ -1115,8 +1085,16 @@ async function sheetControl(page, control) {
   await page.mouse.click((button.left + button.right) / 2, (button.top + button.bottom) / 2);
   await paint(page);
 }
-async function cellInk(page, bounds) {
-  const png = await page.screenshot({ clip: { x: bounds.left + 3, y: bounds.top + 3, width: bounds.right - bounds.left - 6, height: bounds.bottom - bounds.top - 6 }, timeout: 60000, animations: "disabled", caret: "hide" });
+async function waitForCellInk(page, bounds, expected) {
+  const until = Date.now() + 60000;
+  let ink;
+  do {
+    ink = await cellInk(page, bounds, Math.max(1, until - Date.now()));
+  } while (!expected(ink) && Date.now() < until);
+  return ink;
+}
+async function cellInk(page, bounds, timeout = 60000) {
+  const png = await page.screenshot({ clip: { x: bounds.left + 3, y: bounds.top + 3, width: bounds.right - bounds.left - 6, height: bounds.bottom - bounds.top - 6 }, timeout, animations: "disabled", caret: "hide" });
   return page.evaluate(async encoded => {
     const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
     const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;

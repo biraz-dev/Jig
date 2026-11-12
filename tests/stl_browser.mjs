@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
+import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
@@ -44,9 +45,7 @@ const timer = setTimeout(() => {
 }, 360000);
 function progress(message) { phase = message; console.log(`STL browser phase: ${message}`); }
 async function paint(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  // Browser RAF can precede WASM input consumption under software-rendered 3D.
-  await page.waitForTimeout(250);
+  await waitForAppPaint(page);
 }
 async function key(page, value) {
   await page.keyboard.press(value);
@@ -112,6 +111,7 @@ const browser = await chromium.launch({ headless: true, args: ["--use-angle=swif
 async function newPage(label, viewport = { width: 1440, height: 1000 }, seed = true, deviceScaleFactor = 1) {
   const context = await browser.newContext({ viewport, deviceScaleFactor, acceptDownloads: true, hasTouch: viewport.width < 500, timezoneId: "Etc/UTC" });
   contexts.push(context);
+  await installFrameFence(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   if (seed) await context.addInitScript(({ raw, storageKey, origin }) => {
     if (location.origin === origin && sessionStorage.getItem("jig-stl-seeded") !== "yes") {
@@ -445,11 +445,15 @@ try {
   assert.match(beforeCompensationReport, /Mode: Estimate/);
   assert.deepEqual(measurements(beforeCompensationReport), estimated, "Undo must restore the former estimate");
   await control(current.page, 24); // Reapply Compensate for the local export.
+  const finalCompensatedReport = await copyReport(current.page);
+  assert.match(finalCompensatedReport, /Source units: mm\b/);
+  assert.match(finalCompensatedReport, /Export units: mm\b/);
+  assert.match(finalCompensatedReport, /Mode: Compensate/);
+  assert.deepEqual(measurements(finalCompensatedReport), compensated, "The final visible report must confirm the compensated geometry before export");
   assert.equal(await saved(current.page), fixtureRaw, "Mesh transforms and camera changes must not save model data");
 
   progress("export compensated geometry using the selected source units");
-  await maximize(current.page);
-  await tab(current.page, 4); // Open STL -> Sample, Clear, Copy, Export.
+  await tab(current.page, 1); // The freshly checked Copy report is followed by Export STL.
   const compensatedExportEvent = current.page.waitForEvent("download");
   await key(current.page, "Space");
   const compensatedExport = await compensatedExportEvent;

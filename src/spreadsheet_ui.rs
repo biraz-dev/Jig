@@ -1,6 +1,7 @@
 //! Spreadsheet presentation only. Workbook values and formulas live in the core.
 use crate::web_theme::{ACCENT, BG, ERROR, GRID as RULE, MUTED, SELECTED, SURFACE as HEADER, TEXT};
 use chrono::{Local, NaiveDate};
+use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
     charts::{ChartKind, ChartSource},
@@ -15,6 +16,20 @@ const COL_WIDTH: f32 = 112.0;
 const ROW_HEIGHT: f32 = 27.0;
 const ROW_HEAD: f32 = 44.0;
 const COL_HEAD: f32 = 25.0;
+const TOOL_ICON_SIZE: f32 = 26.0;
+const BORDER_ICON_SIZE: f32 = 28.0;
+
+#[derive(Clone, Copy)]
+enum SheetIcon {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    Alignment(CellAlignment),
+    TextColor([u8; 3]),
+    FillColor([u8; 3]),
+    Border(BorderPreset),
+}
 
 #[derive(Clone, Debug)]
 pub enum SheetAction {
@@ -1078,30 +1093,57 @@ impl SheetPanel {
     }
 
     fn border_choices(&mut self, ui: &mut Ui, actions: &mut Vec<SheetAction>) {
-        for (preset, label) in [
-            (BorderPreset::None, "No borders"),
-            (BorderPreset::All, "All borders"),
-            (BorderPreset::Outer, "Outside border"),
-            (BorderPreset::Inner, "Inner borders"),
-            (BorderPreset::Horizontal, "Horizontal borders"),
-            (BorderPreset::Vertical, "Vertical borders"),
-            (BorderPreset::Top, "Top border"),
-            (BorderPreset::Bottom, "Bottom border"),
-            (BorderPreset::Left, "Left border"),
-            (BorderPreset::Right, "Right border"),
-        ] {
-            if ui.button(label).clicked() {
-                self.queue(
-                    actions,
-                    SheetAction::SetBorders {
-                        sheet: self.active,
-                        range: self.selection(),
-                        preset,
-                    },
-                );
-                ui.close_menu();
-            }
-        }
+        ui.set_min_width(BORDER_ICON_SIZE * 5.0 + 6.0 * 4.0);
+        ui.label("Borders");
+        let mut caption = "Choose borders";
+        egui::Grid::new("spreadsheet-border-presets")
+            .num_columns(5)
+            .min_col_width(BORDER_ICON_SIZE)
+            .min_row_height(BORDER_ICON_SIZE)
+            .spacing(egui::vec2(6.0, 6.0))
+            .show(ui, |ui| {
+                for (index, (preset, label)) in [
+                    (BorderPreset::None, "No borders"),
+                    (BorderPreset::All, "All borders"),
+                    (BorderPreset::Outer, "Outside border"),
+                    (BorderPreset::Inner, "Inner borders"),
+                    (BorderPreset::Horizontal, "Horizontal borders"),
+                    (BorderPreset::Vertical, "Vertical borders"),
+                    (BorderPreset::Top, "Top border"),
+                    (BorderPreset::Bottom, "Bottom border"),
+                    (BorderPreset::Left, "Left border"),
+                    (BorderPreset::Right, "Right border"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let response = sheet_icon_button(
+                        ui,
+                        SheetIcon::Border(preset),
+                        label,
+                        false,
+                        BORDER_ICON_SIZE,
+                    );
+                    if response.hovered() || response.has_focus() {
+                        caption = label;
+                    }
+                    if response.clicked() {
+                        self.queue(
+                            actions,
+                            SheetAction::SetBorders {
+                                sheet: self.active,
+                                range: self.selection(),
+                                preset,
+                            },
+                        );
+                        ui.close_menu();
+                    }
+                    if index % 5 == 4 {
+                        ui.end_row();
+                    }
+                }
+            });
+        ui.label(RichText::new(caption).color(MUTED));
     }
 
     fn color_menu(
@@ -1113,88 +1155,98 @@ impl SheetPanel {
         actions: &mut Vec<SheetAction>,
     ) {
         ui.menu_button(label, |ui| {
-            let range = self.selection();
-            let key = (self.active, range.start, range.end, fill);
-            if self.color_menu_key != Some(key) {
-                let color = if fill {
-                    style.fill_color.unwrap_or(jig::palette::BACKGROUND)
-                } else {
-                    style.text_color.unwrap_or(jig::palette::TEXT)
-                };
-                if fill {
-                    self.fill_color_draft = color;
-                } else {
-                    self.text_color_draft = color;
-                }
-                self.color_menu_key = Some(key);
-            }
-            ui.horizontal_wrapped(|ui| {
-                for (color, name) in [
-                    ([246, 218, 174], "Cream"),
-                    ([234, 133, 173], "Rose"),
-                    ([218, 185, 126], "Amber"),
-                    ([148, 188, 160], "Sage"),
-                    ([109, 185, 238], "Blue"),
-                    ([179, 158, 207], "Lilac"),
-                    ([245, 245, 245], "White"),
-                    ([28, 28, 28], "Black"),
-                ] {
-                    let response =
-                        ui.add_sized([22.0, 22.0], egui::Button::new(" ").fill(rgb(color)));
-                    response.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::Button,
-                            ui.is_enabled(),
-                            format!("{label}: {name}"),
-                        )
-                    });
-                    if response.on_hover_text(name).clicked() {
-                        let mut patch = StylePatch::default();
-                        if fill {
-                            patch.fill_color = Some(Some(color));
-                        } else {
-                            patch.text_color = Some(Some(color));
-                        }
-                        self.patch(actions, patch);
-                        ui.close_menu();
-                    }
-                }
-            });
-            let draft = if fill {
-                &mut self.fill_color_draft
+            self.color_choices(ui, label, fill, style, actions)
+        });
+    }
+
+    fn color_choices(
+        &mut self,
+        ui: &mut Ui,
+        label: &str,
+        fill: bool,
+        style: &CellStyle,
+        actions: &mut Vec<SheetAction>,
+    ) {
+        let range = self.selection();
+        let key = (self.active, range.start, range.end, fill);
+        if self.color_menu_key != Some(key) {
+            let color = if fill {
+                style.fill_color.unwrap_or(jig::palette::BACKGROUND)
             } else {
-                &mut self.text_color_draft
+                style.text_color.unwrap_or(jig::palette::TEXT)
             };
-            ui.horizontal(|ui| {
-                ui.label("Custom");
-                ui.color_edit_button_srgb(draft);
-            });
-            if ui.button("Apply custom color").clicked() {
-                let color = if fill {
-                    self.fill_color_draft
-                } else {
-                    self.text_color_draft
-                };
-                let mut patch = StylePatch::default();
-                if fill {
-                    patch.fill_color = Some(Some(color));
-                } else {
-                    patch.text_color = Some(Some(color));
-                }
-                self.patch(actions, patch);
-                ui.close_menu();
+            if fill {
+                self.fill_color_draft = color;
+            } else {
+                self.text_color_draft = color;
             }
-            if ui.button("Default").clicked() {
-                let mut patch = StylePatch::default();
-                if fill {
-                    patch.fill_color = Some(None);
-                } else {
-                    patch.text_color = Some(None);
+            self.color_menu_key = Some(key);
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (color, name) in [
+                ([246, 218, 174], "Cream"),
+                ([234, 133, 173], "Rose"),
+                ([218, 185, 126], "Amber"),
+                ([148, 188, 160], "Sage"),
+                ([109, 185, 238], "Blue"),
+                ([179, 158, 207], "Lilac"),
+                ([245, 245, 245], "White"),
+                ([28, 28, 28], "Black"),
+            ] {
+                let response = ui.add_sized([22.0, 22.0], egui::Button::new(" ").fill(rgb(color)));
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        format!("{label}: {name}"),
+                    )
+                });
+                if response.on_hover_text(name).clicked() {
+                    let mut patch = StylePatch::default();
+                    if fill {
+                        patch.fill_color = Some(Some(color));
+                    } else {
+                        patch.text_color = Some(Some(color));
+                    }
+                    self.patch(actions, patch);
+                    ui.close_menu();
                 }
-                self.patch(actions, patch);
-                ui.close_menu();
             }
         });
+        let draft = if fill {
+            &mut self.fill_color_draft
+        } else {
+            &mut self.text_color_draft
+        };
+        ui.horizontal(|ui| {
+            ui.label("Custom");
+            ui.color_edit_button_srgb(draft);
+        });
+        if ui.button("Apply custom color").clicked() {
+            let color = if fill {
+                self.fill_color_draft
+            } else {
+                self.text_color_draft
+            };
+            let mut patch = StylePatch::default();
+            if fill {
+                patch.fill_color = Some(Some(color));
+            } else {
+                patch.text_color = Some(Some(color));
+            }
+            self.patch(actions, patch);
+            ui.close_menu();
+        }
+        if ui.button("Default").clicked() {
+            let mut patch = StylePatch::default();
+            if fill {
+                patch.fill_color = Some(None);
+            } else {
+                patch.text_color = Some(None);
+            }
+            self.patch(actions, patch);
+            ui.close_menu();
+        }
     }
 
     fn format_toolbar(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
@@ -1206,17 +1258,13 @@ impl SheetPanel {
             ui.menu_button(style.font_size.to_string(), |ui| {
                 self.size_choices(ui, &style, actions)
             });
-            for (label, name, selected, property) in [
-                ("B", "Bold", style.bold, 0),
-                ("I", "Italic", style.italic, 1),
-                ("U", "Underline", style.underline, 2),
-                ("S", "Strikethrough", style.strike, 3),
+            for (icon, name, selected, property) in [
+                (SheetIcon::Bold, "Bold", style.bold, 0),
+                (SheetIcon::Italic, "Italic", style.italic, 1),
+                (SheetIcon::Underline, "Underline", style.underline, 2),
+                (SheetIcon::Strike, "Strikethrough", style.strike, 3),
             ] {
-                let response = ui.selectable_label(selected, label);
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
-                });
-                if response.on_hover_text(name).clicked() {
+                if sheet_icon_button(ui, icon, name, selected, TOOL_ICON_SIZE).clicked() {
                     let mut patch = StylePatch::default();
                     match property {
                         0 => patch.bold = Some(!selected),
@@ -1227,16 +1275,20 @@ impl SheetPanel {
                     self.patch(actions, patch);
                 }
             }
-            for (label, name, alignment) in [
-                ("L", "Align left", CellAlignment::Left),
-                ("C", "Align center", CellAlignment::Center),
-                ("R", "Align right", CellAlignment::Right),
+            for (name, alignment) in [
+                ("Align left", CellAlignment::Left),
+                ("Align center", CellAlignment::Center),
+                ("Align right", CellAlignment::Right),
             ] {
-                let response = ui.selectable_label(style.alignment == alignment, label);
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
-                });
-                if response.on_hover_text(name).clicked() {
+                if sheet_icon_button(
+                    ui,
+                    SheetIcon::Alignment(alignment),
+                    name,
+                    style.alignment == alignment,
+                    TOOL_ICON_SIZE,
+                )
+                .clicked()
+                {
                     self.patch(
                         actions,
                         StylePatch {
@@ -1246,9 +1298,21 @@ impl SheetPanel {
                     );
                 }
             }
-            self.color_menu(ui, "Text", false, &style, actions);
-            self.color_menu(ui, "Fill", true, &style, actions);
-            ui.menu_button("Borders", |ui| self.border_choices(ui, actions));
+            sheet_icon_menu(
+                ui,
+                SheetIcon::TextColor(style.text_color.unwrap_or(jig::palette::TEXT)),
+                "Text color",
+                |ui| self.color_choices(ui, "Text color", false, &style, actions),
+            );
+            sheet_icon_menu(
+                ui,
+                SheetIcon::FillColor(style.fill_color.unwrap_or(jig::palette::BACKGROUND)),
+                "Fill color",
+                |ui| self.color_choices(ui, "Fill color", true, &style, actions),
+            );
+            sheet_icon_menu(ui, SheetIcon::Border(BorderPreset::All), "Borders", |ui| {
+                self.border_choices(ui, actions)
+            });
             ui.menu_button(format_label(&style.number_format), |ui| {
                 self.number_choices(ui, &style, actions);
             });
@@ -2295,6 +2359,215 @@ fn consume_shift_key(ui: &Ui, key: egui::Key) -> Option<bool> {
             )
             .then_some(shift)
     })
+}
+
+fn sheet_icon_button(
+    ui: &mut Ui,
+    icon: SheetIcon,
+    label: &str,
+    selected: bool,
+    size: f32,
+) -> egui::Response {
+    let response = ui.add(
+        egui::Button::new("")
+            .min_size(egui::vec2(size, size))
+            .selected(selected),
+    );
+    sheet_icon_response(ui, response, icon, label, selected)
+}
+
+fn sheet_icon_menu(ui: &mut Ui, icon: SheetIcon, label: &str, add_contents: impl FnOnce(&mut Ui)) {
+    let menu = egui::menu::menu_custom_button(
+        ui,
+        egui::Button::new("").min_size(egui::Vec2::splat(TOOL_ICON_SIZE)),
+        add_contents,
+    );
+    let open = menu.inner.is_some();
+    if open {
+        ui.painter()
+            .rect_filled(menu.response.rect.shrink(1.0), 2.0, SELECTED);
+    }
+    sheet_icon_response(ui, menu.response, icon, label, open);
+}
+
+fn sheet_icon_response(
+    ui: &Ui,
+    response: egui::Response,
+    icon: SheetIcon,
+    label: &str,
+    selected: bool,
+) -> egui::Response {
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
+    });
+    let color = ui.style().interact(&response).fg_stroke.color;
+    paint_sheet_icon(ui.painter(), response.rect, icon, color);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.0),
+            2.0,
+            Stroke::new(1.0_f32, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.on_hover_text(label)
+}
+
+fn paint_sheet_icon(painter: &egui::Painter, rect: egui::Rect, icon: SheetIcon, color: Color32) {
+    let center = rect.center();
+    let stroke = Stroke::new(1.4_f32, color);
+    let line = |start: egui::Pos2, end: egui::Pos2, stroke: Stroke| {
+        painter.line_segment(
+            [
+                start.round_to_pixel_center(painter.pixels_per_point()),
+                end.round_to_pixel_center(painter.pixels_per_point()),
+            ],
+            stroke,
+        );
+    };
+    match icon {
+        SheetIcon::Bold
+        | SheetIcon::Italic
+        | SheetIcon::Underline
+        | SheetIcon::Strike
+        | SheetIcon::TextColor(_) => {
+            let text = match icon {
+                SheetIcon::Bold => "B",
+                SheetIcon::Italic => "I",
+                SheetIcon::Underline => "U",
+                SheetIcon::Strike => "S",
+                _ => "A",
+            };
+            let mut job = egui::text::LayoutJob::simple_singleline(
+                text.into(),
+                FontId::new(16.0, egui::FontFamily::Name("jig-sans".into())),
+                color,
+            );
+            if let Some(section) = job.sections.first_mut() {
+                section.format.italics = matches!(icon, SheetIcon::Italic);
+            }
+            let galley = painter.fonts(|fonts| fonts.layout_job(job));
+            let offset = if matches!(icon, SheetIcon::TextColor(_)) {
+                egui::vec2(0.0, -2.0)
+            } else {
+                egui::Vec2::ZERO
+            };
+            let position = center - galley.size() * 0.5 + offset;
+            painter.galley(position, galley.clone(), color);
+            if matches!(icon, SheetIcon::Bold) {
+                painter.galley(position + egui::vec2(0.6, 0.0), galley, color);
+            }
+            if matches!(icon, SheetIcon::Underline | SheetIcon::Strike) {
+                let y = center.y
+                    + if matches!(icon, SheetIcon::Underline) {
+                        7.0
+                    } else {
+                        0.0
+                    };
+                line(
+                    egui::pos2(center.x - 5.5, y),
+                    egui::pos2(center.x + 5.5, y),
+                    Stroke::new(1.2_f32, color),
+                );
+            }
+            if let SheetIcon::TextColor(swatch) = icon {
+                line(
+                    center + egui::vec2(-8.0, 8.0),
+                    center + egui::vec2(8.0, 8.0),
+                    Stroke::new(3.0_f32, rgb(swatch)),
+                );
+            }
+        }
+        SheetIcon::Alignment(alignment) => {
+            for (row, width) in [16.0, 10.0, 16.0, 10.0].into_iter().enumerate() {
+                let left = match alignment {
+                    CellAlignment::Right => center.x + 8.0 - width,
+                    CellAlignment::Center => center.x - width * 0.5,
+                    CellAlignment::Auto | CellAlignment::Left => center.x - 8.0,
+                };
+                let y = center.y - 6.0 + row as f32 * 4.0;
+                line(egui::pos2(left, y), egui::pos2(left + width, y), stroke);
+            }
+        }
+        SheetIcon::FillColor(swatch) => {
+            let bucket = [(-7.0, -1.0), (-1.0, -7.0), (5.0, -1.0), (-1.0, 5.0)]
+                .map(|(x, y)| center + egui::vec2(x, y));
+            painter.add(egui::Shape::closed_line(bucket.to_vec(), stroke));
+            line(bucket[0], bucket[2], Stroke::new(1.0_f32, color));
+            painter.add(egui::Shape::line(
+                [(-4.0, -4.0), (-5.5, -6.0), (-4.0, -8.0), (-2.0, -8.0)]
+                    .map(|(x, y)| center + egui::vec2(x, y))
+                    .to_vec(),
+                Stroke::new(1.1_f32, color),
+            ));
+            painter.add(egui::Shape::convex_polygon(
+                [(7.5, 0.0), (5.5, 3.5), (7.5, 5.0), (9.5, 3.5)]
+                    .map(|(x, y)| center + egui::vec2(x, y))
+                    .to_vec(),
+                color,
+                Stroke::NONE,
+            ));
+            line(
+                center + egui::vec2(-8.0, 8.0),
+                center + egui::vec2(8.0, 8.0),
+                Stroke::new(3.0_f32, rgb(swatch)),
+            );
+        }
+        SheetIcon::Border(preset) => {
+            let guide = Stroke::new(0.8_f32, MUTED.gamma_multiply(0.5));
+            let start = center - egui::vec2(8.0, 8.0);
+            for index in 0..3 {
+                let offset = index as f32 * 8.0;
+                for dash in 0..6 {
+                    let along = dash as f32 * 3.0;
+                    let end = (along + 1.4).min(16.0);
+                    line(
+                        start + egui::vec2(along, offset),
+                        start + egui::vec2(end, offset),
+                        guide,
+                    );
+                    line(
+                        start + egui::vec2(offset, along),
+                        start + egui::vec2(offset, end),
+                        guide,
+                    );
+                }
+            }
+            for index in 0..3 {
+                let offset = index as f32 * 8.0;
+                let horizontal = match preset {
+                    BorderPreset::All | BorderPreset::Horizontal => true,
+                    BorderPreset::Outer => index != 1,
+                    BorderPreset::Inner => index == 1,
+                    BorderPreset::Top => index == 0,
+                    BorderPreset::Bottom => index == 2,
+                    _ => false,
+                };
+                let vertical = match preset {
+                    BorderPreset::All | BorderPreset::Vertical => true,
+                    BorderPreset::Outer => index != 1,
+                    BorderPreset::Inner => index == 1,
+                    BorderPreset::Left => index == 0,
+                    BorderPreset::Right => index == 2,
+                    _ => false,
+                };
+                if horizontal {
+                    line(
+                        start + egui::vec2(0.0, offset),
+                        start + egui::vec2(16.0, offset),
+                        stroke,
+                    );
+                }
+                if vertical {
+                    line(
+                        start + egui::vec2(offset, 0.0),
+                        start + egui::vec2(offset, 16.0),
+                        stroke,
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn font_label(font: CellFont) -> &'static str {

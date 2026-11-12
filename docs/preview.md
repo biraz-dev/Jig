@@ -19,6 +19,15 @@ context menus, also available by touch-hold or Shift-F10 on selected headers.
 Sheet add/delete controls sit alongside the tabs; double-click a tab to rename.
 USD is the only currency offered for new styles. Existing imported currency
 metadata is preserved. Standard ODS and PDF use the same cell styles as the grid.
+The formatting toolbar uses drawn alignment icons and a compact border preview
+grid with solid affected edges and dashed guides. Each control keeps a named
+tooltip, focus feedback and keyboard activation; no icon font is required.
+
+Spreadsheet `CONVERT(value,"cm","in")` uses the same Rust length scales as the
+Workbench. Square and cubic units support area and volume calculations, with
+cell references and full calculation precision. See the
+[conversion examples](../README.md#conversion-formulas) for measurements and
+cost formulas. Invalid units and mixed dimensions remain visible errors.
 
 The Workbench dashboard uses the same Rust calculator, length,
 task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows

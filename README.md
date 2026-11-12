@@ -25,7 +25,7 @@ Use the address field to jump to `B12` or select `A1:D20`.
   `=(A1+B2)*1.15`, `=A1^2`, `=IF(B2>100,"Review","OK")`.
 - Relative and anchored references (`A1`, `$A$1`, `A$1`, `$A1`), ranges and named
   sheet references such as `='Clay tests'!B2`.
-- `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `ABS`, `ROUND`, `DATE`, `TODAY`,
+- `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `ABS`, `ROUND`, `CONVERT`, `DATE`, `TODAY`,
   `DAY`, `MONTH`, `YEAR`, `TRUE` and `FALSE`. Dates can be subtracted for durations
   or offset by a number of days. `TODAY()` follows the local calendar day.
 - Mono, Sans and Serif fonts; sizes 9–32; bold, italic, underline, strikeout,
@@ -49,6 +49,10 @@ Use the address field to jump to `B12` or select `A1:D20`.
   include the corresponding outside edges; individual edges add to existing
   borders. Merged cells retain a single perimeter. Alignment, strike and borders
   survive JSON and standard ODS round trips and appear in PDF exports.
+- Alignment uses familiar line icons. The border icon opens a compact grid of
+  previews: solid lines show the affected edges and dashed guides show the
+  remaining grid. Controls have named tooltips and keyboard focus feedback;
+  Tab and Space/Enter operate the same controls from the keyboard.
 - Copy and paste rectangular cells. Copies made inside Jig translate relative
   formula references when pasted elsewhere; pasted tab-separated text fills a
   block. Clear removes contents while retaining formatting. **Undo** covers sheet
@@ -60,6 +64,30 @@ has up to **16 sheets**, **20,000 populated/styled cells** and **1 MiB of cell i
 Formula work is bounded. Errors such as `#REF!`, `#DIV/0!`, circular references and
 unsupported functions remain visible. A number or date too wide for its cell
 shows `####`; select it to inspect the full value and saved input.
+
+### Conversion formulas
+
+Put a numeric centimeter measurement in `A1`, then use
+`=CONVERT(A1,"cm","in")` in another cell for inches. Changing `A1` recalculates
+the conversion and any formulas using it. Unit names can also come from cells,
+as in `=CONVERT(A1,B1,C1)` when `B1` contains `cm` and `C1` contains `in`.
+
+Supported lengths are `mm`, `cm`, `m`, `in` and `ft`, including their spelled-out
+aliases. Add `2` for area or `3` for volume (`cm2`, `in2`, `cm3`, `in3`). Units
+must describe the same dimension. This converts physical measurements; costs
+come from ordinary arithmetic using your own rate.
+
+| Calculation | Formula |
+| --- | --- |
+| Centimeters to inches | `=CONVERT(A1,"cm","in")` |
+| Area from two centimeter dimensions, in square inches | `=CONVERT(A1*B1,"cm2","in2")` |
+| Volume from three centimeter dimensions, in cubic inches | `=CONVERT(A1*B1*C1,"cm3","in3")` |
+| Cost at a per-inch rate stored in `D1` | `=CONVERT(A1,"cm","in")*D1` |
+
+Conversions retain calculation precision; the usual display precision controls
+what is shown. Unknown units, incompatible dimensions and invalid arguments
+produce `#VALUE!`; an overflowing result produces `#NUM!`. ODS and JSON retain
+the formula and its references.
 
 ### Documents, CSV and printing
 

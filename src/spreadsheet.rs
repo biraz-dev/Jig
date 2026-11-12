@@ -1691,6 +1691,28 @@ impl Recalculator<'_> {
     }
 
     fn function(&mut self, name: &str, args: &[Expr], sheet: u64, depth: usize) -> CellValue {
+        if name == "CONVERT" {
+            if args.len() != 3 {
+                return CellValue::Error(CellError::Value);
+            }
+            let value = match numeric(self.expr(&args[0], sheet, depth + 1).scalar()) {
+                Ok(value) => value,
+                Err(error) => return CellValue::Error(error),
+            };
+            let mut units = Vec::with_capacity(2);
+            for arg in &args[1..] {
+                match self.expr(arg, sheet, depth + 1).scalar() {
+                    CellValue::Text(unit) => units.push(unit),
+                    CellValue::Error(error) => return CellValue::Error(error),
+                    _ => return CellValue::Error(CellError::Value),
+                }
+            }
+            return match crate::units::convert_value(value, &units[0], &units[1]) {
+                Ok(value) => CellValue::Number(value),
+                Err(crate::units::ConversionError::NonFinite) => CellValue::Error(CellError::Num),
+                Err(_) => CellValue::Error(CellError::Value),
+            };
+        }
         if name == "TRUE" || name == "FALSE" {
             return if args.is_empty() {
                 CellValue::Bool(name == "TRUE")

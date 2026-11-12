@@ -94,6 +94,191 @@ fn arithmetic_recalculates_references_ranges_and_percentages() {
 }
 
 #[test]
+fn convert_recalculates_measurements_unit_references_and_material_costs() {
+    let mut book = Workbook::default();
+    for (cell, raw) in [
+        ("A1", "25.4"),
+        ("A2", "12.7"),
+        ("A3", "2.54"),
+        ("B1", "=CONVERT(A1,\"cm\",\"in\")"),
+        ("B2", "=CONVERT(A2,\"cm\",\"in\")"),
+        ("B3", "=CONVERT(A3,\"cm\",\"in\")"),
+        ("C1", "=B1*B2"),
+        ("C2", "=B1*B2*B3"),
+        ("C3", "=C2*0.12"),
+        ("D1", "=CONVERT(A1*A2,\"cm2\",\"in2\")"),
+        ("D2", "=CONVERT(A1*A2*A3,\"cm3\",\"in3\")"),
+        ("E1", "cm"),
+        ("E2", "in"),
+        ("F1", "=convert($A$1,E1,E2)"),
+    ] {
+        put(&mut book, 1, cell, raw);
+    }
+    for (cell, expected) in [
+        ("B1", 10.0),
+        ("B2", 5.0),
+        ("B3", 1.0),
+        ("C1", 50.0),
+        ("C2", 50.0),
+        ("C3", 6.0),
+        ("D1", 50.0),
+        ("D2", 50.0),
+        ("F1", 10.0),
+    ] {
+        assert!((number(&book, 1, cell) - expected).abs() < 1e-12, "{cell}");
+    }
+    put(&mut book, 1, "A1", "50.8");
+    assert_eq!(number(&book, 1, "B1"), 20.0);
+    assert_eq!(number(&book, 1, "C3"), 12.0);
+    assert_eq!(number(&book, 1, "F1"), 20.0);
+    put(&mut book, 1, "E2", "ft");
+    assert!((number(&book, 1, "F1") - 20.0 / 12.0).abs() < 1e-12);
+    put(&mut book, 1, "E1", "mm");
+    assert!((number(&book, 1, "F1") - 2.0 / 12.0).abs() < 1e-12);
+}
+
+#[test]
+fn convert_supports_length_aliases_and_matching_area_and_volume_dimensions() {
+    let mut book = Workbook::default();
+    for (source, target, value, expected) in [
+        ("mm", "cm", 10.0, 1.0),
+        ("cm", "m", 100.0, 1.0),
+        ("m", "mm", 1.0, 1000.0),
+        ("ft", "in", 1.0, 12.0),
+        ("  CENTIMETRES  ", " Inches ", 2.54, 1.0),
+        ("foot", "millimeters", 1.0, 304.8),
+        ("feet", "meters", 1.0, 0.3048),
+        ("cm2", "m2", 10000.0, 1.0),
+        ("mm^2", "cm²", 100.0, 1.0),
+        ("in²", "ft^2", 144.0, 1.0),
+        ("square centimeters", "sq in", 6.4516, 1.0),
+        ("cm3", "m3", 1000000.0, 1.0),
+        ("mm^3", "cm³", 1000.0, 1.0),
+        ("in³", "ft^3", 1728.0, 1.0),
+        ("cubic metres", "cu ft", 0.028316846592, 1.0),
+        ("cm", "in", -2.54, -1.0),
+        ("cm3", "in3", 0.0, 0.0),
+    ] {
+        put(
+            &mut book,
+            1,
+            "A1",
+            &format!("=CONVERT({value},\"{source}\",\"{target}\")"),
+        );
+        assert!(
+            (number(&book, 1, "A1") - expected).abs() < 1e-12,
+            "{value} {source} to {target}"
+        );
+    }
+}
+
+#[test]
+fn convert_reports_invalid_arguments_units_dimensions_and_numeric_overflow() {
+    let mut book = Workbook::default();
+    put(&mut book, 1, "B1", "NaN");
+    put(&mut book, 1, "B2", "=1/0");
+    for formula in [
+        "=CONVERT()",
+        "=CONVERT(1,\"cm\")",
+        "=CONVERT(1,\"cm\",\"in\",2)",
+        "=CONVERT(\"2.54\",\"cm\",\"in\")",
+        "=CONVERT(A1:A1,\"cm\",\"in\")",
+        "=CONVERT(1,B1:B2,\"in\")",
+        "=CONVERT(1,\"cm\",B1:B2)",
+        "=CONVERT(1,2,\"in\")",
+        "=CONVERT(1,\"cm\",TRUE)",
+        "=CONVERT(1,\"\",\"in\")",
+        "=CONVERT(1,\"yards\",\"in\")",
+        "=CONVERT(1,\"cm\",\"seconds\")",
+        "=CONVERT(1,\"unknown\",\"unknown\")",
+        "=CONVERT(1,\"cm\",\"in2\")",
+        "=CONVERT(1,\"cm2\",\"in3\")",
+        "=CONVERT(1,\"cm4\",\"in4\")",
+        "=CONVERT(1,\"kg\",\"lb\")",
+        "=CONVERT(1,\"mL\",\"ML\")",
+    ] {
+        put(&mut book, 1, "A1", formula);
+        assert_eq!(
+            book.recalculate().value(1, addr("A1")),
+            CellValue::Error(CellError::Value),
+            "{formula}"
+        );
+    }
+    for (formula, expected) in [
+        ("=CONVERT(1e308,\"m\",\"mm\")", CellError::Num),
+        ("=CONVERT(1e309,\"m\",\"in\")", CellError::Num),
+        ("=CONVERT(B1,\"cm\",\"in\")", CellError::Num),
+        ("=CONVERT(B2,\"cm\",\"in\")", CellError::DivZero),
+        ("=CONVERT(1,B2,\"in\")", CellError::DivZero),
+        ("=CONVERT(1,\"cm\",B2)", CellError::DivZero),
+        ("=CONVERT(A1001,\"cm\",\"in\")", CellError::Ref),
+    ] {
+        put(&mut book, 1, "A1", formula);
+        assert_eq!(
+            book.recalculate().value(1, addr("A1")),
+            CellValue::Error(expected),
+            "{formula}"
+        );
+    }
+    // Numeric scalar arguments follow the same coercion rules as arithmetic.
+    put(&mut book, 1, "A1", "=CONVERT(TRUE,\"in\",\"mm\")");
+    assert_eq!(number(&book, 1, "A1"), 25.4);
+    put(&mut book, 1, "A1", "=CONVERT(Z999,\"cm\",\"in\")");
+    assert_eq!(number(&book, 1, "A1"), 0.0);
+}
+
+#[test]
+fn convert_preserves_precision_and_finite_extreme_values() {
+    let mut book = Workbook::default();
+    for (cell, raw) in [
+        ("A1", "=CONVERT(1,\"cm\",\"in\")"),
+        ("A2", "=A1*2.54"),
+        ("A3", "=CONVERT(1e308,\"ft3\",\"ft³\")"),
+        ("A4", "=CONVERT(1e-300,\"mm3\",\"m3\")"),
+    ] {
+        put(&mut book, 1, cell, raw);
+    }
+    let value = number(&book, 1, "A1");
+    assert_eq!(value, 0.01_f64 / 0.0254);
+    assert_ne!(value, 0.39);
+    assert_eq!(book.recalculate().value(1, addr("A1")).display(2), "0.39");
+    assert!((number(&book, 1, "A2") - 1.0).abs() < 1e-15);
+    assert_eq!(number(&book, 1, "A3"), 1e308);
+    assert!(number(&book, 1, "A4") > 0.0);
+    let rows = parse_delimited(&book.export_csv(1).unwrap(), ',').unwrap();
+    assert_eq!(rows[0][0], value.to_string());
+}
+
+#[test]
+fn convert_formulas_survive_json_and_ods_reload_and_recalculate() {
+    let mut book = Workbook::default();
+    put(&mut book, 1, "A1", "2.54");
+    let formula = "=CONVERT(A1,\"cm\",\"in\")";
+    put(&mut book, 1, "B1", formula);
+    put(&mut book, 1, "C1", "=B1*0.75");
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let json = serde_json::to_string(&state).unwrap();
+    let restored_json = State::from_json(&json).unwrap();
+    let ods = jig::documents::save_ods(&state).unwrap();
+    let restored_ods = jig::documents::read_ods(&ods)
+        .unwrap()
+        .embedded_state
+        .unwrap();
+    for restored in [restored_json, restored_ods] {
+        let mut book = restored.workbook.unwrap();
+        assert_eq!(book.raw(1, addr("B1")), formula);
+        assert_eq!(number(&book, 1, "B1"), 1.0);
+        put(&mut book, 1, "A1", "5.08");
+        assert_eq!(number(&book, 1, "B1"), 2.0);
+        assert_eq!(number(&book, 1, "C1"), 1.5);
+        assert_eq!(book.raw(1, addr("B1")), formula);
+    }
+}
+
+#[test]
 fn literals_and_numeric_display_preserve_internal_precision() {
     let mut book = Workbook::default();
     put(&mut book, 1, "A1", "'00104");

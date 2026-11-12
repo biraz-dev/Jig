@@ -192,6 +192,59 @@ fn ods_standard_styles_preserve_all_alignments_strike_and_foreign_currency_witho
 }
 
 #[test]
+fn ods_standard_convert_formulas_recalculate_without_private_metadata() {
+    let mut book = Workbook::default();
+    for (address, raw) in [
+        ("A1", "2.54"),
+        ("A2", "10000"),
+        ("A3", "1000000"),
+        ("B1", "=CONVERT(A1,\"cm\",\"in\")"),
+        ("B2", "=CONVERT(A2,\"cm2\",\"m2\")"),
+        ("B3", "=CONVERT(A3,\"cm3\",\"m3\")"),
+        ("B4", "=CONVERT(A1,C1,D1)"),
+        ("C1", "cm"),
+        ("D1", "in"),
+    ] {
+        book.set_cell(1, addr(address), raw).unwrap();
+    }
+    let state = State {
+        workbook: Some(book.clone()),
+        ..State::default()
+    };
+    let bytes = save_ods(&state).unwrap();
+    let content = entry(&bytes, "content.xml");
+    for formula in [
+        "CONVERT([.A1];&quot;cm&quot;;&quot;in&quot;)",
+        "CONVERT([.A2];&quot;cm2&quot;;&quot;m2&quot;)",
+        "CONVERT([.A3];&quot;cm3&quot;;&quot;m3&quot;)",
+        "CONVERT([.A1];[.C1];[.D1])",
+    ] {
+        assert!(content.contains(&format!("table:formula=\"of:={formula}\"")));
+    }
+    let imported = read_ods(&package(&content, Some(&entry(&bytes, "styles.xml")))).unwrap();
+    assert!(imported.embedded_state.is_none());
+    let mut restored = imported.workbook;
+    let values = restored.recalculate();
+    for address in ["B1", "B2", "B3", "B4"] {
+        assert_eq!(restored.raw(1, addr(address)), book.raw(1, addr(address)));
+        match values.value(1, addr(address)) {
+            CellValue::Number(value) => assert!((value - 1.0).abs() < 1e-12),
+            value => panic!("{address} must evaluate its imported CONVERT formula: {value:?}"),
+        }
+    }
+    for (address, raw) in [("A1", "5.08"), ("A2", "20000"), ("A3", "2000000")] {
+        restored.set_cell(1, addr(address), raw).unwrap();
+    }
+    let values = restored.recalculate();
+    for address in ["B1", "B2", "B3", "B4"] {
+        match values.value(1, addr(address)) {
+            CellValue::Number(value) => assert!((value - 2.0).abs() < 1e-12),
+            value => panic!("{address} must recalculate after its source changes: {value:?}"),
+        }
+    }
+}
+
+#[test]
 fn external_ods_imports_inherited_alignment_strike_and_safe_fallbacks() {
     let styles = r##"<office:document-styles xmlns:office="o" xmlns:style="s" xmlns:fo="f"><office:styles>
       <style:style style:name="parent" style:family="table-cell"><style:paragraph-properties fo:text-align="end"/><style:text-properties style:text-line-through-style="dash" style:text-line-through-type="double"/></style:style>

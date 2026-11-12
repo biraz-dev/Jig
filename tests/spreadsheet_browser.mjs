@@ -59,10 +59,11 @@ async function confirmDraft(page, expected) {
 }
 async function capture(page, name, timeout = 60000) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["sheet-desktop", "sheet-mobile", "sheet-edit", "sheet-chart", "sheet-formats", "sheet-import", "sheet-failure", "sheet-header-before", "sheet-header-menu", "sheet-header-after"]);
+  const allowed = new Set(["sheet-desktop", "sheet-mobile", "sheet-edit", "sheet-chart", "sheet-formats", "sheet-borders", "sheet-import", "sheet-failure", "sheet-header-before", "sheet-header-menu", "sheet-header-after"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
   const requestedHeader = name.startsWith("sheet-header-") && requested.has("sheet-failure");
-  if (allowed.has(name) && (requested.has(name) || requestedHeader) && png.length <= 1024 * 1024) {
+  const requestedBorders = name === "sheet-borders" && requested.has("sheet-formats");
+  if (allowed.has(name) && (requested.has(name) || requestedHeader || requestedBorders) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
     for (let offset = 0; offset < encoded.length; offset += 2048) console.log(encoded.slice(offset, offset + 2048));
@@ -513,6 +514,21 @@ try {
   await value(current.page, "E1", 11);
   await capture(current.page, "sheet-desktop");
 
+  progress("convert length, area and volume in cells and recalculate a referenced input");
+  const conversionFormulas = {
+    B18: '=CONVERT(A18,"cm","in")',
+    C18: '=CONVERT(10000,"cm^2","m^2")',
+    D18: '=CONVERT(1000000,"cm3","m3")',
+  };
+  const conversionRow = ["2.54", ...Object.values(conversionFormulas)].map(field => `"${field.replaceAll('"', '""')}"`).join("\t");
+  await paste(current.page, "A18", conversionRow);
+  await value(current.page, "B18", 1);
+  await value(current.page, "C18", 1);
+  await value(current.page, "D18", 1);
+  await enter(current.page, "A18", "5.08");
+  await value(current.page, "B18", 2);
+  for (const [address, formula] of Object.entries(conversionFormulas)) assert.equal(sheet(await state(current.page)).cells[address], formula, "CONVERT must retain its editable formula source");
+
   progress("paste and clear a rectangular range as single undoable actions");
   const beforePaste = await state(current.page);
   await paste(current.page, "F1", "10\t20\n30\t=SUM(F1:F2)");
@@ -617,6 +633,7 @@ try {
   await enter(current.page, "D15", "IIII");
   await select(current.page, "D15");
   await toolbar(current.page, controls.left);
+  await assertToolbarIcons(current.page);
   const styledCell = await selectedCellBounds(current.page);
   const leftInk = await cellInk(current.page, styledCell);
   assert.equal(sheet(await state(current.page)).styles.D15.alignment, "left");
@@ -663,7 +680,11 @@ try {
     assert.equal(styles.A15.bold, true, "Border actions must preserve unrelated formatting");
     assert.equal(styles.D15.strike, true);
   }
-  await borderFormat(current.page, 2); // Keep an outside border in the document round trip.
+  await pointerOuterBorder(current.page); // Keep an outside border chosen from the icon grid in the document round trip.
+  for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+    const address = `${String.fromCharCode(72 + col)}${15 + row}`;
+    assert.deepEqual(sheet(await state(current.page)).styles[address]?.borders ?? {}, borderEdges("outer", row, col), `Clicking the outside-border icon must set the outer rectangle on ${address}`);
+  }
   await capture(current.page, "sheet-formats");
 
   progress("create a bar chart from selected cells and redraw it after editing source values");
@@ -718,6 +739,7 @@ try {
   const exported = await exportJson(current.page);
   assert.deepEqual(exported, saved, "JSON backups must include formulas and all existing Jig records");
   assert.deepEqual(sheet(exported).styles.D15, { strike: true, alignment: "center" }, "JSON backups must serialize explicit alignment and strike together");
+  for (const [address, formula] of Object.entries(conversionFormulas)) assert.equal(sheet(exported).cells[address], formula, "JSON must preserve CONVERT formulas with quoted units");
   await value(current.page, "C1", 7.5);
   const imported = structuredClone(exported);
   sheet(imported).cells.A1 = "8";
@@ -731,6 +753,7 @@ try {
   await boot(current.page, true);
   await expectState(current.page, imported, "The complete workbook must survive restart");
   await value(current.page, "B1", 11);
+  await value(current.page, "B18", 2);
   progress("save a real ODS document and restore its formulas and Jig records");
   const beforeOds = await state(current.page);
   const ods = await shortcutDownload(current.page, "Control+s", ".ods");
@@ -739,6 +762,7 @@ try {
   assert.ok(files.get("content.xml")?.toString("utf8").includes("table:formula="), "ODS must contain standard spreadsheet formulas, not merely an embedded JSON backup");
   assert.ok(files.get("content.xml")?.toString("utf8").includes("number:percentage-style"), "ODS must include standard numeric formatting");
   const contentXml = files.get("content.xml").toString("utf8");
+  assert.ok(contentXml.includes('table:formula="of:=CONVERT([.A18];&quot;cm&quot;;&quot;in&quot;)"'), "ODS must expose CONVERT with its cell reference and quoted units as a standard formula");
   for (const alignment of ["left", "center", "right"]) assert.ok(contentXml.includes(`fo:text-align="${alignment}"`), `ODS must expose standard ${alignment} paragraph alignment`);
   assert.ok(contentXml.includes('style:text-line-through-style="solid"'), "ODS must expose standard strikethrough formatting to other spreadsheet apps");
   const chartPictures = [...files].filter(([name]) => /^Pictures\/chart-.*\.svg$/.test(name));
@@ -809,6 +833,9 @@ try {
   assert.deepEqual(sheet(saved).styles.H15.borders, { top: true, left: true });
   assert.deepEqual(toolsOnly(saved), fixture, "Opening an ordinary ODS must preserve the existing workbench records");
   await value(current.page, "D15", "IIII");
+  await value(current.page, "B18", 2);
+  await value(current.page, "C18", 1);
+  await value(current.page, "D18", 1);
   await current.context.close();
 
   progress("operate the spreadsheet grid by touch on a phone");
@@ -909,6 +936,68 @@ async function borderFormat(page, index) {
   await toolbar(page, controls.borders);
   await tab(page, index + 1);
   await key(page, "Space");
+}
+async function assertToolbarIcons(page) {
+  const { shapes } = await selectedShapes(page);
+  const left = shapes.find(item => item.top > 100 && item.bottom < 160 && item.right - item.left >= 18 && item.right - item.left <= 28 && item.bottom - item.top >= 18 && item.bottom - item.top <= 28);
+  assert.ok(left, "The selected left-alignment control must visibly be a compact toolbar icon");
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  const marks = await page.evaluate(async ({ encoded, left }) => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const centerX = Math.round((left.left + left.right) / 2), centerY = Math.round((left.top + left.bottom) / 2);
+    const rows = x => {
+      const result = [];
+      for (let y = centerY - 9; y <= centerY + 9; y++) {
+        let count = 0;
+        for (let offsetX = -10; offsetX <= 10; offsetX++) {
+          const offset = (y * canvas.width + x + offsetX) * 4;
+          if (data[offset] > 180 && data[offset + 1] > 175 && data[offset + 2] > 170) count++;
+        }
+        result.push(count);
+      }
+      return result;
+    };
+    const alignment = rows(centerX), strike = rows(centerX - 34);
+    let lines = 0, previous = false;
+    for (const count of alignment) { const marked = count >= 8; if (marked && !previous) lines++; previous = marked; }
+    return { lines, strikeWidth: Math.max(...strike) };
+  }, { encoded: png.toString("base64"), left });
+  assert.equal(marks.lines, 4, "The alignment icon must draw four horizontal text lines");
+  assert.ok(marks.strikeWidth >= 10, "The adjacent strikethrough icon must visibly draw its crossing line");
+}
+async function pointerOuterBorder(page) {
+  await toolbar(page, controls.borders);
+  await tab(page); // No borders is the first icon in the 5 × 2 preset grid.
+  const { shapes } = await selectedShapes(page, [77, 49, 39]);
+  const first = shapes.find(item => item.top > 150 && item.right - item.left >= 20 && item.right - item.left <= 32 && item.bottom - item.top >= 20 && item.bottom - item.top <= 32);
+  assert.ok(first, "Borders must focus a compact icon button in its popup rather than a list row");
+  interaction = `click outside-border icon in the visible 5 × 2 grid from ${JSON.stringify(first)}`;
+  const png = await capture(page, "sheet-borders");
+  const ink = await page.evaluate(async ({ encoded, first }) => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const counts = [];
+    for (let row = 0; row < 2; row++) for (let col = 0; col < 5; col++) {
+      const centerX = Math.round((first.left + first.right) / 2 + col * 34);
+      const centerY = Math.round((first.top + first.bottom) / 2 + row * 34);
+      let count = 0;
+      for (let y = centerY - 10; y <= centerY + 10; y++) for (let x = centerX - 10; x <= centerX + 10; x++) {
+        const offset = (y * canvas.width + x) * 4;
+        if (data[offset] > 65 && data[offset + 1] > 60 && data[offset + 2] > 55) count++;
+      }
+      counts.push(count);
+    }
+    return counts;
+  }, { encoded: png.toString("base64"), first });
+  assert.ok(ink.every(count => count > 10), `The border popup must visibly draw all ten preset icons in two rows of five: ${JSON.stringify(ink)}`);
+  // Cells are 28 px with a 6 px gap; Outside is the third icon in the first row.
+  await page.mouse.click((first.left + first.right) / 2 + 2 * 34, (first.top + first.bottom) / 2);
+  await paint(page);
 }
 async function autoAlignment(page) {
   await topMenu(page, 3); // Format, before Insert and View.

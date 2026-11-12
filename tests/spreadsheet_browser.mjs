@@ -971,8 +971,14 @@ async function assertToolbarIcons(page) {
 async function pointerOuterBorder(page) {
   await toolbar(page, controls.borders);
   await tab(page); // No borders is the first icon in the 5 × 2 preset grid.
-  const { shapes } = await selectedShapes(page, [77, 49, 39]);
-  const first = shapes.find(item => item.top > 150 && item.right - item.left >= 20 && item.right - item.left <= 32 && item.bottom - item.top >= 20 && item.bottom - item.top <= 32);
+  // egui Areas fade in after opening. Observe the fully rendered focus fill
+  // rather than assuming that the first processed input also ended that fade.
+  const until = Date.now() + 10000;
+  let first;
+  do {
+    const { shapes } = await selectedShapes(page, [77, 49, 39], Math.max(1, until - Date.now()));
+    first = shapes.find(item => item.top > 150 && item.right - item.left >= 20 && item.right - item.left <= 32 && item.bottom - item.top >= 20 && item.bottom - item.top <= 32);
+  } while (!first && Date.now() < until);
   assert.ok(first, "Borders must focus a compact icon button in its popup rather than a list row");
   interaction = `click outside-border icon in the visible 5 × 2 grid from ${JSON.stringify(first)}`;
   const png = await capture(page, "sheet-borders");
@@ -1024,10 +1030,10 @@ function borderEdges(preset, row, col) {
   };
   return Object.fromEntries(Object.entries(choices[preset]).filter(([, enabled]) => enabled));
 }
-async function selectedShapes(page, color = [67, 42, 34]) {
+async function selectedShapes(page, color = [67, 42, 34], timeout = 60000) {
   // Read rendered pixels, never application state or a synthetic UI hook. The
   // selected fill identifies both cells and the active sheet tab on any layout.
-  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  const png = await page.screenshot({ timeout, animations: "disabled", caret: "hide" });
   return page.evaluate(async ({ encoded, color }) => {
     const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`;
     await picture.decode();

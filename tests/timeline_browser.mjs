@@ -40,6 +40,7 @@ let current;
 let originalError;
 const contexts = [];
 const issues = [];
+const consoleErrors = [];
 // These maps track only the public layout commands sent by this driver.
 const timelineMode = new WeakMap();
 const timer = setTimeout(() => {
@@ -89,6 +90,9 @@ async function open(label, state = fixture, phone = false) {
   });
   const page = await context.newPage();
   page.on("pageerror", error => issues.push(`${label}: ${error.message}`));
+  page.on("console", message => {
+    if (message.type() === "error" && consoleErrors.length < 20) consoleErrors.push(`${label}: ${message.text().slice(0, 12000)}`);
+  });
   page.setDefaultTimeout(15000);
   page.setDefaultNavigationTimeout(60000);
   await page.clock.setFixedTime(new Date("2026-10-30T12:00:00Z"));
@@ -650,18 +654,23 @@ try {
     let diagnosticTimer;
     try {
       const diagnostics = await Promise.race([
-        current.page.evaluate(key => ({
-          frames: window.jigTestFrames ?? null,
-          savedStateRaw: localStorage.getItem(key),
-          focused: document.hasFocus(),
-          visibility: document.visibilityState,
-          activeElement: document.activeElement ? { tag: document.activeElement.tagName, id: document.activeElement.id } : null,
-        }), storageKey),
+        current.page.evaluate(key => {
+          const canvas = document.getElementById("jig_canvas");
+          const gl = canvas?.getContext("webgl2") ?? canvas?.getContext("webgl");
+          return {
+            frames: window.jigTestFrames ?? null,
+            savedStateRaw: localStorage.getItem(key),
+            focused: document.hasFocus(),
+            visibility: document.visibilityState,
+            activeElement: document.activeElement ? { tag: document.activeElement.tagName, id: document.activeElement.id } : null,
+            canvas: canvas ? { width: canvas.width, height: canvas.height, contextLost: gl?.isContextLost() ?? null } : null,
+          };
+        }, storageKey),
         new Promise((_, reject) => { diagnosticTimer = setTimeout(() => reject(new Error("Timeline diagnostics exceeded 3 seconds")), 3000); }),
       ]);
-      console.error("Timeline public browser diagnostics:", JSON.stringify(diagnostics));
+      console.error("Timeline public browser diagnostics:", JSON.stringify({ ...diagnostics, issues, consoleErrors }));
     } catch (diagnosticError) {
-      console.error("Timeline diagnostics unavailable:", String(diagnosticError));
+      console.error("Timeline diagnostics unavailable:", String(diagnosticError), "Browser issues:", JSON.stringify({ issues, consoleErrors }));
     } finally { clearTimeout(diagnosticTimer); }
     await capture(current.page, "timeline-failure").catch(() => {});
   }

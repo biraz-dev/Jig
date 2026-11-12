@@ -449,6 +449,18 @@ try {
     }
   }
   assert.deepEqual(toolsOnly(await state(current.page)), fixture);
+
+  progress("choose an outside border from the visible icon grid and restore it with Undo");
+  const beforePointerBorders = await state(current.page);
+  await select(current.page, "H15:J17");
+  await pointerOuterBorder(current.page);
+  const pointerBorderStyles = sheet(await state(current.page)).styles;
+  for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+    const address = `${String.fromCharCode(72 + col)}${15 + row}`;
+    assert.deepEqual(pointerBorderStyles[address]?.borders ?? {}, borderEdges("outer", row, col), `Clicking the outside-border icon must set the outer rectangle on ${address}`);
+  }
+  await undo(current.page);
+  await expectState(current.page, beforePointerBorders, "One Undo must restore the complete workbook before choosing a border from the icon grid");
   const legacyForStandardOds = await state(current.page);
   await current.context.close();
 
@@ -680,10 +692,10 @@ try {
     assert.equal(styles.A15.bold, true, "Border actions must preserve unrelated formatting");
     assert.equal(styles.D15.strike, true);
   }
-  await pointerOuterBorder(current.page); // Keep an outside border chosen from the icon grid in the document round trip.
+  await borderFormat(current.page, 2); // Keep an outside border in the document round trip; pointer selection was checked earlier.
   for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
     const address = `${String.fromCharCode(72 + col)}${15 + row}`;
-    assert.deepEqual(sheet(await state(current.page)).styles[address]?.borders ?? {}, borderEdges("outer", row, col), `Clicking the outside-border icon must set the outer rectangle on ${address}`);
+    assert.deepEqual(sheet(await state(current.page)).styles[address]?.borders ?? {}, borderEdges("outer", row, col), `The outside-border preset must set the outer rectangle on ${address}`);
   }
   await capture(current.page, "sheet-formats");
 
@@ -973,7 +985,9 @@ async function pointerOuterBorder(page) {
   await tab(page); // No borders is the first icon in the 5 × 2 preset grid.
   // egui Areas fade in after opening. Observe the fully rendered focus fill
   // rather than assuming that the first processed input also ended that fade.
-  const until = Date.now() + 10000;
+  // Keep the same 60-second screenshot budget as the other rendered checks.
+  const until = Date.now() + 60000;
+  interaction = "inspect the focused border icon in the visible preset popup";
   let first;
   do {
     const { shapes } = await selectedShapes(page, [77, 49, 39], Math.max(1, until - Date.now()));

@@ -2377,12 +2377,16 @@ fn sheet_icon_button(
 }
 
 fn sheet_icon_menu(ui: &mut Ui, icon: SheetIcon, label: &str, add_contents: impl FnOnce(&mut Ui)) {
+    // egui 0.31 returns menu.inner only when closing; the closure marks visibility.
+    let mut open = false;
     let menu = egui::menu::menu_custom_button(
         ui,
         egui::Button::new("").min_size(egui::Vec2::splat(TOOL_ICON_SIZE)),
-        add_contents,
+        |ui| {
+            open = true;
+            add_contents(ui);
+        },
     );
-    let open = menu.inner.is_some();
     if open {
         ui.painter()
             .rect_filled(menu.response.rect.shrink(1.0), 2.0, SELECTED);

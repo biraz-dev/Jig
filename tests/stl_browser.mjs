@@ -46,6 +46,8 @@ const timer = setTimeout(() => {
 function progress(message) { phase = message; console.log(`STL browser phase: ${message}`); }
 async function paint(page) {
   await waitForAppPaint(page);
+  // Resizing/reanchoring can request a follow-up layout and focus pass.
+  await page.waitForTimeout(250);
 }
 async function key(page, value) {
   await page.keyboard.press(value);

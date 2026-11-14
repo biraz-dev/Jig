@@ -231,6 +231,72 @@ fn rows_are_a_read_only_projection_of_tasks_and_legacy_deadlines() {
 }
 
 #[test]
+fn selected_lists_project_each_original_task_once_and_keep_legacy_deadlines_visible() {
+    let mut state = State::default();
+    let first_list = state.default_list_id();
+    let second_list = state.add_task_list("Installation").unwrap();
+    let first = state
+        .add_task_to_list(first_list, "Cast sculpture")
+        .unwrap();
+    let second = state
+        .add_task_to_list(second_list, "Pack sculpture")
+        .unwrap();
+    for task in [first, second] {
+        state
+            .set_task_schedule(
+                task,
+                Some("2026-11-01T12:00:00Z"),
+                Some("2026-11-08T18:00:00Z"),
+            )
+            .unwrap();
+    }
+    state.set_task_color(second, Some(TaskColor::Sage)).unwrap();
+    state.toggle_task(second).unwrap();
+    let legacy = state
+        .set_deadline(None, "Existing opening", "2026-11-08T18:00:00Z")
+        .unwrap();
+    state.feature(legacy).unwrap();
+    let unchanged = json(&state);
+
+    let rows = timeline::rows_for_lists(&state, &Utc, &[first_list]);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].task_id, Some(first));
+    assert_eq!(rows[0].list_id, first_list);
+    assert_eq!(rows[1].deadline_id, Some(legacy));
+    assert_eq!(rows[1].list_id, first_list);
+
+    let rows = timeline::rows_for_lists(&state, &Utc, &[second_list]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].task_id, Some(second));
+    assert_eq!(rows[0].list_id, second_list);
+    assert!(rows[0].complete);
+    assert_eq!(rows[0].color, Some(TaskColor::Sage));
+
+    let combined = timeline::rows_for_lists(&state, &Utc, &[second_list, first_list, second_list]);
+    assert_eq!(combined.len(), timeline::rows(&state, &Utc).len());
+    assert_eq!(combined[0].task_id, Some(first));
+    assert_eq!(combined[1].task_id, Some(second));
+    assert_eq!(combined[2].deadline_id, Some(legacy));
+    assert!(timeline::rows_for_lists(&state, &Utc, &[]).is_empty());
+    assert!(timeline::rows_for_lists(&state, &Utc, &[999]).is_empty());
+    assert_eq!(
+        json(&state),
+        unchanged,
+        "Viewing lists must not edit records or the countdown"
+    );
+
+    state.set_task_list(first, second_list).unwrap();
+    let rows = timeline::rows_for_lists(&state, &Utc, &[first_list]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].deadline_id, Some(legacy));
+    state.remove_task_list(first_list, second_list).unwrap();
+    let rows = timeline::rows_for_lists(&state, &Utc, &[second_list]);
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|row| row.list_id == second_list));
+    assert_eq!(state.featured, Some(legacy));
+}
+
+#[test]
 fn projection_uses_calendar_days_in_the_requested_timezone_across_offset_changes() {
     let mut state = State::default();
     let task = state.add_task("Prepare kiln").unwrap();
@@ -261,6 +327,7 @@ fn row(start: Option<&str>, due: Option<&str>) -> TimelineRow<'static> {
     TimelineRow {
         task_id: Some(1),
         deadline_id: due.map(|_| 2),
+        list_id: 1,
         title: "Test task",
         complete: false,
         color: None,

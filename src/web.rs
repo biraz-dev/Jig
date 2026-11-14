@@ -3,7 +3,7 @@ use crate::web_theme::{self, ACCENT, BG, ERROR, MUTED, RULE, SUCCESS, TEXT};
 use crate::{
     browser_storage,
     chart_ui::{ChartAction, ChartPanel},
-    notes_ui::{NoteAction, NoteDraftSnapshot, NotesPanel},
+    notes_ui::{NoteAction, NoteDraftSnapshot, NoteDragPayload, NotesPanel},
     pdf_import_ui::{PdfImportAction, PdfImportPanel},
     spreadsheet_ui::{SheetAction, SheetPanel},
     stl_ui::{Snapshot as StlSnapshot, StlPanel},
@@ -125,6 +125,19 @@ struct ChecklistRow {
     color: Option<TaskColor>,
     position: Option<usize>,
     list_id: u64,
+}
+
+#[derive(Clone)]
+struct TaskDragPayload {
+    id: u64,
+    order: Vec<(u64, u64)>,
+    lists: Vec<u64>,
+}
+
+struct TaskDropRow {
+    id: u64,
+    list_id: u64,
+    rect: egui::Rect,
 }
 
 pub struct BrowserApp {
@@ -749,6 +762,7 @@ impl BrowserApp {
     }
 
     fn undo_last(&mut self, ctx: &egui::Context) {
+        self.cancel_task_note_drag(ctx);
         if self.notes.has_draft() {
             self.status = "Save or cancel the note edit before using Undo.".into();
             return;
@@ -1090,6 +1104,7 @@ impl BrowserApp {
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
+        self.cancel_task_note_drag(ctx);
         self.sheet_workspace = false;
         self.tasks_workspace = false;
         self.notes_workspace = true;
@@ -1123,6 +1138,7 @@ impl BrowserApp {
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
+        self.cancel_task_note_drag(ctx);
         self.sheet_workspace = sheet;
         self.tasks_workspace = false;
         self.notes_workspace = false;
@@ -1189,6 +1205,7 @@ impl BrowserApp {
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
+        self.cancel_task_note_drag(ctx);
         self.timeline.cancel_gesture();
         self.sheet_workspace = false;
         self.tasks_workspace = true;
@@ -1336,6 +1353,7 @@ impl BrowserApp {
         }
         self.timeline.cancel_gesture();
         self.confirm_clear_completed = false;
+        self.cancel_task_note_drag(ctx);
         self.task_list_rename = None;
         self.focus_task_list_name = false;
         self.task_list_remove = None;
@@ -2423,10 +2441,16 @@ impl BrowserApp {
                 match index {
                     0 => self.deadlines(ui),
                     1 => {
-                        egui::ScrollArea::vertical()
+                        let drop_rect = egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            egui::vec2(ui.available_width(), (height - 18.0).max(180.0)),
+                        )
+                        .intersect(ui.clip_rect());
+                        let scroll = egui::ScrollArea::vertical()
                             .id_salt("checklist")
                             .max_height((height - 18.0).max(180.0))
                             .show(ui, |ui| self.tasks(ui));
+                        self.task_drop_zone(ui, drop_rect, &scroll.inner);
                     }
                     2 => self.calendar(ui, (height - 18.0).max(230.0)),
                     3 => self.workbench(ui, (height - 18.0).max(120.0)),
@@ -2728,7 +2752,198 @@ impl BrowserApp {
         Ok(state)
     }
 
-    fn tasks(&mut self, ui: &mut Ui) {
+    fn task_drag_source(&self, response: &egui::Response, id: u64) {
+        if response.hovered() {
+            response.ctx.set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if response.drag_started() {
+            egui::DragAndDrop::set_payload(
+                &response.ctx,
+                TaskDragPayload {
+                    id,
+                    order: self
+                        .state
+                        .tasks
+                        .iter()
+                        .map(|task| (task.id, task.list_id))
+                        .collect(),
+                    lists: self.selected_task_lists.clone(),
+                },
+            );
+        }
+    }
+
+    fn cancel_task_note_drag(&self, ctx: &egui::Context) {
+        if egui::DragAndDrop::has_payload_of_type::<TaskDragPayload>(ctx)
+            || egui::DragAndDrop::has_payload_of_type::<NoteDragPayload>(ctx)
+        {
+            egui::DragAndDrop::clear_payload(ctx);
+        }
+    }
+
+    fn drag_auto_scroll(&self, ui: &mut Ui) {
+        if !(egui::DragAndDrop::has_payload_of_type::<TaskDragPayload>(ui.ctx())
+            || egui::DragAndDrop::has_payload_of_type::<NoteDragPayload>(ui.ctx()))
+            || !ui.input(|input| input.pointer.any_down())
+        {
+            return;
+        }
+        let clip = ui.clip_rect();
+        if let Some(pointer) = ui
+            .input(|input| input.pointer.interact_pos())
+            .filter(|position| clip.contains(*position))
+        {
+            let edge = if pointer.y < clip.top() + 22.0 {
+                1.0
+            } else if pointer.y > clip.bottom() - 22.0 {
+                -1.0
+            } else {
+                0.0
+            };
+            if edge != 0.0 {
+                ui.scroll_with_delta(egui::vec2(
+                    0.0,
+                    edge * 260.0 * ui.input(|input| input.stable_dt.min(0.05)),
+                ));
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+
+    fn task_drop_zone(&mut self, ui: &mut Ui, rect: egui::Rect, rows: &[TaskDropRow]) {
+        if rect.width() < 3.0 || rect.height() < 3.0 {
+            return;
+        }
+        let cancelled = ui.input(|input| {
+            !input.focused
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                })
+        });
+        if cancelled {
+            self.cancel_task_note_drag(ui.ctx());
+            return;
+        }
+        let response = ui.interact(rect, ui.id().with("task-drop-zone"), egui::Sense::hover());
+        let task = response.dnd_hover_payload::<TaskDragPayload>();
+        let note = response.dnd_hover_payload::<NoteDragPayload>();
+        if task.is_none() && note.is_none() {
+            return;
+        }
+        if task.as_ref().is_some_and(|drag| {
+            drag.lists != self.selected_task_lists
+                || !self
+                    .state
+                    .tasks
+                    .iter()
+                    .map(|task| (task.id, task.list_id))
+                    .eq(drag.order.iter().copied())
+        }) || note.as_ref().is_some_and(|drag| {
+            !self.notes.is_dragging(drag.id)
+                || self.notes.has_draft()
+                || !self.state.notes.iter().any(|note| note.id == drag.id)
+        }) {
+            self.cancel_task_note_drag(ui.ctx());
+            return;
+        }
+        let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) else {
+            return;
+        };
+        let hovered = rows.iter().find(|row| row.rect.contains(pointer));
+        let list_id = if note.is_some() {
+            hovered.map_or(self.active_task_list, |row| row.list_id)
+        } else {
+            self.active_task_list
+        };
+        let eligible: Vec<_> = rows
+            .iter()
+            .filter(|row| note.is_none() || row.list_id == list_id)
+            .collect();
+        let target = hovered
+            .map(|row| (row.id, pointer.y >= row.rect.center().y))
+            .or_else(|| {
+                eligible
+                    .iter()
+                    .find(|row| pointer.y < row.rect.center().y)
+                    .map(|row| (row.id, false))
+            })
+            .or_else(|| eligible.last().map(|row| (row.id, true)));
+        let y = target
+            .and_then(|(id, after)| {
+                rows.iter().find(|row| row.id == id).map(|row| {
+                    if after {
+                        row.rect.bottom()
+                    } else {
+                        row.rect.top()
+                    }
+                })
+            })
+            .unwrap_or(rect.top() + 8.0)
+            .clamp(rect.top() + 1.0, rect.bottom() - 1.0);
+        let painter = ui.painter().with_clip_rect(rect);
+        painter.hline(rect.x_range(), y, Stroke::new(2.0_f32, ACCENT));
+        if note.is_some() {
+            let name = self
+                .state
+                .task_list(list_id)
+                .map_or("Tasks", |list| list.name.as_str());
+            painter.rect_stroke(
+                rect,
+                0.0,
+                Stroke::new(1.0_f32, ACCENT),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                egui::pos2(rect.left() + 8.0, (y - 16.0).max(rect.top() + 3.0)),
+                egui::Align2::LEFT_TOP,
+                format!("Add to {name}"),
+                FontId::monospace(11.0),
+                ACCENT,
+            );
+        }
+        ui.ctx().request_repaint();
+        if !ui.input(|input| input.pointer.button_released(egui::PointerButton::Primary)) {
+            return;
+        }
+        if task.is_some() {
+            if let Some(drag) = response.dnd_release_payload::<TaskDragPayload>() {
+                if let Some((target, after)) = target {
+                    let before: Vec<_> = self.state.tasks.iter().map(|task| task.id).collect();
+                    match self.state.move_task_relative(drag.id, target, after) {
+                        Ok(()) if !self.state.tasks.iter().map(|task| task.id).eq(before) => {
+                            self.changed()
+                        }
+                        Ok(()) => {}
+                        Err(error) => self.status = error,
+                    }
+                }
+            }
+        } else if let Some(drag) = response.dnd_release_payload::<NoteDragPayload>() {
+            let mut state = self.state.clone();
+            let result = state.note_to_task(drag.id, list_id).and_then(|id| {
+                if let Some((target, after)) = target {
+                    state.move_task_relative(id, target, after)?;
+                }
+                Ok(())
+            });
+            match result {
+                Ok(()) => {
+                    self.state = state;
+                    self.changed();
+                }
+                Err(error) => self.status = error,
+            }
+        }
+    }
+
+    fn tasks(&mut self, ui: &mut Ui) -> Vec<TaskDropRow> {
+        let mut targets = Vec::new();
         let mut rows: Vec<_> = self
             .state
             .tasks
@@ -2794,13 +3009,31 @@ impl BrowserApp {
             } else {
                 Color32::TRANSPARENT
             };
-            egui::Frame::default()
+            let frame = egui::Frame::default()
                 .fill(fill)
                 .inner_margin(egui::Margin::same(if combined { 3 } else { 0 }))
                 .show(ui, |ui| {
                     ui.push_id(("checklist-row", row.task, row.deadline), |ui| {
                         let mut color_control = None;
                         ui.horizontal_wrapped(|ui| {
+                            let sense = egui::Sense::drag()
+                                .difference(egui::Sense::focusable_noninteractive());
+                            if let Some(id) = row.task {
+                                let (rect, grip) =
+                                    ui.allocate_exact_size(egui::vec2(20.0, 18.0), sense);
+                                for x in [-2.0, 2.0] {
+                                    for y in [-4.0, 0.0, 4.0] {
+                                        ui.painter().circle_filled(
+                                            rect.center() + egui::vec2(x, y),
+                                            1.0,
+                                            MUTED,
+                                        );
+                                    }
+                                }
+                                self.task_drag_source(&grip, id);
+                            } else {
+                                ui.allocate_space(egui::vec2(20.0, 18.0));
+                            }
                             let featured =
                                 row.deadline.is_some() && row.deadline == self.state.featured;
                             if ui
@@ -3006,6 +3239,13 @@ impl BrowserApp {
                         }
                     });
                 });
+            if let Some(id) = row.task {
+                targets.push(TaskDropRow {
+                    id,
+                    list_id: row.list_id,
+                    rect: frame.response.rect,
+                });
+            }
         }
         if self.task_edit.is_some() && self.state.task_lists.len() > 1 {
             ui.horizontal_wrapped(|ui| {
@@ -3198,6 +3438,8 @@ impl BrowserApp {
         } else {
             self.confirm_clear_completed = false;
         }
+        self.drag_auto_scroll(ui);
+        targets
     }
 
     fn close_task_dates(&mut self) {
@@ -4062,6 +4304,7 @@ impl eframe::App for BrowserApp {
                 && (self.has_schedule_draft() || self.pending_task_input.is_some()))
             && self.set_workspace(false, ctx)
         {
+            self.cancel_task_note_drag(ctx);
             self.focus = 2;
             self.focus_calculator = false;
             self.focus_task_date = false;
@@ -4090,6 +4333,7 @@ impl eframe::App for BrowserApp {
             && !self.notes.owns_keyboard(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M))
         {
+            self.cancel_task_note_drag(ctx);
             self.timeline.cancel_gesture();
             self.expanded = !self.expanded;
             self.focus_after_resize(ctx);
@@ -4100,6 +4344,7 @@ impl eframe::App for BrowserApp {
             && !self.notes.owns_keyboard(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
+            self.cancel_task_note_drag(ctx);
             let focused = ctx.memory(|memory| memory.focused());
             if let Some((_, list)) = self
                 .task_list_tab_ids
@@ -4161,6 +4406,7 @@ impl eframe::App for BrowserApp {
                         || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
                 });
             if previous || next {
+                self.cancel_task_note_drag(ctx);
                 let order: &[usize] = if self.tasks_workspace {
                     &[1, 2]
                 } else {
@@ -4235,7 +4481,10 @@ impl eframe::App for BrowserApp {
             if self.notes_workspace {
                 egui::ScrollArea::vertical()
                     .id_salt("notes-workspace")
-                    .show(ui, |ui| self.notes_board(ui));
+                    .show(ui, |ui| {
+                        self.notes_board(ui);
+                        self.drag_auto_scroll(ui);
+                    });
                 return;
             }
             let height = ui.available_height().max(500.0);
@@ -4324,6 +4573,7 @@ impl eframe::App for BrowserApp {
                         ui.add_space(8.0);
                         self.tool(ui, 4, 520.0);
                     }
+                    self.drag_auto_scroll(ui);
                 });
         });
         if self.collect_viewer_undo() {

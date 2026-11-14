@@ -1,8 +1,9 @@
 # Browser development preview
 
-The egui/eframe browser application opens a dark spreadsheet workspace, with
-named tabs, formulas, formatting and charts. The top bar switches to the existing
-Tasks and Workbench views. Tasks and task Gantt charts read the same records;
+The egui/eframe browser application opens Tasks by default and remembers the
+selected workspace. The top bar switches between Tasks, Notes, Sheet and
+Workbench. Sheet retains its named tabs, formulas, formatting and charts.
+Tasks and task Gantt charts read the same records;
 they are never copied into a second task store. ODS is the portable document,
 CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 [spreadsheet guide](../README.md#spreadsheet) for controls and limits.
@@ -110,7 +111,8 @@ appropriate when dependable offline startup is needed.
 
 ## Sample and personal data
 
-Fresh profiles display a clearly labelled **Sample data** indicator. The synthetic
+Fresh profiles start with an empty personal document; saved work opens on return.
+Choose **Sample mode** or append `?sample=1` for a clearly labelled demo. The synthetic
 sample constructor uses a supplied clock and labels every task, deadline and
 calendar note as a sample. Calculator examples also come from code. Demo edits
 are temporary and never write the saved personal dataset.
@@ -124,6 +126,10 @@ browser profile and origin. Another computer, browser or profile has independent
 storage.
 
 Normal refreshes and deployed application updates retain that saved dataset.
+Unfinished task and note text is backed up per tab in session storage and restored
+after refresh; changed underlying records are recovered as new drafts rather than
+overwritten. Save/Ctrl-Enter commits a note, and Enter adds a task. Workspace
+preferences are stored separately in this browser.
 Commit a sheet editor with Enter before leaving. Existing sample-mode edits can
 be kept by exporting JSON and importing that file as personal data; Start empty
 deliberately starts an empty dataset.
@@ -161,7 +167,7 @@ available space, and the narrow stacked layout preserves the preferred split.
 Click an applet to highlight it. Outside text editors, the arrow keys move the
 highlight between applets. Ctrl-M maximizes or restores the selection; Esc leaves
 an editor and returns to the dashboard. Ctrl-Alt-4 focuses math input, and
-Ctrl-Alt-N opens the start-empty confirmation. Tab/Shift-Tab navigate controls;
+Ctrl-Alt-N opens Notes. Tab/Shift-Tab navigate controls;
 normal mouse and text editing work. Type `125 * 1.15` for arithmetic or
 `72 in mm` for a length conversion. History results can be clicked to reuse their
 full precision, including the source unit of a converted result. Task arrows

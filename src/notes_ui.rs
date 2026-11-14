@@ -30,6 +30,12 @@ pub enum NoteAction {
     ToTask { id: u64, list_id: u64 },
 }
 
+/// The existing note grip can also move a note into the Tasks panel.
+#[derive(Clone, Copy, Debug)]
+pub struct NoteDragPayload {
+    pub id: u64,
+}
+
 struct Draft {
     id: Option<u64>,
     text: String,
@@ -63,6 +69,17 @@ impl NotesPanel {
 
     pub fn has_draft(&self) -> bool {
         self.draft.is_some()
+    }
+
+    pub fn is_dragging(&self, id: u64) -> bool {
+        self.drag.as_ref().is_some_and(|drag| drag.id == id)
+    }
+
+    fn cancel_drag(&mut self, ctx: &egui::Context) {
+        self.drag = None;
+        if egui::DragAndDrop::has_payload_of_type::<NoteDragPayload>(ctx) {
+            egui::DragAndDrop::clear_payload(ctx);
+        }
     }
 
     pub fn has_unsaved_changes(&self) -> bool {
@@ -200,11 +217,12 @@ impl NotesPanel {
     }
 
     pub fn owns_keyboard(&self, ctx: &egui::Context) -> bool {
-        ctx.memory(|memory| {
-            memory
-                .focused()
-                .is_some_and(|id| id == draft_input_id() || self.keyboard_ids.contains(&id))
-        })
+        self.drag.is_some()
+            || ctx.memory(|memory| {
+                memory
+                    .focused()
+                    .is_some_and(|id| id == draft_input_id() || self.keyboard_ids.contains(&id))
+            })
     }
 
     fn begin_edit(&mut self, id: Option<u64>, text: &str) {
@@ -260,20 +278,26 @@ impl NotesPanel {
         let mut notes: Vec<_> = state.notes.iter().collect();
         notes.sort_by_key(|note| !note.pinned);
         let order: Vec<_> = notes.iter().map(|note| (note.id, note.pinned)).collect();
+        let payload = egui::DragAndDrop::payload::<NoteDragPayload>(ui.ctx());
         if self.drag.as_ref().is_some_and(|drag| {
-            drag.order != order || drag.columns != columns || ui.input(|input| !input.focused)
-        }) || ui.input(|input| {
-            input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::Touch {
-                        phase: egui::TouchPhase::Cancel,
-                        ..
-                    }
-                )
+            drag.order != order
+                || drag.columns != columns
+                || payload.as_ref().is_none_or(|payload| payload.id != drag.id)
+                || ui.input(|input| !input.focused)
+        }) || (self.drag.is_none() && payload.is_some())
+            || ui.input(|input| {
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                })
             })
-        }) {
-            self.drag = None;
+        {
+            self.cancel_drag(ui.ctx());
         }
         if self.draft.as_ref().is_some_and(|draft| {
             draft
@@ -360,7 +384,7 @@ impl NotesPanel {
 
         if let Some(drag) = &self.drag {
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                self.drag = None;
+                self.cancel_drag(ui.ctx());
             } else {
                 let target = ui
                     .input(|input| input.pointer.interact_pos())
@@ -389,9 +413,9 @@ impl NotesPanel {
                             after,
                         });
                     }
-                    self.drag = None;
+                    self.cancel_drag(ui.ctx());
                 } else if !ui.input(|input| input.pointer.primary_down()) {
-                    self.drag = None;
+                    self.cancel_drag(ui.ctx());
                 }
             }
         }
@@ -453,6 +477,7 @@ impl NotesPanel {
                     if grip.gained_focus() { grip.scroll_to_me(None); }
                     if grip.clicked() || grip.drag_started() { grip.request_focus(); }
                     if grip.drag_started() {
+                        grip.dnd_set_drag_payload(NoteDragPayload { id: note.id });
                         self.drag = Some(Drag { id: note.id, pinned: note.pinned, order: order.to_vec(), columns });
                     }
                     if grip.has_focus() && self.drag.is_none() && !self.has_draft() {
@@ -480,7 +505,7 @@ impl NotesPanel {
                             }
                         }
                     }
-                    grip.on_hover_text("Drag to reorder · Alt+arrows on the focused handle · Pinned notes stay first");
+                    grip.on_hover_text("Drag to reorder or drop on Tasks · Alt+arrows on the focused handle · Pinned notes stay first");
                     let idle = !self.has_draft();
                     let pin = ui.add_enabled(idle, egui::Button::new(if note.pinned { "◆" } else { "◇" }).small());
                     pin.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, idle, if note.pinned { "Unpin note" } else { "Pin note" }));
@@ -527,6 +552,7 @@ impl NotesPanel {
                         ui.painter().rect_stroke(body_rect, 1.0, Stroke::new(1.0_f32, ACCENT), egui::StrokeKind::Inside);
                     }
                     if body.clicked() { self.begin_edit(Some(note.id), &note.text); ui.ctx().request_repaint(); }
+                    body.on_hover_text("Click to edit · Drag the arrow grip to reorder or move to Tasks");
                 }
                 if converting { self.conversion(ui, state, note.id, actions); }
                 if remove {

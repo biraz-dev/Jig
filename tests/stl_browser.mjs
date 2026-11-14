@@ -286,8 +286,12 @@ async function bridgeChecks() {
     slow.arrayBuffer = () => new Promise(resolve => { finishSlow = resolve; });
     choose(slow);
     choose(new File([new Uint8Array([4, 5, 6])], "fast.stl"));
-    await new Promise(resolve => setTimeout(resolve, 20));
-    const latest = Array.from(window.jigStlTakeBytes());
+    let latest = [];
+    const readDeadline = performance.now() + 5000;
+    while (!latest.length && performance.now() < readDeadline) {
+      latest = Array.from(window.jigStlTakeBytes());
+      if (!latest.length) await new Promise(resolve => setTimeout(resolve, 10));
+    }
     const latestName = window.jigStlTakeName();
     finishSlow(new Uint8Array([1, 2, 3]).buffer);
     await Promise.resolve();

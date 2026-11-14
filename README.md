@@ -235,8 +235,8 @@ saved, while **sample data** is temporary. To keep work already entered in sampl
 mode, **Export JSON**, then **Import JSON** that file and confirm the import.
 Use **Start empty** only when you intend to begin with an empty dataset.
 
-Unfinished note and task text is backed up separately in this tab's session
-storage and recovered after a refresh. Save a note with **Save/Ctrl-Enter**, or
+Unfinished note/task text and start/due date edits are backed up separately in
+this tab's session storage and recovered after a refresh. Save a note with **Save/Ctrl-Enter**, or
 add a task with **Enter**, to commit it to the document. Session drafts are a
 refresh safeguard; JSON/ODS downloads remain the portable backups.
 
@@ -591,8 +591,8 @@ JSON remains the native state and browser autosave format: an established serde
 parser, an explicit version, and straightforward human-readable backups. ODS is
 the browser's main portable document and carries this same state as metadata.
 The JSON file is editable while Jig is stopped. No personal state is committed;
-the public preview contains only synthetic samples. Each successful native
-mutation uses a same-directory temporary file, file sync, atomic rename and
+only application assets and synthetic sample definitions are published. Each
+successful native mutation uses a same-directory temporary file, file sync, atomic rename and
 directory sync on Linux. Invalid or unsupported state produces an error and is
 never silently reset. Files created on Unix use mode 0600.
 

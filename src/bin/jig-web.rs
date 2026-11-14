@@ -18,6 +18,10 @@ mod stl_ui;
 mod timeline_ui;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../notes_ui.rs"]
+mod notes_ui;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../spreadsheet_ui.rs"]
 mod spreadsheet_ui;
 

@@ -2,15 +2,16 @@
 
 You are a small Small Giant Psionicist.
 
-Jig is a small, local spreadsheet and artist's workbench in Rust. The browser
-opens **Sheet**, with **Tasks** and **Workbench** always available from the top
-bar. Tasks, their Gantt timeline, calculator/converter, calendar, optional weather
-and STL viewer use the same portable state. The native CLI and Ratatui terminal
+Jig is a small, local artist's workbench in Rust. The browser starts in **Tasks**
+and remembers your workspace. **Notes**, **Sheet**, and **Workbench** remain in
+the top bar. Tasks, their Gantt timeline, notes, calculator/converter, calendar,
+optional weather and STL viewer use the same portable state. The native CLI and Ratatui terminal
 interface share the Rust core; running `jig` still opens the terminal dashboard.
 
 No accounts, telemetry, database or backend. Files are processed on your device.
-The [public preview](https://biraz-dev.github.io/Jig/) uses clearly labelled sample
-data for new visitors. Personal documents are never published by the Pages build.
+The [browser app](https://biraz.dev/Jig/) starts with your saved data or an empty
+personal document. Clearly labelled samples are available through **Sample mode**
+or `?sample=1`. Personal documents are never published by the Pages build.
 
 ## Spreadsheet
 
@@ -216,8 +217,9 @@ See [preview notes](docs/preview.md) and [Actions](https://github.com/biraz-dev/
 
 ## Local browser data
 
-New visitors see temporary **Sample data**, now in Sheet. **Data → Start empty**
-creates personal data after confirmation. **Open local data** reopens saved work;
+New visitors start with an empty personal document in Tasks. Existing saved work
+opens automatically; your workspace choice is remembered. **Data → Start empty**
+replaces personal data after confirmation. **Open local data** reopens saved work;
 **Sample mode** returns to temporary samples. Demo edits never replace saved
 personal data. Importing a real document explicitly leaves sample mode.
 
@@ -232,6 +234,11 @@ commit a spreadsheet cell before leaving. Check the header: **your data** is
 saved, while **sample data** is temporary. To keep work already entered in sample
 mode, **Export JSON**, then **Import JSON** that file and confirm the import.
 Use **Start empty** only when you intend to begin with an empty dataset.
+
+Unfinished note and task text is backed up separately in this tab's session
+storage and recovered after a refresh. Save a note with **Save/Ctrl-Enter**, or
+add a task with **Enter**, to commit it to the document. Session drafts are a
+refresh safeguard; JSON/ODS downloads remain the portable backups.
 
 Browser JSON saves/imports have a 2 MiB limit. Invalid saved data is preserved and
 reported. Failed saves leave edits in memory with **Retry save** available; export
@@ -306,6 +313,30 @@ calendar/timeline selection. Legacy standalone deadlines remain usable.
 The browser's Undo button, or **Ctrl-Z** outside text fields, covers data and STL
 changes. The session journal keeps up to 20 steps within a 64 MiB budget and is
 cleared when switching datasets or reloading; it is not saved in documents.
+
+## Notes
+
+Open **Notes** in the top bar, or press **Ctrl-Alt-N**. The same board also appears
+below Tasks/Gantt. Notes are plain text with no title field: up to 81 cards, with
+at most nine columns on wide screens and fewer columns on smaller screens.
+
+Choose **Add note**, type or paste, and use **Save** or **Ctrl-Enter**. Enter adds
+a new line; Escape cancels the draft. Click a card's text to edit it. **copy**
+copies its complete text, including lines hidden by the compact card preview.
+Pinned notes stay first. Drag a card's handle to reorder it, or focus the handle
+and use **Alt-arrows**; pinned and unpinned notes reorder within their groups.
+**del** discards a card. Editing, pinning, moving and deletion use the shared Undo.
+
+Choose **task** on a note to pick a task list and convert it. Its first nonblank
+line becomes the checklist name, and the full original text stays with the task.
+The task editor's **To note** action converts it back. Conversion moves the
+existing record. A scheduled task's dates, color and completion are retained
+while it is a note, with no active calendar or Gantt entry; converting it back
+restores them. An existing featured task is never replaced by a restored one.
+
+Notes are saved locally with the document and included in JSON/ODS backups.
+Older documents open with an empty board. Text is limited to 16 KiB per note;
+the existing browser document size limit still applies.
 
 ## Weather calendar
 

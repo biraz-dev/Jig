@@ -165,7 +165,23 @@ async function focusedButtonRect(page) {
       }
       if (r.count >= 40 && r.bottom - r.top >= 8 && r.bottom - r.top <= 35 && r.right - r.left < 180) regions.push(r);
     }
-    bitmap.close(); return regions.sort((a, b) => a.top - b.top || b.count - a.count)[0] ?? null;
+    const r = regions.sort((a, b) => a.top - b.top || b.count - a.count)[0] ?? null;
+    if (r) {
+      // A wrapped task row extends below its star. Its left graphite gutter
+      // exposes the complete row height without depending on toolbar wrapping.
+      const shades = [[44, 39, 35], [50, 44, 39], [40, 36, 33], [47, 42, 38]];
+      const y = Math.round((r.top + r.bottom) / 2);
+      for (let x = 6; x < r.left; x++) {
+        const shade = shades.find(color => color.every((value, axis) => pixels[(y * bitmap.width + x) * 4 + axis] === value));
+        if (!shade) continue;
+        const row = py => shade.every((value, axis) => pixels[(py * bitmap.width + x) * 4 + axis] === value);
+        r.rowTop = y; r.rowBottom = y;
+        while (r.rowTop > 0 && row(r.rowTop - 1)) r.rowTop--;
+        while (r.rowBottom + 1 < bitmap.height && row(r.rowBottom + 1)) r.rowBottom++;
+        break;
+      }
+    }
+    bitmap.close(); return r;
   }, png.toString("base64"));
   assert.ok(rect, "The keyboard-focused note control must be visible for the real pointer interaction");
   return { ...rect, x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
@@ -585,7 +601,8 @@ try {
   await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await key(current.page, "Control+Alt+2"); await tab(current.page, 10); // Header2, strip5, commands2, first star.
   const rowStar = await focusedButtonRect(current.page);
-  const rowDrop = { x: rowStar.x + 110, y: rowStar.y + 12 }; // Lower half: insert after the dated row.
+  assert.ok(Number.isFinite(rowStar.rowBottom), "The combined task row must expose its full shaded frame");
+  const rowDrop = { x: rowStar.x + 110, y: rowStar.rowBottom - 2 }; // Below the full row midpoint, including wrapped controls.
   notePoints = await sharedNotePoints(current.page);
   const beginNoteDrop = async () => {
     await current.page.mouse.move(notePoints.grip.x, notePoints.grip.y); await current.page.mouse.down(); await paint(current.page);

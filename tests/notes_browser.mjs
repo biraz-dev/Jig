@@ -65,6 +65,17 @@ async function open(label, initial = fixture, phone = false, launchNotes = true)
   contexts.push(context);
   await installFrameFence(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await context.addInitScript(() => {
+    window.jigNotesInputEvents = [];
+    for (const type of ["keydown", "keyup", "beforeinput", "input", "pointerdown", "pointerup", "focusin", "focusout"]) {
+      document.addEventListener(type, event => {
+        window.jigNotesInputEvents.push({ type, key: event.key ?? null, data: event.data ?? null,
+          inputType: event.inputType ?? null, target: event.target?.tagName ?? null,
+          id: event.target?.id ?? null, time: Math.round(performance.now()) });
+        if (window.jigNotesInputEvents.length > 32) window.jigNotesInputEvents.shift();
+      }, true);
+    }
+  });
   await context.addInitScript(({ raw, key, origin }) => {
     const NativeDate = Date, fixed = NativeDate.parse("2026-10-30T12:00:00Z"), now = () => fixed;
     globalThis.Date = new Proxy(NativeDate, {
@@ -396,6 +407,20 @@ try {
   await expectState(current.page, edited, "A quick workspace change must save the full note, including the final input character");
   await taskGanttButtonPoint(current.page); // The actual Tasks toolbar proves the deferred switch occurred.
 
+  progress("keep a note's final character when immediately clicking Add note");
+  await notes(current); await tab(current.page, header(current) + 1);
+  const addAfterEdit = await focusedButtonRect(current.page);
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  const pointerBody = edited.notes[0].text + "\nPointer switch: Q";
+  await typeBody(current.page, pointerBody.slice(0, -1));
+  await current.page.keyboard.type("Q");
+  await current.page.mouse.click(addAfterEdit.x, addAfterEdit.y); // No paint: save the old field before starting the new card.
+  await paint(current.page);
+  edited.notes[0].text = pointerBody;
+  await expectState(current.page, edited, "Clicking Add note must retain the old note's complete text without creating a partial blank record");
+  await key(current.page, "Escape"); // Cancel the new empty card after the old note was saved.
+  await expectState(current.page, edited, "Cancelling the new card must preserve the preceding note's final character");
+
   progress("pin, keyboard reorder and drag notes as atomic operations");
   await focusNote(current, 1, 2); await key(current.page, "Space");
   const pinned = structuredClone(edited); const pin = pinned.notes.splice(1, 1)[0]; pin.pinned = true; pinned.notes.unshift(pin);
@@ -454,6 +479,28 @@ try {
   }, { key: "jig.drafts.v1", text: reviewedBody }, { timeout: 10000 });
   await expectState(current.page, race, "Edit another task must wait for Save/Clear and leave both records unchanged");
   await expectEditorText(current.page, reviewedBody);
+
+  progress("route each character once when clicking from Details into the earlier title field");
+  await key(current.page, "ArrowRight"); // Collapse the copied selection to the end of Details.
+  const earlierTitle = await taskGanttButtonPoint(current.page, "input");
+  await current.page.keyboard.type("R");
+  await current.page.mouse.click(earlierTitle.x, earlierTitle.y); // No paint between the old-field text and new-field click.
+  await paint(current.page);
+  await current.page.waitForFunction(({ key, details, title }) => {
+    const task = JSON.parse(sessionStorage.getItem(key))?.task;
+    return task?.id === 1 && task.details === details && task.text === title;
+  }, { key: "jig.drafts.v1", details: reviewedBody + "R", title: race.tasks[0].text }, { timeout: 10000 });
+  await current.page.keyboard.type("Q"); await paint(current.page);
+  await current.page.waitForFunction(({ key, details, title }) => {
+    const task = JSON.parse(sessionStorage.getItem(key))?.task;
+    return task?.id === 1 && task.details === details && task.text === title;
+  }, { key: "jig.drafts.v1", details: reviewedBody + "R", title: race.tasks[0].text + "Q" }, { timeout: 10000 });
+  await typeBody(current.page, race.tasks[0].text);
+  const previousDetails = await taskGanttButtonPoint(current.page, "details");
+  await current.page.mouse.click(previousDetails.x, previousDetails.y); await paint(current.page);
+  await typeBody(current.page, reviewedBody);
+  await expectState(current.page, race, "Cross-field input must remain a working edit until explicit Save");
+
   await key(current.page, "Control+Alt+o"); await expectEditorText(current.page, reviewedBody);
   await attemptSample(current);
   const guardedDetails = await taskGanttButtonPoint(current.page, "details");
@@ -520,7 +567,19 @@ try {
   console.log("Notes browser checks passed: titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, atomic Undo, shared Notes/Tasks board, safe task conversion preserving text/metadata and featured selection, reload, JSON import/export and 81-note limit.");
 } catch (error) {
   console.error(`Notes browser failed during: ${phase}`, error);
-  if (current && !current.page.isClosed()) await capture(current.page, "notes-failure").catch(() => {});
+  if (current && !current.page.isClosed()) {
+    // This suite owns every synthetic record; report public persisted data and
+    // DOM events so a lost last character can be distinguished from focus.
+    let diagnosticTimer;
+    await Promise.race([
+      current.page.evaluate(key => ({ saved: localStorage.getItem(key), drafts: sessionStorage.getItem("jig.drafts.v1"),
+        active: document.activeElement?.tagName, events: window.jigNotesInputEvents, frames: window.jigTestFrames }), storageKey)
+        .then(value => console.error("Notes public failure diagnostics:", JSON.stringify(value))),
+      new Promise(resolve => { diagnosticTimer = setTimeout(resolve, 1500); }),
+    ]).catch(() => {});
+    clearTimeout(diagnosticTimer);
+    await capture(current.page, "notes-failure").catch(() => {});
+  }
   throw error;
 } finally {
   clearTimeout(timer);

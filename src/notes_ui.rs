@@ -79,6 +79,7 @@ impl NotesPanel {
         self.drag = None;
         if egui::DragAndDrop::has_payload_of_type::<NoteDragPayload>(ctx) {
             egui::DragAndDrop::clear_payload(ctx);
+            ctx.stop_dragging();
         }
     }
 

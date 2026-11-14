@@ -7,8 +7,22 @@
   let files = [], next = null, fileError = null, currentName = "", currentMime = "";
   let reading = false;
   let paste = null, pasteError = null;
-  let workspace = "sheet";
-  window.jigWorkspaceMode = mode => { workspace = mode; };
+  const workspaceKey = "jig.workspace.v1";
+  const workspaces = ["sheet", "tasks", "notes", "workbench"];
+  window.jigPreferredWorkspace = () => {
+    try {
+      const saved = localStorage.getItem(workspaceKey);
+      if (workspaces.includes(saved)) return saved;
+    } catch { /* A view preference must not prevent the document from opening. */ }
+    return "tasks";
+  };
+  let workspace = window.jigPreferredWorkspace();
+  window.jigWorkspaceMode = mode => {
+    if (!workspaces.includes(mode)) return;
+    workspace = mode;
+    try { localStorage.setItem(workspaceKey, mode); }
+    catch { /* The active view still works when preference storage is blocked. */ }
+  };
   const takeText = () => {
     if (csvError) { const message = csvError; csvError = null; throw new Error(message); }
     const value = csv; csv = null; return value;

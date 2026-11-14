@@ -107,16 +107,16 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 -fsSL \
+          curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors -fsSL \
             "https://biraz.dev/Jig/jig-release.txt?release=$GITHUB_SHA" -o "$RUNNER_TEMP/jig-public-release.txt"
           if [ "$(cat "$RUNNER_TEMP/jig-public-release.txt")" != "$GITHUB_SHA" ]; then
             echo '::warning::The custom-domain route serves another release; its hosting bundle needs updating.'
             exit 1
           fi
-          curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 -fsSL \
+          curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors -fsSL \
             "https://biraz.dev/Jig/?release=$GITHUB_SHA" -o "$RUNNER_TEMP/jig-public-index.html"
           public_wasm=$(grep -oE 'jig-web-[[:alnum:]]+_bg\.wasm' "$RUNNER_TEMP/jig-public-index.html" | head -n 1)
           test -n "$public_wasm"
-          curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 -fsSI \
+          curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors -fsSI \
             "https://biraz.dev/Jig/$public_wasm" | tr -d '\r' | grep -qi '^Content-type: application/wasm'
           echo '::notice::The tested Jig release is available at https://biraz.dev/Jig/'

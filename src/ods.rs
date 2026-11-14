@@ -4,9 +4,9 @@ use crate::{
     model::State,
     sheet_formula::{self, BinaryOp, Expr, Reference, UnaryOp},
     spreadsheet::{
-        CellAddr, CellAlignment, CellBorders, CellFont, CellRange, CellStyle, CellValue,
-        NumberFormat, Sheet, Workbook, MAX_CELLS, MAX_CELL_BYTES, MAX_COLS, MAX_RAW_BYTES,
-        MAX_ROWS, MAX_SHEETS,
+        parse_date, parse_number, CellAddr, CellAlignment, CellBorders, CellFont, CellRange,
+        CellStyle, CellValue, NumberFormat, Sheet, Workbook, MAX_CELLS, MAX_CELL_BYTES, MAX_COLS,
+        MAX_RAW_BYTES, MAX_ROWS, MAX_SHEETS,
     },
     Result,
 };
@@ -344,7 +344,7 @@ fn cell_xml(
             range.rows()
         );
     }
-    if raw.starts_with('=') {
+    if raw.trim_start().starts_with('=') {
         let _ = write!(xml, " table:formula=\"{}\"", escape(&to_odf(raw)));
     }
     match &value {
@@ -1027,11 +1027,12 @@ impl ParsedCell {
     }
 }
 fn literal(text: String) -> String {
-    if text.starts_with('=')
+    if text.trim_start().starts_with('=')
         || text.starts_with('\'')
-        || text.parse::<f64>().is_ok()
-        || matches!(text.as_str(), "TRUE" | "FALSE" | "true" | "false")
-        || NaiveDate::parse_from_str(&text, "%Y-%m-%d").is_ok()
+        || parse_number(&text).is_some()
+        || text.trim().eq_ignore_ascii_case("TRUE")
+        || text.trim().eq_ignore_ascii_case("FALSE")
+        || parse_date(&text).is_some()
     {
         format!("'{text}")
     } else {

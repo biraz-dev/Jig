@@ -379,10 +379,28 @@ try {
   current = await open("task-lists-mobile", fixture, true);
   await focusList(current, 1);
   const home = await focusedControlPoint(current.page);
-  await current.page.touchscreen.tap(home.x, home.y); await paint(current.page);
-  await expectBars(current.page, ["amber"]);
   await focusList(current, 2);
   const show = await focusedControlPoint(current.page);
+  // Observe actual public pointer events so this really exercises egui's
+  // sub-300ms double-click window, rather than two slow independent choices.
+  await current.page.evaluate(() => {
+    window.jigListTapTimes = [];
+    window.jigListTapProbe = event => window.jigListTapTimes.push(event.timeStamp);
+    document.addEventListener("pointerup", window.jigListTapProbe, true);
+  });
+  await current.page.touchscreen.tap(home.x, home.y); await paint(current.page);
+  await current.page.touchscreen.tap(show.x, show.y); await paint(current.page);
+  const tapTimes = await current.page.evaluate(() => {
+    document.removeEventListener("pointerup", window.jigListTapProbe, true);
+    return window.jigListTapTimes;
+  });
+  assert.ok(tapTimes.length === 2 && tapTimes[1] - tapTimes[0] < 300,
+    `The cross-tab regression must exercise two real taps within 300ms; found ${JSON.stringify(tapTimes)}`);
+  assert.equal(await current.page.evaluate(() => document.activeElement?.tagName === "INPUT"), false,
+    "Rapid ordinary taps on different tabs must select the second list without opening rename");
+  await expectBars(current.page, ["sage"]);
+  await current.page.touchscreen.tap(home.x, home.y); await paint(current.page);
+  await expectBars(current.page, ["amber"]);
   await focusListControl(current, "Multi");
   const multi = await focusedControlPoint(current.page);
   await current.page.touchscreen.tap(multi.x, multi.y); await paint(current.page);

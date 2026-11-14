@@ -12,6 +12,16 @@ extern "C" {
     fn save_json(text: &str) -> Result<(), JsValue>;
     #[wasm_bindgen(catch, js_name = jigClear)]
     fn clear_json() -> Result<(), JsValue>;
+    #[wasm_bindgen(catch, js_name = jigLoadDrafts)]
+    fn drafts_load() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(catch, js_name = jigSaveDrafts)]
+    fn drafts_save(text: &str) -> Result<(), JsValue>;
+    #[wasm_bindgen(catch, js_name = jigClearDrafts)]
+    fn drafts_clear() -> Result<(), JsValue>;
+    #[wasm_bindgen(js_name = jigSampleRequested)]
+    fn sample_requested_js() -> bool;
+    #[wasm_bindgen(js_name = jigPreferredWorkspace)]
+    fn preferred_workspace_js() -> String;
     #[wasm_bindgen(catch, js_name = jigExport)]
     fn export_json(text: &str) -> Result<(), JsValue>;
     #[wasm_bindgen(catch, js_name = jigImport)]
@@ -81,6 +91,21 @@ pub fn save(state: &State) -> Result<(), String> {
 }
 pub fn clear() -> Result<(), String> {
     clear_json().map_err(error)
+}
+pub fn load_drafts() -> Result<Option<String>, String> {
+    optional_text(drafts_load().map_err(error)?)
+}
+pub fn save_drafts(text: &str) -> Result<(), String> {
+    drafts_save(text).map_err(error)
+}
+pub fn clear_drafts() -> Result<(), String> {
+    drafts_clear().map_err(error)
+}
+pub fn sample_requested() -> bool {
+    sample_requested_js()
+}
+pub fn preferred_workspace() -> String {
+    preferred_workspace_js()
 }
 pub fn download(state: &State) -> Result<(), String> {
     state.validate()?;

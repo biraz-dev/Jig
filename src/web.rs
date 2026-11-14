@@ -14,7 +14,7 @@ use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
     calendar,
-    model::{State, TaskColor},
+    model::{State, TaskColor, MAX_TASK_LISTS},
     spreadsheet::{self, CellAddr, Workbook},
     timeline,
 };
@@ -72,6 +72,7 @@ struct ChecklistRow {
     complete: bool,
     color: Option<TaskColor>,
     position: Option<usize>,
+    list_id: u64,
 }
 
 pub struct BrowserApp {
@@ -95,6 +96,15 @@ pub struct BrowserApp {
     calculation: String,
     task_text: String,
     task_edit: Option<u64>,
+    task_edit_list: Option<u64>,
+    selected_task_lists: Vec<u64>,
+    active_task_list: u64,
+    task_lists_combine: bool,
+    task_list_rename: Option<u64>,
+    task_list_name: String,
+    focus_task_list_name: bool,
+    task_list_remove: Option<(u64, u64)>,
+    task_list_tab_ids: Vec<(egui::Id, u64)>,
     task_color_edit: Option<u64>,
     confirm_clear_completed: bool,
     task_date_edit: Option<u64>,
@@ -230,6 +240,15 @@ impl BrowserApp {
             calculation: String::new(),
             task_text: String::new(),
             task_edit: None,
+            task_edit_list: None,
+            selected_task_lists: Vec::new(),
+            active_task_list: 1,
+            task_lists_combine: false,
+            task_list_rename: None,
+            task_list_name: String::new(),
+            focus_task_list_name: false,
+            task_list_remove: None,
+            task_list_tab_ids: Vec::new(),
             task_color_edit: None,
             confirm_clear_completed: false,
             task_date_edit: None,
@@ -358,6 +377,8 @@ impl BrowserApp {
         browser_storage::cancel_csv();
         self.timeline = TimelinePanel::new(Local::now().date_naive());
         self.calendar_weather_date = None;
+        self.selected_task_lists.clear();
+        self.sanitize_task_lists();
         self.undo_history.clear();
         self.stl.clear_undo();
         self.undo_baseline = self.state.clone();
@@ -401,6 +422,11 @@ impl BrowserApp {
         self.sheet.restore_data();
         self.charts.invalidate();
         self.task_edit = None;
+        self.task_edit_list = None;
+        self.task_list_rename = None;
+        self.task_list_remove = None;
+        self.focus_task_list_name = false;
+        self.sanitize_task_lists();
         self.task_color_edit = None;
         self.task_text.clear();
         self.confirm_clear_completed = false;
@@ -730,7 +756,273 @@ impl BrowserApp {
         }
     }
 
+    fn sanitize_task_lists(&mut self) {
+        self.selected_task_lists
+            .retain(|id| self.state.task_list(*id).is_some());
+        if self.selected_task_lists.is_empty() {
+            self.selected_task_lists.push(self.state.default_list_id());
+        }
+        if !self.selected_task_lists.contains(&self.active_task_list) {
+            self.active_task_list = self.selected_task_lists[0];
+        }
+        if self
+            .task_edit_list
+            .is_some_and(|id| self.state.task_list(id).is_none())
+        {
+            self.task_edit_list = self.task_edit.and_then(|id| {
+                self.state
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == id)
+                    .map(|task| task.list_id)
+            });
+        }
+        if self
+            .task_list_rename
+            .is_some_and(|id| self.state.task_list(id).is_none())
+        {
+            self.task_list_rename = None;
+        }
+        if self.task_list_remove.is_some_and(|(id, target)| {
+            self.state.task_list(id).is_none() || self.state.task_list(target).is_none()
+        }) {
+            self.task_list_remove = None;
+        }
+    }
+
+    fn select_task_list(&mut self, id: u64, combine: bool, ctx: &egui::Context) {
+        if combine {
+            if self.selected_task_lists.contains(&id) {
+                if self.selected_task_lists.len() > 1 {
+                    self.selected_task_lists.retain(|selected| *selected != id);
+                }
+            } else {
+                self.selected_task_lists.push(id);
+                self.active_task_list = id;
+            }
+        } else {
+            self.selected_task_lists = vec![id];
+            self.active_task_list = id;
+        }
+        self.sanitize_task_lists();
+        self.timeline.cancel_gesture();
+        self.confirm_clear_completed = false;
+        self.task_list_rename = None;
+        self.focus_task_list_name = false;
+        self.task_list_remove = None;
+        if self.task_edit.is_some_and(|id| {
+            self.state
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
+                .is_some_and(|task| !self.selected_task_lists.contains(&task.list_id))
+        }) {
+            self.task_edit = None;
+            self.task_edit_list = None;
+            self.task_text.clear();
+        }
+        if self.task_date_edit.is_some_and(|id| {
+            self.state
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
+                .is_some_and(|task| !self.selected_task_lists.contains(&task.list_id))
+        }) || (self.task_date_legacy.is_some()
+            && !self
+                .selected_task_lists
+                .contains(&self.state.default_list_id()))
+        {
+            self.close_task_dates();
+        }
+        ctx.request_repaint();
+    }
+
+    fn begin_task_list_rename(&mut self, id: u64, ctx: &egui::Context) {
+        if let Some(list) = self.state.task_list(id) {
+            self.task_list_rename = Some(id);
+            self.task_list_name = list.name.clone();
+            self.focus_task_list_name = true;
+            self.task_list_remove = None;
+            ctx.request_repaint();
+        }
+    }
+
+    fn task_list_tabs(&mut self, ui: &mut Ui) {
+        self.sanitize_task_lists();
+        self.task_list_tab_ids.clear();
+        let lists = self.state.task_lists.clone();
+        ui.horizontal(|ui| {
+            let controls = if lists.len() > 1 { 148.0 } else { 76.0 };
+            let tabs_width = (ui.available_width() - controls).max(24.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(tabs_width, 32.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    egui::ScrollArea::horizontal()
+                        .id_salt("task-list-tabs")
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                for (index, list) in lists.iter().enumerate() {
+                                    let selected = self.selected_task_lists.contains(&list.id);
+                                    let active = selected && self.active_task_list == list.id;
+                                    let text = RichText::new(&list.name);
+                                    let mut button = egui::Button::new(if active {
+                                        text.strong()
+                                    } else {
+                                        text
+                                    })
+                                    .truncate()
+                                    .selected(selected);
+                                    if selected && self.selected_task_lists.len() > 1 {
+                                        button = button.fill(web_theme::task_list_fill(index));
+                                    }
+                                    if active {
+                                        button = button.stroke(Stroke::new(1.0_f32, ACCENT));
+                                    }
+                                    let width = (list.name.chars().count() as f32 * 9.0 + 18.0)
+                                        .clamp(64.0, 160.0);
+                                    let response = ui.push_id(("task-list-tab", list.id), |ui| {
+                                        ui.add_sized([width, 30.0], button)
+                                    }).inner;
+                                    self.task_list_tab_ids.push((response.id, list.id));
+                                    let shift_key = response.has_focus()
+                                        && ui.input_mut(|input| {
+                                            input.consume_key(egui::Modifiers::SHIFT, egui::Key::Space)
+                                                || input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter)
+                                        });
+                                    if response.clicked() || shift_key {
+                                        response.request_focus();
+                                        let combine = self.task_lists_combine
+                                            || shift_key
+                                            || ui.input(|input| input.modifiers.shift);
+                                        self.select_task_list(list.id, combine, ui.ctx());
+                                    }
+                                    if response.double_clicked() {
+                                        self.begin_task_list_rename(list.id, ui.ctx());
+                                    }
+                                    response.on_hover_text(format!(
+                                        "{} · Click to show · Shift-click to combine · Double-click or F2 to rename{}",
+                                        list.name,
+                                        if active { " · New tasks go here" } else { "" }
+                                    ));
+                                }
+                            });
+                        });
+                },
+            );
+            if ui
+                .add_enabled(lists.len() < MAX_TASK_LISTS, egui::Button::new("+").min_size(egui::vec2(26.0, 30.0)))
+                .on_hover_text("Add a task list · Maximum five")
+                .clicked()
+            {
+                let name = (1..)
+                    .map(|number| format!("List {number}"))
+                    .find(|name| !lists.iter().any(|list| list.name.eq_ignore_ascii_case(name)))
+                    .unwrap_or_else(|| "New list".into());
+                match self.state.add_task_list(&name) {
+                    Ok(id) => {
+                        self.changed();
+                        self.select_task_list(id, false, ui.ctx());
+                        self.begin_task_list_rename(id, ui.ctx());
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            if ui
+                .add_enabled(lists.len() > 1, egui::Button::new("−").min_size(egui::vec2(26.0, 30.0)))
+                .on_hover_text("Remove the active list · Its tasks move to a remaining list")
+                .clicked()
+            {
+                if let Some(target) = lists.iter().find(|list| list.id != self.active_task_list) {
+                    self.task_list_remove = Some((self.active_task_list, target.id));
+                    self.task_list_rename = None;
+                }
+            }
+            if lists.len() > 1 {
+                ui.toggle_value(&mut self.task_lists_combine, "Multi")
+                    .on_hover_text("Tap tabs to combine lists · Shift-click also works");
+            }
+        });
+        if let Some(id) = self.task_list_rename {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("List name");
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.task_list_name)
+                        .id(egui::Id::new("task-list-name"))
+                        .return_key(None)
+                        .char_limit(64)
+                        .desired_width((ui.available_width() - 125.0).clamp(100.0, 260.0)),
+                );
+                if self.focus_task_list_name {
+                    response.request_focus();
+                    self.focus_task_list_name = false;
+                    if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::two(
+                                egui::text::CCursor::new(0),
+                                egui::text::CCursor::new(self.task_list_name.chars().count()),
+                            )));
+                        TextEdit::store_state(ui.ctx(), response.id, state);
+                    }
+                    ui.ctx().request_repaint();
+                }
+                let enter = response.has_focus()
+                    && ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    });
+                if ui.button("Save").clicked() || enter {
+                    let result = self.state.rename_task_list(id, &self.task_list_name);
+                    if result.is_ok() {
+                        self.task_list_rename = None;
+                    }
+                    self.apply(result);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.task_list_rename = None;
+                }
+            });
+        }
+        if let Some((id, target)) = self.task_list_remove {
+            let name = self
+                .state
+                .task_list(id)
+                .map(|list| list.name.clone())
+                .unwrap_or_default();
+            let target_name = self
+                .state
+                .task_list(target)
+                .map(|list| list.name.clone())
+                .unwrap_or_default();
+            let count = self
+                .state
+                .tasks
+                .iter()
+                .filter(|task| task.list_id == id)
+                .count();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!(
+                    "Remove {name}? Its {count} tasks move to {target_name}."
+                ));
+                if ui.button("Remove").clicked() {
+                    let result = self.state.remove_task_list(id, target);
+                    if result.is_ok() {
+                        self.task_list_remove = None;
+                        self.select_task_list(target, false, ui.ctx());
+                    }
+                    self.apply(result);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.task_list_remove = None;
+                }
+            });
+        }
+    }
+
     fn tasks_main(&mut self, ui: &mut Ui, height: f32) {
+        let top = ui.cursor().top();
+        self.task_list_tabs(ui);
         ui.horizontal_wrapped(|ui| {
             if ui.button("Gantt chart").clicked() {
                 let action = SheetAction::AddChart {
@@ -746,6 +1038,7 @@ impl BrowserApp {
                 self.apply_sheet_action(SheetAction::SaveOds);
             }
         });
+        let height = (height - (ui.cursor().top() - top) - 8.0).max(230.0);
         if self.expanded {
             self.cancel_task_split(ui.ctx());
             self.tool(ui, if self.focus == 2 { 2 } else { 1 }, height);
@@ -1547,7 +1840,7 @@ impl BrowserApp {
                             .max_height((height - 18.0).max(180.0))
                             .show(ui, |ui| self.tasks(ui));
                     }
-                    2 => self.calendar(ui),
+                    2 => self.calendar(ui, (height - 18.0).max(230.0)),
                     3 => self.workbench(ui, (height - 18.0).max(120.0)),
                     _ => {
                         let mut settings = self.state.preferences.clay.clone().unwrap_or_default();
@@ -1774,6 +2067,7 @@ impl BrowserApp {
             .tasks
             .iter()
             .enumerate()
+            .filter(|(_, task)| self.selected_task_lists.contains(&task.list_id))
             .map(|(index, task)| ChecklistRow {
                 task: Some(task.id),
                 deadline: task.deadline,
@@ -1781,15 +2075,19 @@ impl BrowserApp {
                 complete: task.complete,
                 color: task.color,
                 position: Some(index),
+                list_id: task.list_id,
             })
             .collect();
         // Older files keep their independent deadlines until a row is acted on.
         for deadline in &self.state.deadlines {
-            if !self
-                .state
-                .tasks
-                .iter()
-                .any(|task| task.deadline == Some(deadline.id))
+            if self
+                .selected_task_lists
+                .contains(&self.state.default_list_id())
+                && !self
+                    .state
+                    .tasks
+                    .iter()
+                    .any(|task| task.deadline == Some(deadline.id))
             {
                 rows.push(ChecklistRow {
                     task: None,
@@ -1798,209 +2096,257 @@ impl BrowserApp {
                     complete: false,
                     color: None,
                     position: None,
+                    list_id: self.state.default_list_id(),
                 });
             }
         }
         for row in rows {
-            ui.push_id(("checklist-row", row.task, row.deadline), |ui| {
-                let mut color_control = None;
-                ui.horizontal_wrapped(|ui| {
-                    let featured = row.deadline.is_some() && row.deadline == self.state.featured;
-                    if ui
-                        .add_enabled(
-                            !row.complete,
-                            egui::Button::new(
-                                RichText::new(if featured { "★" } else { "☆" })
-                                    .color(if featured { ACCENT } else { MUTED }),
-                            )
-                            .small(),
-                        )
-                        .on_hover_text("Star a dated task for the countdown")
-                        .clicked()
-                    {
-                        if featured {
-                            self.state.featured = None;
-                            self.changed();
-                        } else {
-                            match self.row_task(&row) {
-                                Ok(id) if self.state.task_deadline(id).is_some() => {
-                                    let result = self.state.feature_task(id);
-                                    if result.is_ok() {
-                                        self.reveal_task_date(id);
-                                    }
-                                    self.apply(result);
-                                }
-                                Ok(id) => self.begin_task_date(id, true),
-                                Err(error) => self.status = error,
-                            }
-                        }
-                    }
-                    let mut complete = row.complete;
-                    if ui.checkbox(&mut complete, "").changed() {
-                        let result = self.row_task(&row).and_then(|id| {
-                            self.state.toggle_task(id)?;
-                            if complete && self.task_date_edit == Some(id) {
-                                self.feature_after_date = false;
-                            }
-                            Ok(())
-                        });
-                        self.apply(result);
-                    }
-                    if let Some(deadline) = row.deadline {
-                        let response = ui.add(
-                            egui::Button::new(" ")
-                                .selected(self.task_color_edit == Some(deadline))
-                                .min_size(egui::vec2(30.0, 30.0)),
-                        );
-                        color_control = Some(response.id);
-                        let label =
-                            format!("Color: {}", row.color.map_or("None", TaskColor::label));
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::Button,
-                                ui.is_enabled(),
-                                &label,
-                            )
-                        });
-                        if response.has_focus() {
-                            self.focus = 1;
-                        }
-                        task_mark(ui, response.rect.center(), row.color, row.complete, 4.0);
-                        if response.on_hover_text(label).clicked() {
-                            self.task_color_edit = if self.task_color_edit == Some(deadline) {
-                                None
-                            } else {
-                                Some(deadline)
-                            };
-                        }
-                    }
-                    let text =
-                        RichText::new(&row.title).color(if row.complete { MUTED } else { TEXT });
-                    ui.label(if row.complete {
-                        text.strikethrough()
-                    } else {
-                        text
-                    });
-                    let date = row
-                        .deadline
-                        .and_then(|id| {
-                            self.state
-                                .deadlines
-                                .iter()
-                                .find(|deadline| deadline.id == id)
-                        })
-                        .map(|deadline| {
-                            deadline
-                                .at
-                                .with_timezone(&Local)
-                                .format("%d %b · %H:%M")
-                                .to_string()
-                        });
-                    if ui.small_button(date.as_deref().unwrap_or("date")).clicked() {
-                        match self.row_task(&row) {
-                            Ok(id) => {
-                                self.begin_task_date(id, false);
-                                if row.task.is_none() {
-                                    self.changed();
-                                }
-                            }
-                            Err(error) => self.status = error,
-                        }
-                    }
-                    if ui.small_button("edit").clicked() {
-                        match self.row_task(&row) {
-                            Ok(id) => {
-                                self.task_edit = Some(id);
-                                self.task_text = row.title.clone();
-                                if row.task.is_none() {
-                                    self.changed();
-                                }
-                            }
-                            Err(error) => self.status = error,
-                        }
-                    }
-                    if ui
-                        .add_enabled(
-                            row.position.is_some_and(|position| position > 0),
-                            egui::Button::new("↑").small(),
-                        )
-                        .clicked()
-                    {
-                        if let (Some(id), Some(position)) = (row.task, row.position) {
-                            let result = self.state.move_task(id, position);
-                            self.apply(result);
-                        }
-                    }
-                    if ui
-                        .add_enabled(
-                            row.position
-                                .is_some_and(|position| position + 1 < self.state.tasks.len()),
-                            egui::Button::new("↓").small(),
-                        )
-                        .clicked()
-                    {
-                        if let (Some(id), Some(position)) = (row.task, row.position) {
-                            let result = self.state.move_task(id, position + 2);
-                            self.apply(result);
-                        }
-                    }
-                    if ui.small_button("del").clicked() {
-                        let result = match row.task {
-                            Some(id) => self.state.remove_task(id),
-                            None => self.state.remove_deadline(row.deadline.unwrap_or(0)),
-                        };
-                        self.apply(result);
-                        if row.task.is_some() && self.task_edit == row.task {
-                            self.task_edit = None;
-                            self.task_text.clear();
-                        }
-                        if row.task.is_some() && self.task_date_edit == row.task {
-                            self.task_date_edit = None;
-                        }
-                        if self.task_color_edit == row.deadline {
-                            self.task_color_edit = None;
-                        }
-                    }
-                });
-                if row.deadline.is_some() && self.task_color_edit == row.deadline {
-                    ui.horizontal_wrapped(|ui| {
-                        for color in std::iter::once(None).chain(TaskColor::ALL.map(Some)) {
-                            let text = RichText::new(color.map_or("None", TaskColor::label))
-                                .color(task_color(color, false));
+            let previous = row.position.and_then(|position| {
+                self.state.tasks[..position]
+                    .iter()
+                    .rposition(|task| task.list_id == row.list_id)
+            });
+            let next = row.position.and_then(|position| {
+                self.state
+                    .tasks
+                    .iter()
+                    .enumerate()
+                    .skip(position + 1)
+                    .find(|(_, task)| task.list_id == row.list_id)
+                    .map(|(index, _)| index)
+            });
+            let combined = self.selected_task_lists.len() > 1;
+            let list_index = self
+                .state
+                .task_lists
+                .iter()
+                .position(|list| list.id == row.list_id)
+                .unwrap_or(0);
+            let fill = if combined {
+                web_theme::task_list_fill(list_index)
+            } else {
+                Color32::TRANSPARENT
+            };
+            egui::Frame::default()
+                .fill(fill)
+                .inner_margin(egui::Margin::same(if combined { 3 } else { 0 }))
+                .show(ui, |ui| {
+                    ui.push_id(("checklist-row", row.task, row.deadline), |ui| {
+                        let mut color_control = None;
+                        ui.horizontal_wrapped(|ui| {
+                            let featured =
+                                row.deadline.is_some() && row.deadline == self.state.featured;
                             if ui
-                                .add(
-                                    egui::Button::new(text)
-                                        .selected(row.color == color)
-                                        .min_size(egui::vec2(0.0, 30.0)),
+                                .add_enabled(
+                                    !row.complete,
+                                    egui::Button::new(
+                                        RichText::new(if featured { "★" } else { "☆" })
+                                            .color(if featured { ACCENT } else { MUTED }),
+                                    )
+                                    .small(),
                                 )
+                                .on_hover_text("Star a dated task for the countdown")
                                 .clicked()
                             {
-                                let result = self
-                                    .row_task(&row)
-                                    .and_then(|id| self.state.set_task_color(id, color));
-                                if result.is_ok() {
-                                    self.task_color_edit = None;
-                                    if let Some(id) = color_control {
-                                        ui.memory_mut(|memory| memory.request_focus(id));
+                                if featured {
+                                    self.state.featured = None;
+                                    self.changed();
+                                } else {
+                                    match self.row_task(&row) {
+                                        Ok(id) if self.state.task_deadline(id).is_some() => {
+                                            let result = self.state.feature_task(id);
+                                            if result.is_ok() {
+                                                self.reveal_task_date(id);
+                                            }
+                                            self.apply(result);
+                                        }
+                                        Ok(id) => self.begin_task_date(id, true),
+                                        Err(error) => self.status = error,
                                     }
-                                    ui.ctx().request_repaint();
                                 }
+                            }
+                            let mut complete = row.complete;
+                            if ui.checkbox(&mut complete, "").changed() {
+                                let result = self.row_task(&row).and_then(|id| {
+                                    self.state.toggle_task(id)?;
+                                    if complete && self.task_date_edit == Some(id) {
+                                        self.feature_after_date = false;
+                                    }
+                                    Ok(())
+                                });
                                 self.apply(result);
                             }
+                            if let Some(deadline) = row.deadline {
+                                let response = ui.add(
+                                    egui::Button::new(" ")
+                                        .selected(self.task_color_edit == Some(deadline))
+                                        .min_size(egui::vec2(30.0, 30.0)),
+                                );
+                                color_control = Some(response.id);
+                                let label = format!(
+                                    "Color: {}",
+                                    row.color.map_or("None", TaskColor::label)
+                                );
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Button,
+                                        ui.is_enabled(),
+                                        &label,
+                                    )
+                                });
+                                if response.has_focus() {
+                                    self.focus = 1;
+                                }
+                                task_mark(ui, response.rect.center(), row.color, row.complete, 4.0);
+                                if response.on_hover_text(label).clicked() {
+                                    self.task_color_edit = if self.task_color_edit == Some(deadline)
+                                    {
+                                        None
+                                    } else {
+                                        Some(deadline)
+                                    };
+                                }
+                            }
+                            let text = RichText::new(&row.title).color(if row.complete {
+                                MUTED
+                            } else {
+                                TEXT
+                            });
+                            ui.label(if row.complete {
+                                text.strikethrough()
+                            } else {
+                                text
+                            });
+                            if combined {
+                                if let Some(list) = self.state.task_list(row.list_id) {
+                                    ui.label(RichText::new(&list.name).small().color(MUTED));
+                                }
+                            }
+                            let date = row
+                                .deadline
+                                .and_then(|id| {
+                                    self.state
+                                        .deadlines
+                                        .iter()
+                                        .find(|deadline| deadline.id == id)
+                                })
+                                .map(|deadline| {
+                                    deadline
+                                        .at
+                                        .with_timezone(&Local)
+                                        .format("%d %b · %H:%M")
+                                        .to_string()
+                                });
+                            if ui.small_button(date.as_deref().unwrap_or("date")).clicked() {
+                                match self.row_task(&row) {
+                                    Ok(id) => {
+                                        self.begin_task_date(id, false);
+                                        if row.task.is_none() {
+                                            self.changed();
+                                        }
+                                    }
+                                    Err(error) => self.status = error,
+                                }
+                            }
+                            if ui.small_button("edit").clicked() {
+                                match self.row_task(&row) {
+                                    Ok(id) => {
+                                        self.task_edit = Some(id);
+                                        self.task_text = row.title.clone();
+                                        self.task_edit_list = Some(row.list_id);
+                                        if row.task.is_none() {
+                                            self.changed();
+                                        }
+                                    }
+                                    Err(error) => self.status = error,
+                                }
+                            }
+                            if ui
+                                .add_enabled(previous.is_some(), egui::Button::new("↑").small())
+                                .clicked()
+                            {
+                                if let (Some(id), Some(position)) = (row.task, previous) {
+                                    let result = self.state.move_task(id, position + 1);
+                                    self.apply(result);
+                                }
+                            }
+                            if ui
+                                .add_enabled(next.is_some(), egui::Button::new("↓").small())
+                                .clicked()
+                            {
+                                if let (Some(id), Some(position)) = (row.task, next) {
+                                    let result = self.state.move_task(id, position + 1);
+                                    self.apply(result);
+                                }
+                            }
+                            if ui.small_button("del").clicked() {
+                                let result = match row.task {
+                                    Some(id) => self.state.remove_task(id),
+                                    None => self.state.remove_deadline(row.deadline.unwrap_or(0)),
+                                };
+                                self.apply(result);
+                                if row.task.is_some() && self.task_edit == row.task {
+                                    self.task_edit = None;
+                                    self.task_edit_list = None;
+                                    self.task_text.clear();
+                                }
+                                if row.task.is_some() && self.task_date_edit == row.task {
+                                    self.task_date_edit = None;
+                                }
+                                if self.task_color_edit == row.deadline {
+                                    self.task_color_edit = None;
+                                }
+                            }
+                        });
+                        if row.deadline.is_some() && self.task_color_edit == row.deadline {
+                            ui.horizontal_wrapped(|ui| {
+                                for color in std::iter::once(None).chain(TaskColor::ALL.map(Some)) {
+                                    let text =
+                                        RichText::new(color.map_or("None", TaskColor::label))
+                                            .color(task_color(color, false));
+                                    if ui
+                                        .add(
+                                            egui::Button::new(text)
+                                                .selected(row.color == color)
+                                                .min_size(egui::vec2(0.0, 30.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        let result = self
+                                            .row_task(&row)
+                                            .and_then(|id| self.state.set_task_color(id, color));
+                                        if result.is_ok() {
+                                            self.task_color_edit = None;
+                                            if let Some(id) = color_control {
+                                                ui.memory_mut(|memory| memory.request_focus(id));
+                                            }
+                                            ui.ctx().request_repaint();
+                                        }
+                                        self.apply(result);
+                                    }
+                                }
+                            });
+                        }
+                        let row_id = row.task.or_else(|| {
+                            self.state
+                                .tasks
+                                .iter()
+                                .find(|task| task.deadline == row.deadline)
+                                .map(|task| task.id)
+                        });
+                        if let Some(id) = row_id.filter(|id| {
+                            self.task_date_edit == Some(*id) && !self.task_date_timeline
+                        }) {
+                            self.task_date_editor(ui, id);
                         }
                     });
-                }
-                let row_id = row.task.or_else(|| {
-                    self.state
-                        .tasks
-                        .iter()
-                        .find(|task| task.deadline == row.deadline)
-                        .map(|task| task.id)
                 });
-                if let Some(id) =
-                    row_id.filter(|id| self.task_date_edit == Some(*id) && !self.task_date_timeline)
-                {
-                    self.task_date_editor(ui, id);
+        }
+        if self.task_edit.is_some() && self.state.task_lists.len() > 1 {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("List");
+                for list in &self.state.task_lists {
+                    ui.selectable_value(&mut self.task_edit_list, Some(list.id), &list.name);
                 }
             });
         }
@@ -2014,6 +2360,12 @@ impl BrowserApp {
                     .hint_text("Add new task")
                     .desired_width((ui.available_width() - 55.0).max(80.0)),
             );
+            response.clone().on_hover_text(format!(
+                "New tasks go to {}",
+                self.state
+                    .task_list(self.active_task_list)
+                    .map_or("Tasks", |list| list.name.as_str())
+            ));
             if response.has_focus() {
                 self.focus = 1;
             }
@@ -2029,34 +2381,52 @@ impl BrowserApp {
                 || enter
             {
                 let result = if let Some(id) = self.task_edit {
-                    self.state.edit_task(id, &self.task_text)
+                    let list = self.task_edit_list.unwrap_or(self.active_task_list);
+                    jig::model::title(&self.task_text).and_then(|_| {
+                        if self.state.task_list(list).is_none() {
+                            return Err("Task list not found".into());
+                        }
+                        self.state.edit_task(id, &self.task_text)?;
+                        self.state.set_task_list(id, list)
+                    })
                 } else {
-                    self.state.add_task(&self.task_text).map(|_| ())
+                    self.state
+                        .add_task_to_list(self.active_task_list, &self.task_text)
+                        .map(|_| ())
                 };
                 if result.is_ok() {
                     self.task_text.clear();
                     self.task_edit = None;
+                    self.task_edit_list = None;
                 }
                 self.apply(result);
             }
         });
         if self.task_edit.is_some() && ui.small_button("Cancel edit").clicked() {
             self.task_edit = None;
+            self.task_edit_list = None;
             self.task_text.clear();
         }
-        let completed = self.state.tasks.iter().filter(|task| task.complete).count();
+        let completed = self
+            .state
+            .tasks
+            .iter()
+            .filter(|task| task.complete && self.selected_task_lists.contains(&task.list_id))
+            .count();
         if completed > 0 {
             ui.add_space(4.0);
             if self.confirm_clear_completed {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(format!("Delete {completed} completed tasks?"));
                     if ui.small_button("Confirm").clicked() {
-                        self.state.remove_completed_tasks();
+                        self.state
+                            .remove_completed_tasks_in_lists(&self.selected_task_lists);
                         if self
                             .task_edit
                             .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
                         {
                             self.task_edit = None;
+                            self.task_edit_list = None;
                             self.task_text.clear();
                         }
                         if self
@@ -2374,7 +2744,8 @@ impl BrowserApp {
         }
     }
 
-    fn calendar(&mut self, ui: &mut Ui) {
+    fn calendar(&mut self, ui: &mut Ui, height: f32) {
+        let top = ui.cursor().top();
         ui.horizontal(|ui| {
             if ui
                 .selectable_label(!self.timeline_view, "Calendar")
@@ -2395,13 +2766,29 @@ impl BrowserApp {
                 self.timeline_view = true;
             }
         });
+        let today = Local::now().date_naive();
+        let weather_date = self.calendar_weather_date.unwrap_or(today);
+        if self.weather.header(ui, weather_date) {
+            self.state.preferences.weather = self.weather.config().cloned();
+            if !self.demo {
+                self.changed();
+            }
+        }
         if !self.timeline_view {
             self.timeline.cancel_gesture();
             self.calendar_month(ui);
             return;
         }
-        let today = Local::now().date_naive();
-        let action = self.timeline.ui(ui, &self.state, today);
+        // Give the chart the panel's remaining height as the task list grows.
+        // Weather stays above it and never occupies the space below the rows.
+        let rows_height = (height - (ui.cursor().top() - top) - 60.0).max(180.0);
+        let action = self.timeline.ui(
+            ui,
+            &self.state,
+            today,
+            rows_height,
+            &self.selected_task_lists,
+        );
         if self.timeline.focused {
             self.focus = 2;
         }
@@ -2478,6 +2865,7 @@ impl BrowserApp {
                 self.month = today.month();
                 self.selected_date = today;
                 self.calendar_weather_date = Some(today);
+                ui.ctx().request_repaint();
             }
         });
         let today = Local::now().date_naive();
@@ -2617,6 +3005,7 @@ impl BrowserApp {
                             if clicked {
                                 self.selected_date = *day;
                                 self.calendar_weather_date = Some(*day);
+                                ui.ctx().request_repaint();
                             }
                         } else {
                             ui.allocate_space(egui::vec2(size, 34.0));
@@ -2629,19 +3018,6 @@ impl BrowserApp {
         }
         ui.add_space(6.0);
         self.calendar_tasks(ui);
-        if self.calendar_weather_date == Some(self.selected_date)
-            && self.selected_date.year() == self.year
-            && self.selected_date.month() == self.month
-        {
-            ui.add_space(6.0);
-            if self.weather.controls(ui) {
-                self.state.preferences.weather = self.weather.config().cloned();
-                if !self.demo {
-                    self.changed();
-                }
-            }
-            self.weather.selected_day(ui, self.selected_date);
-        }
     }
 
     fn calendar_tasks(&mut self, ui: &mut Ui) {
@@ -2740,6 +3116,7 @@ impl eframe::App for BrowserApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sanitize_task_lists();
         if !ctx.style().visuals.dark_mode {
             ctx.set_theme(egui::ThemePreference::Dark);
         }
@@ -2912,9 +3289,18 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
-            self.timeline.cancel_gesture();
-            self.expanded = !self.expanded;
-            self.focus_after_resize(ctx);
+            let focused = ctx.memory(|memory| memory.focused());
+            if let Some((_, list)) = self
+                .task_list_tab_ids
+                .iter()
+                .find(|(id, _)| Some(*id) == focused)
+            {
+                self.begin_task_list_rename(*list, ctx);
+            } else {
+                self.timeline.cancel_gesture();
+                self.expanded = !self.expanded;
+                self.focus_after_resize(ctx);
+            }
         }
         if self.sheet_workspace && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.confirm = None;
@@ -2922,7 +3308,9 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
-            if !self.timeline.cancel_gesture() {
+            let list_editor =
+                self.task_list_rename.take().is_some() || self.task_list_remove.take().is_some();
+            if !list_editor && !self.timeline.cancel_gesture() {
                 self.expanded = false;
             }
             self.confirm = None;
@@ -3016,6 +3404,12 @@ impl eframe::App for BrowserApp {
             egui::ScrollArea::vertical()
                 .id_salt("dashboard")
                 .show(ui, |ui| {
+                    let top = ui.cursor().top();
+                    if !self.tasks_workspace && (!self.expanded || matches!(self.focus, 1 | 2)) {
+                        self.task_list_tabs(ui);
+                        ui.add_space(4.0);
+                    }
+                    let height = (height - (ui.cursor().top() - top)).max(230.0);
                     if self.tasks_workspace {
                         self.tasks_main(ui, height - 8.0);
                     } else if self.expanded {

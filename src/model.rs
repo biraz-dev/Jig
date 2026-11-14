@@ -49,11 +49,53 @@ impl TaskColor {
         }
     }
 }
+
+pub const MAX_TASK_LISTS: usize = 5;
+pub const DEFAULT_TASK_LIST_ID: u64 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TaskList {
+    pub id: u64,
+    pub name: String,
+}
+
+fn default_task_list_id() -> u64 {
+    DEFAULT_TASK_LIST_ID
+}
+
+fn is_default_task_list_id(id: &u64) -> bool {
+    *id == DEFAULT_TASK_LIST_ID
+}
+
+fn default_task_lists() -> Vec<TaskList> {
+    vec![TaskList {
+        id: DEFAULT_TASK_LIST_ID,
+        name: "Tasks".into(),
+    }]
+}
+
+fn is_default_task_lists(lists: &[TaskList]) -> bool {
+    matches!(lists, [list] if list.id == DEFAULT_TASK_LIST_ID && list.name == "Tasks")
+}
+
+fn task_list_name(name: &str) -> Result<String> {
+    let name = title(name)?;
+    if name.chars().count() > 64 {
+        return Err("Task list names must be at most 64 characters".into());
+    }
+    Ok(name)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: u64,
     pub text: String,
     pub complete: bool,
+    #[serde(
+        default = "default_task_list_id",
+        skip_serializing_if = "is_default_task_list_id"
+    )]
+    pub list_id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +107,7 @@ pub struct Task {
 #[derive(Clone, Copy, Debug)]
 pub struct CalendarTask<'a> {
     pub task_id: Option<u64>,
+    pub list_id: u64,
     pub deadline_id: u64,
     pub title: &'a str,
     pub complete: bool,
@@ -115,6 +158,11 @@ pub struct State {
     pub version: u32,
     pub preferences: Preferences,
     pub history: Vec<Calculation>,
+    #[serde(
+        default = "default_task_lists",
+        skip_serializing_if = "is_default_task_lists"
+    )]
+    pub task_lists: Vec<TaskList>,
     pub tasks: Vec<Task>,
     pub deadlines: Vec<Deadline>,
     pub entries: Vec<Entry>,
@@ -128,6 +176,7 @@ impl Default for State {
             version: 1,
             preferences: Preferences::default(),
             history: vec![],
+            task_lists: default_task_lists(),
             tasks: vec![],
             deadlines: vec![],
             entries: vec![],
@@ -210,6 +259,20 @@ impl State {
         if let Some(workbook) = &self.workbook {
             workbook.validate()?;
         }
+        if self.task_lists.is_empty() || self.task_lists.len() > MAX_TASK_LISTS {
+            return Err("Jig needs between one and five task lists".into());
+        }
+        let mut list_ids = std::collections::HashSet::new();
+        let mut list_names = std::collections::HashSet::new();
+        for list in &self.task_lists {
+            if list.id == 0 || !list_ids.insert(list.id) {
+                return Err("Invalid or duplicate task list IDs".into());
+            }
+            let name = task_list_name(&list.name)?;
+            if name != list.name || !list_names.insert(name.to_lowercase()) {
+                return Err("Task list names must be trimmed and unique".into());
+            }
+        }
         if self.history.iter().any(|h| {
             !h.result.is_finite()
                 || h.expression.len() > 4096
@@ -244,6 +307,9 @@ impl State {
         }
         let mut linked = std::collections::HashSet::new();
         for task in &self.tasks {
+            if !list_ids.contains(&task.list_id) {
+                return Err("Task list is missing".into());
+            }
             if let Some(deadline) = task.deadline {
                 let item = self
                     .deadlines
@@ -289,12 +355,108 @@ impl State {
         });
         Ok(result)
     }
+    /// Existing callers and legacy deadline-only records use the first list.
+    pub fn default_list_id(&self) -> u64 {
+        self.task_lists
+            .first()
+            .map_or(DEFAULT_TASK_LIST_ID, |list| list.id)
+    }
+
+    pub fn task_list(&self, id: u64) -> Option<&TaskList> {
+        self.task_lists.iter().find(|list| list.id == id)
+    }
+
+    pub fn add_task_list(&mut self, name: &str) -> Result<u64> {
+        if self.task_lists.len() >= MAX_TASK_LISTS {
+            return Err("Jig supports at most five task lists".into());
+        }
+        let name = task_list_name(name)?;
+        if self
+            .task_lists
+            .iter()
+            .any(|list| list.name.to_lowercase() == name.to_lowercase())
+        {
+            return Err("A task list with this name already exists".into());
+        }
+        let id = self
+            .task_lists
+            .iter()
+            .map(|list| list.id)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or("No available task list IDs")?;
+        self.task_lists.push(TaskList { id, name });
+        Ok(id)
+    }
+
+    pub fn rename_task_list(&mut self, id: u64, name: &str) -> Result<()> {
+        let name = task_list_name(name)?;
+        let index = self
+            .task_lists
+            .iter()
+            .position(|list| list.id == id)
+            .ok_or("Task list not found")?;
+        if self
+            .task_lists
+            .iter()
+            .any(|list| list.id != id && list.name.to_lowercase() == name.to_lowercase())
+        {
+            return Err("A task list with this name already exists".into());
+        }
+        self.task_lists[index].name = name;
+        Ok(())
+    }
+
+    /// Removing a tab moves its tasks, never their deadlines or other metadata.
+    pub fn remove_task_list(&mut self, id: u64, target: u64) -> Result<()> {
+        if self.task_lists.len() <= 1 {
+            return Err("Keep at least one task list".into());
+        }
+        let index = self
+            .task_lists
+            .iter()
+            .position(|list| list.id == id)
+            .ok_or("Task list not found")?;
+        if id == target || self.task_list(target).is_none() {
+            return Err("Choose a different existing task list for these tasks".into());
+        }
+        for task in &mut self.tasks {
+            if task.list_id == id {
+                task.list_id = target;
+            }
+        }
+        self.task_lists.remove(index);
+        Ok(())
+    }
+
+    pub fn set_task_list(&mut self, id: u64, list_id: u64) -> Result<()> {
+        if self.task_list(list_id).is_none() {
+            return Err("Task list not found".into());
+        }
+        let task = self
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == id)
+            .ok_or("Task not found")?;
+        task.list_id = list_id;
+        Ok(())
+    }
+
     pub fn add_task(&mut self, text: &str) -> Result<u64> {
+        self.add_task_to_list(self.default_list_id(), text)
+    }
+
+    pub fn add_task_to_list(&mut self, list_id: u64, text: &str) -> Result<u64> {
+        if self.task_list(list_id).is_none() {
+            return Err("Task list not found".into());
+        }
         let id = self.id()?;
         self.tasks.push(Task {
             id,
             text: title(text)?,
             complete: false,
+            list_id,
             deadline: None,
             start: None,
             color: None,
@@ -341,14 +503,20 @@ impl State {
         Ok(())
     }
     pub fn remove_completed_tasks(&mut self) -> usize {
+        let lists: Vec<_> = self.task_lists.iter().map(|list| list.id).collect();
+        self.remove_completed_tasks_in_lists(&lists)
+    }
+    /// Hidden lists are untouched when the visible checklist is cleared.
+    pub fn remove_completed_tasks_in_lists(&mut self, list_ids: &[u64]) -> usize {
         let before = self.tasks.len();
         let removed: Vec<_> = self
             .tasks
             .iter()
-            .filter(|task| task.complete)
+            .filter(|task| task.complete && list_ids.contains(&task.list_id))
             .filter_map(|task| task.deadline)
             .collect();
-        self.tasks.retain(|task| !task.complete);
+        self.tasks
+            .retain(|task| !task.complete || !list_ids.contains(&task.list_id));
         self.deadlines
             .retain(|deadline| !removed.contains(&deadline.id));
         if self.featured.is_some_and(|id| removed.contains(&id)) {
@@ -390,6 +558,7 @@ impl State {
                     .find(|task| task.deadline == Some(deadline.id));
                 CalendarTask {
                     task_id: task.map(|task| task.id),
+                    list_id: task.map_or_else(|| self.default_list_id(), |task| task.list_id),
                     deadline_id: deadline.id,
                     title: task.map_or(deadline.title.as_str(), |task| task.text.as_str()),
                     complete: task.is_some_and(|task| task.complete),

@@ -160,8 +160,15 @@ impl WeatherPanel {
         }
     }
 
+    /// Keep weather above the calendar and timeline, including inline settings.
     /// Returns true only when the location, unit or enabled setting changes.
-    pub fn controls(&mut self, ui: &mut Ui) -> bool {
+    pub fn header(&mut self, ui: &mut Ui, date: NaiveDate) -> bool {
+        let changed = self.controls(ui);
+        self.summary(ui, date);
+        changed
+    }
+
+    fn controls(&mut self, ui: &mut Ui) -> bool {
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             if let Some(config) = self.config.clone() {
@@ -289,19 +296,13 @@ impl WeatherPanel {
         ))
     }
 
-    pub fn selected_day(&self, ui: &mut Ui, date: NaiveDate) {
+    fn summary(&self, ui: &mut Ui, date: NaiveDate) {
         if let Some(day) = self.day(date) {
-            ui.label(
-                RichText::new(format!(
-                    "{} · High {} · Low {}",
-                    date.format("%a %d %b"),
-                    temperature(day.high, self.unit()),
-                    temperature(day.low, self.unit())
-                ))
-                .color(ACCENT),
-            );
             let mut detail = format!(
-                "Rain {} · Mean humidity {}",
+                "{} · High {} · Low {} · Rain {} · Mean humidity {}",
+                date.format("%a %d %b"),
+                temperature(day.high, self.unit()),
+                temperature(day.low, self.unit()),
                 percentage(day.rain_probability),
                 percentage(day.humidity_mean)
             );
@@ -310,7 +311,7 @@ impl WeatherPanel {
                 detail.push_str(" · ");
                 detail.push_str(condition);
             }
-            ui.label(RichText::new(detail).size(12.0).color(MUTED));
+            ui.label(RichText::new(detail).size(12.0).color(ACCENT));
         } else if self.config.is_some() {
             let message = if self.cache.is_none() && self.pending {
                 "Loading weather…".to_owned()

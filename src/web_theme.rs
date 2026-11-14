@@ -19,3 +19,15 @@ pub const ACTIVE: Color32 = rgb(palette::ACTIVE);
 pub const ERROR: Color32 = rgb(palette::ERROR);
 pub const SUCCESS: Color32 = rgb(palette::SUCCESS);
 pub const WEEKEND: Color32 = rgb(palette::WEEKEND);
+
+/// Quiet, warm graphite shades shared by combined task-list views and tabs.
+pub fn task_list_fill(index: usize) -> Color32 {
+    const SHADES: [[u8; 3]; 5] = [
+        [37, 33, 30],
+        [44, 39, 35],
+        [50, 44, 39],
+        [40, 36, 33],
+        [47, 42, 38],
+    ];
+    rgb(SHADES[index % SHADES.len()])
+}

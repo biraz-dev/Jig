@@ -1009,6 +1009,28 @@ impl State {
         self.tasks.insert(position - 1, task);
         Ok(())
     }
+
+    /// Place a task before/after another task without changing list membership.
+    pub fn move_task_relative(&mut self, id: u64, target: u64, after: bool) -> Result<()> {
+        let index = self
+            .tasks
+            .iter()
+            .position(|task| task.id == id)
+            .ok_or("Task not found")?;
+        let target_index = self
+            .tasks
+            .iter()
+            .position(|task| task.id == target)
+            .ok_or("Target task not found")?;
+        if index == target_index {
+            return Ok(());
+        }
+        let task = self.tasks.remove(index);
+        let destination = target_index - usize::from(index < target_index) + usize::from(after);
+        self.tasks.insert(destination, task);
+        Ok(())
+    }
+
     pub fn set_deadline(&mut self, id: Option<u64>, text: &str, at: &str) -> Result<u64> {
         let title = title(text)?;
         let at = parse_deadline(at)?;

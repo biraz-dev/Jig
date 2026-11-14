@@ -110,6 +110,7 @@ impl DateRange {
 pub struct TimelineRow<'a> {
     pub task_id: Option<u64>,
     pub deadline_id: Option<u64>,
+    pub list_id: u64,
     pub title: &'a str,
     pub complete: bool,
     pub color: Option<TaskColor>,
@@ -126,6 +127,7 @@ pub fn rows<'a, Tz: TimeZone>(state: &'a State, timezone: &Tz) -> Vec<TimelineRo
         .map(|task| TimelineRow {
             task_id: Some(task.id),
             deadline_id: task.deadline,
+            list_id: task.list_id,
             title: &task.text,
             complete: task.complete,
             color: task.color,
@@ -148,6 +150,7 @@ pub fn rows<'a, Tz: TimeZone>(state: &'a State, timezone: &Tz) -> Vec<TimelineRo
         rows.push(TimelineRow {
             task_id: None,
             deadline_id: Some(deadline.id),
+            list_id: state.default_list_id(),
             title: &deadline.title,
             complete: false,
             color: None,
@@ -156,6 +159,19 @@ pub fn rows<'a, Tz: TimeZone>(state: &'a State, timezone: &Tz) -> Vec<TimelineRo
         });
     }
     rows
+}
+
+/// A view of selected lists, retaining the same task and legacy deadline IDs.
+/// Repeated list IDs do not repeat rows; an empty selection shows no rows.
+pub fn rows_for_lists<'a, Tz: TimeZone>(
+    state: &'a State,
+    timezone: &Tz,
+    selected: &[u64],
+) -> Vec<TimelineRow<'a>> {
+    rows(state, timezone)
+        .into_iter()
+        .filter(|row| selected.contains(&row.list_id))
+        .collect()
 }
 
 /// Monday through Sunday, or the full calendar month containing the anchor.

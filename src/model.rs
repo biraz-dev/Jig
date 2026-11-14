@@ -52,6 +52,8 @@ impl TaskColor {
 
 pub const MAX_TASK_LISTS: usize = 5;
 pub const DEFAULT_TASK_LIST_ID: u64 = 1;
+pub const MAX_NOTES: usize = 81;
+pub const MAX_NOTE_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TaskList {
@@ -102,6 +104,54 @@ pub struct Task {
     pub start: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<TaskColor>,
+    /// Full source note text, retained when a note becomes a checklist task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
+/// A converted task's inactive metadata. Its deadline is not part of the active
+/// calendar or Gantt while the record is a note.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NoteTaskOrigin {
+    pub complete: bool,
+    pub list_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<TaskColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<Deadline>,
+    pub was_featured: bool,
+}
+
+impl NoteTaskOrigin {
+    fn validate(&self) -> Result<()> {
+        if self.list_id == 0 {
+            return Err("Invalid archived task list ID".into());
+        }
+        if let Some(deadline) = &self.deadline {
+            title(&deadline.title)?;
+            if self.start.is_some_and(|start| start > deadline.at) {
+                return Err("Archived task start must be on or before its deadline".into());
+            }
+        } else if self.start.is_some() {
+            return Err("Archived task start is missing its deadline".into());
+        }
+        if self.was_featured && (self.complete || self.deadline.is_none()) {
+            return Err("Invalid archived featured task".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Note {
+    pub id: u64,
+    pub text: String,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_origin: Option<NoteTaskOrigin>,
 }
 /// A read-only calendar view, derived from existing task/deadline records.
 #[derive(Clone, Copy, Debug)]
@@ -164,6 +214,8 @@ pub struct State {
     )]
     pub task_lists: Vec<TaskList>,
     pub tasks: Vec<Task>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
     pub deadlines: Vec<Deadline>,
     pub entries: Vec<Entry>,
     pub featured: Option<u64>,
@@ -178,6 +230,7 @@ impl Default for State {
             history: vec![],
             task_lists: default_task_lists(),
             tasks: vec![],
+            notes: vec![],
             deadlines: vec![],
             entries: vec![],
             featured: None,
@@ -191,6 +244,39 @@ pub fn title(text: &str) -> Result<String> {
         return Err("Text must be nonempty and contain no control characters".into());
     }
     Ok(text.to_owned())
+}
+
+fn validate_note_body(text: &str) -> Result<()> {
+    if text.len() > MAX_NOTE_BYTES {
+        return Err("Note text must be at most 16 KiB".into());
+    }
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        || text
+            .as_bytes()
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| *byte == b'\r' && text.as_bytes().get(index + 1) != Some(&b'\n'))
+    {
+        return Err(
+            "Note text may contain newlines and tabs, but no other control characters".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate plain note text without trimming or changing its formatting.
+pub fn note_text(text: &str) -> Result<String> {
+    validate_note_body(text)?;
+    if text.trim().is_empty() {
+        return Err("Note text must not be blank".into());
+    }
+    Ok(text.to_owned())
+}
+
+fn first_note_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).find(|line| !line.is_empty())
 }
 pub fn parse_deadline(text: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(text)
@@ -273,6 +359,20 @@ impl State {
                 return Err("Task list names must be trimmed and unique".into());
             }
         }
+        if self.notes.len() > MAX_NOTES {
+            return Err("Jig supports at most 81 notes".into());
+        }
+        let mut unpinned_seen = false;
+        for note in &self.notes {
+            note_text(&note.text)?;
+            if note.pinned && unpinned_seen {
+                return Err("Pinned notes must precede unpinned notes".into());
+            }
+            unpinned_seen |= !note.pinned;
+            if let Some(origin) = &note.task_origin {
+                origin.validate()?;
+            }
+        }
         if self.history.iter().any(|h| {
             !h.result.is_finite()
                 || h.expression.len() > 4096
@@ -291,6 +391,14 @@ impl State {
             .map(|t| t.id)
             .chain(self.deadlines.iter().map(|d| d.id))
             .chain(self.entries.iter().map(|e| e.id))
+            .chain(self.notes.iter().map(|note| note.id))
+            .chain(self.notes.iter().filter_map(|note| {
+                note.task_origin
+                    .as_ref()?
+                    .deadline
+                    .as_ref()
+                    .map(|deadline| deadline.id)
+            }))
             .collect();
         let mut unique = std::collections::HashSet::new();
         if ids.iter().any(|id| *id == 0 || !unique.insert(*id)) {
@@ -307,6 +415,9 @@ impl State {
         }
         let mut linked = std::collections::HashSet::new();
         for task in &self.tasks {
+            if let Some(details) = &task.details {
+                validate_note_body(details)?;
+            }
             if !list_ids.contains(&task.list_id) {
                 return Err("Task list is missing".into());
             }
@@ -337,6 +448,14 @@ impl State {
             .map(|t| t.id)
             .chain(self.deadlines.iter().map(|d| d.id))
             .chain(self.entries.iter().map(|e| e.id))
+            .chain(self.notes.iter().map(|note| note.id))
+            .chain(self.notes.iter().filter_map(|note| {
+                note.task_origin
+                    .as_ref()?
+                    .deadline
+                    .as_ref()
+                    .map(|deadline| deadline.id)
+            }))
             .max()
             .unwrap_or(0)
             .checked_add(1)
@@ -355,6 +474,199 @@ impl State {
         });
         Ok(result)
     }
+
+    pub fn add_note(&mut self, text: &str) -> Result<u64> {
+        if self.notes.len() >= MAX_NOTES {
+            return Err("Jig supports at most 81 notes".into());
+        }
+        let text = note_text(text)?;
+        let id = self.id()?;
+        self.notes.push(Note {
+            id,
+            text,
+            pinned: false,
+            task_origin: None,
+        });
+        Ok(id)
+    }
+
+    pub fn edit_note(&mut self, id: u64, text: &str) -> Result<()> {
+        let text = note_text(text)?;
+        let note = self
+            .notes
+            .iter_mut()
+            .find(|note| note.id == id)
+            .ok_or("Note not found")?;
+        note.text = text;
+        Ok(())
+    }
+
+    pub fn remove_note(&mut self, id: u64) -> Result<()> {
+        let index = self
+            .notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or("Note not found")?;
+        self.notes.remove(index);
+        Ok(())
+    }
+
+    /// Pinned and unpinned groups each retain their existing relative order.
+    pub fn set_note_pinned(&mut self, id: u64, pinned: bool) -> Result<()> {
+        let index = self
+            .notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or("Note not found")?;
+        if self.notes[index].pinned == pinned {
+            return Ok(());
+        }
+        let mut note = self.notes.remove(index);
+        note.pinned = pinned;
+        let pinned_count = self.notes.iter().take_while(|note| note.pinned).count();
+        self.notes.insert(pinned_count, note);
+        Ok(())
+    }
+
+    /// Position is one-based within the note's pinned or unpinned group.
+    pub fn move_note(&mut self, id: u64, position: usize) -> Result<()> {
+        let index = self
+            .notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or("Note not found")?;
+        let group: Vec<_> = self
+            .notes
+            .iter()
+            .enumerate()
+            .filter(|(_, note)| note.pinned == self.notes[index].pinned)
+            .map(|(index, _)| index)
+            .collect();
+        if position == 0 || position > group.len() {
+            return Err("Position must be within this note's pinned or unpinned group".into());
+        }
+        let destination = group[position - 1];
+        let note = self.notes.remove(index);
+        self.notes.insert(destination, note);
+        Ok(())
+    }
+
+    /// Drag a note before/after another note in the same pinned group.
+    pub fn move_note_relative(&mut self, id: u64, target: u64, after: bool) -> Result<()> {
+        let index = self
+            .notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or("Note not found")?;
+        let target_index = self
+            .notes
+            .iter()
+            .position(|note| note.id == target)
+            .ok_or("Target note not found")?;
+        if self.notes[index].pinned != self.notes[target_index].pinned {
+            return Err("Move notes within their pinned or unpinned group".into());
+        }
+        if index == target_index {
+            return Ok(());
+        }
+        let note = self.notes.remove(index);
+        let destination = target_index - usize::from(index < target_index) + usize::from(after);
+        self.notes.insert(destination, note);
+        Ok(())
+    }
+
+    /// Move the existing task record to Notes. Its deadline becomes inactive
+    /// archived metadata, so neither the calendar nor Gantt retains a ghost row.
+    pub fn task_to_note(&mut self, id: u64) -> Result<u64> {
+        if self.notes.len() >= MAX_NOTES {
+            return Err("Jig supports at most 81 notes".into());
+        }
+        self.validate()?;
+        let index = self
+            .tasks
+            .iter()
+            .position(|task| task.id == id)
+            .ok_or("Task not found")?;
+        let task = &self.tasks[index];
+        let text = match &task.details {
+            Some(details) if first_note_line(details) == Some(task.text.as_str()) => {
+                details.clone()
+            }
+            Some(details) => format!("{}\n{details}", task.text),
+            None => task.text.clone(),
+        };
+        let text = note_text(&text)?;
+        let deadline = self.task_deadline(id).cloned();
+        let was_featured = task.deadline.is_some() && task.deadline == self.featured;
+        let note = Note {
+            id,
+            text,
+            pinned: false,
+            task_origin: Some(NoteTaskOrigin {
+                complete: task.complete,
+                list_id: task.list_id,
+                color: task.color,
+                start: task.start,
+                deadline,
+                was_featured,
+            }),
+        };
+        if let Some(deadline) = task.deadline {
+            self.deadlines.retain(|item| item.id != deadline);
+        }
+        if was_featured {
+            self.featured = None;
+        }
+        self.tasks.remove(index);
+        self.notes.push(note);
+        Ok(id)
+    }
+
+    /// Move a note into a chosen existing task list, restoring any archived
+    /// schedule without replacing another task's featured countdown.
+    pub fn note_to_task(&mut self, id: u64, list_id: u64) -> Result<u64> {
+        self.validate()?;
+        if self.task_list(list_id).is_none() {
+            return Err("Task list not found".into());
+        }
+        let index = self
+            .notes
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or("Note not found")?;
+        let note = &self.notes[index];
+        let text = title(first_note_line(&note.text).ok_or("Note text must not be blank")?)?;
+        let origin = note.task_origin.as_ref();
+        let mut deadline = origin.and_then(|origin| origin.deadline.clone());
+        if let Some(deadline) = &mut deadline {
+            deadline.title = text.clone();
+        }
+        let featured = if self.featured.is_none()
+            && origin.is_some_and(|origin| origin.was_featured && !origin.complete)
+        {
+            deadline.as_ref().map(|deadline| deadline.id)
+        } else {
+            self.featured
+        };
+        let task = Task {
+            id,
+            text,
+            complete: origin.is_some_and(|origin| origin.complete),
+            list_id,
+            deadline: deadline.as_ref().map(|deadline| deadline.id),
+            start: origin.and_then(|origin| origin.start),
+            color: origin.and_then(|origin| origin.color),
+            details: Some(note.text.clone()),
+        };
+        self.notes.remove(index);
+        self.tasks.push(task);
+        if let Some(deadline) = deadline {
+            self.deadlines.push(deadline);
+        }
+        self.featured = featured;
+        Ok(id)
+    }
+
     /// Existing callers and legacy deadline-only records use the first list.
     pub fn default_list_id(&self) -> u64 {
         self.task_lists
@@ -460,6 +772,7 @@ impl State {
             deadline: None,
             start: None,
             color: None,
+            details: None,
         });
         Ok(id)
     }
@@ -476,6 +789,19 @@ impl State {
                 item.title = text;
             }
         }
+        Ok(())
+    }
+
+    pub fn set_task_details(&mut self, id: u64, details: Option<&str>) -> Result<()> {
+        if let Some(details) = details {
+            validate_note_body(details)?;
+        }
+        let task = self
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == id)
+            .ok_or("Task not found")?;
+        task.details = details.map(str::to_owned);
         Ok(())
     }
     pub fn toggle_task(&mut self, id: u64) -> Result<()> {

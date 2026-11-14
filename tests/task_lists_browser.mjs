@@ -154,17 +154,18 @@ async function renameList(scene, index, name) {
   await scene.page.waitForFunction(({ key, index, name }) => JSON.parse(localStorage.getItem(key)).task_lists?.[index]?.name === name, { key: storageKey, index, name });
   scene.undo = true;
 }
-async function focusedControlPoint(page) {
+async function focusedControlPoint(page, limit = 180) {
   // The ordinary keyboard-focused button has Jig's active graphite fill.
   // Read its visible pixels; no Rust/widget state is exposed to this driver.
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  const point = await page.evaluate(async encoded => {
+  const point = await page.evaluate(async ({ encoded, limit }) => {
     const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
     const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
     const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
     const matches = index => [77, 49, 39].every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
-    for (let y = 42; y < Math.min(180, bitmap.height); y++) for (let x = 6; x < bitmap.width - 6; x++) {
+    const bottom = Math.min(limit, bitmap.height);
+    for (let y = 42; y < bottom; y++) for (let x = 6; x < bitmap.width - 6; x++) {
       const start = y * bitmap.width + x;
       if (seen[start] || !matches(start)) continue;
       const stack = [start], r = { left: x, right: x, top: y, bottom: y, count: 0 }; seen[start] = 1;
@@ -172,7 +173,7 @@ async function focusedControlPoint(page) {
         const index = stack.pop(), px = index % bitmap.width, py = Math.floor(index / bitmap.width);
         r.left = Math.min(r.left, px); r.right = Math.max(r.right, px); r.top = Math.min(r.top, py); r.bottom = Math.max(r.bottom, py); r.count++;
         for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
-          if (nx < 0 || nx >= bitmap.width || ny < 42 || ny >= 180) continue;
+          if (nx < 0 || nx >= bitmap.width || ny < 42 || ny >= bottom) continue;
           const next = ny * bitmap.width + nx;
           if (!seen[next] && matches(next)) { seen[next] = 1; stack.push(next); }
         }
@@ -181,8 +182,8 @@ async function focusedControlPoint(page) {
     }
     bitmap.close();
     const r = regions.sort((a, b) => a.top - b.top || b.count - a.count)[0];
-    return r ? { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
-  }, png.toString("base64"));
+    return r ? { ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
+  }, { encoded: png.toString("base64"), limit });
   assert.ok(point, "A focused list control must be visibly identifiable for touch/cap checks");
   return point;
 }
@@ -300,6 +301,33 @@ try {
   assert.ok(combined.amberShade > 100 && combined.sageShade > 100, "Combined lists must retain distinguishable graphite row shades alongside task colors");
   assert.equal(await raw(current.page), original, "Selecting or combining list tabs must not edit tasks or change the featured countdown");
   await capture(current.page, "task-lists-combined");
+
+  progress("drag a task grip between combined lists without changing membership or saving the preview");
+  await focusRowControl(current, 1);
+  const firstRow = await focusedControlPoint(current.page, 520);
+  await focusRowControl(current, 7); // Each visible dated task has six controls in its own list.
+  const lastRow = await focusedControlPoint(current.page, 520);
+  const taskGrip = { x: firstRow.left - 18, y: firstRow.y };
+  const afterLast = { x: lastRow.x + 110, y: lastRow.y + 12 };
+  const beginTaskDrag = async () => {
+    await current.page.mouse.move(taskGrip.x, taskGrip.y); await current.page.mouse.down(); await paint(current.page);
+    await current.page.mouse.move(afterLast.x, afterLast.y, { steps: 8 }); await paint(current.page);
+  };
+  await beginTaskDrag();
+  await expectState(current.page, fixture, "A task drag preview must not save or change any linked records");
+  await key(current.page, "Escape"); await current.page.mouse.up(); await paint(current.page);
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "Cancelling a task drag must not create an Undo entry");
+  await beginTaskDrag();
+  await expectState(current.page, fixture, "The second task drag must still wait for release");
+  await current.page.mouse.up(); await paint(current.page); current.undo = true;
+  const dragOrder = structuredClone(fixture);
+  [dragOrder.tasks[1], dragOrder.tasks[2]] = [dragOrder.tasks[2], dragOrder.tasks[1]];
+  await expectState(current.page, dragOrder, "Task drop must preserve hidden tasks, list IDs, exact dates, colors and the featured task");
+  const reorderedBars = await expectBars(current.page, ["amber", "sage"]);
+  assert.ok(reorderedBars.sage.top < reorderedBars.amber.top, "The Gantt must follow the released checklist order");
+  await undo(current, fixture); current.undo = false;
+  await key(current.page, "Control+z"); await expectState(current.page, fixture, "One release must create only one Undo entry");
 
   progress("add new work to the last selected list in a combined view");
   await resetTasks(current);
@@ -419,6 +447,34 @@ try {
   assert.deepEqual(await state(current.page), fixture, "Touch combinations must leave tasks and the featured countdown unchanged");
   assert.equal(await current.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "List tabs and controls must fit the phone viewport");
   await capture(current.page, "task-lists-mobile");
+
+  progress("reorder tasks through the phone grip and cancel a real touch drag safely");
+  await focusRowControl(current, 1);
+  const touchFirst = await focusedControlPoint(current.page, 520);
+  await focusRowControl(current, 7);
+  const touchLast = await focusedControlPoint(current.page, 520);
+  const touchFrom = { x: touchLast.left - 18, y: touchLast.y };
+  const touchTo = { x: touchFirst.x + 110, y: touchFirst.top + 2 };
+  const dragSession = await current.context.newCDPSession(current.page);
+  const touchDrag = (type, point) => dragSession.send("Input.dispatchTouchEvent", {
+    type, touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+  });
+  const beginTouchDrag = async () => {
+    await touchDrag("touchStart", touchFrom); await paint(current.page);
+    for (let step = 1; step <= 8; step++) {
+      await touchDrag("touchMove", { x: touchFrom.x + (touchTo.x - touchFrom.x) * step / 8, y: touchFrom.y + (touchTo.y - touchFrom.y) * step / 8 });
+      await current.page.waitForTimeout(25);
+    }
+    await paint(current.page);
+  };
+  await beginTouchDrag(); await expectState(current.page, fixture, "Touch reorder must not save before release");
+  await touchDrag("touchCancel"); await paint(current.page);
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "A cancelled touch must leave the task order and Undo unchanged");
+  await beginTouchDrag(); await expectState(current.page, fixture);
+  await touchDrag("touchEnd"); await paint(current.page); current.undo = true;
+  await expectState(current.page, dragOrder, "The touch grip must reorder the original records without changing their lists or dates");
+  await undo(current, fixture); current.undo = false;
   await current.context.close();
 
   progress("delete completed work only from the selected list and undo it");
@@ -436,7 +492,7 @@ try {
   await current.context.close();
 
   assert.deepEqual(issues, [], "Task-list changes must stay local and produce no app errors");
-  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, single/Shift/touch combinations and distinct Gantt shades, linked membership/name/date/completion edits and scoped completed removal, atomic Undo, reload and real JSON export/import without featured changes.");
+  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, reload and real JSON export/import without featured changes.");
 } catch (error) {
   console.error(`Task-list browser checks failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "task-lists-failure").catch(() => {});

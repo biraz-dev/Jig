@@ -60,9 +60,9 @@ async function key(page, value) {
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-mobile", "timeline-edit", "timeline-failure"]);
+  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-mobile", "timeline-edit", "timeline-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  const requestedDivider = ["timeline-divider", "timeline-label-divider", "timeline-range-drag"].includes(name) && requested.has("timeline-dashboard");
+  const requestedDivider = ["timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall"].includes(name) && requested.has("timeline-dashboard");
   if (allowed.has(name) && (requested.has(name) || requestedDivider) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
@@ -76,6 +76,17 @@ async function open(label, state = fixture, phone = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch: phone, timezoneId: phone ? "America/New_York" : "Etc/UTC" });
   contexts.push(context);
   await installFrameFence(context);
+  // Fix calendar dates without replacing native animation frames or timers.
+  await context.addInitScript(() => {
+    const NativeDate = Date;
+    const fixed = NativeDate.parse("2026-10-30T12:00:00Z");
+    const now = () => fixed;
+    globalThis.Date = new Proxy(NativeDate, {
+      apply: () => new NativeDate(fixed).toString(),
+      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [fixed], newTarget),
+      get: (target, key, receiver) => key === "now" ? now : Reflect.get(target, key, receiver),
+    });
+  });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await context.addInitScript(({ raw, storageKey, origin }) => {
     if (location.origin === origin && sessionStorage.getItem("jig-timeline-seeded") !== "yes") {
@@ -95,7 +106,6 @@ async function open(label, state = fixture, phone = false) {
   });
   page.setDefaultTimeout(15000);
   page.setDefaultNavigationTimeout(60000);
-  await page.clock.setFixedTime(new Date("2026-10-30T12:00:00Z"));
   await boot(page);
   return { context, page };
 }
@@ -247,6 +257,36 @@ async function waitForBar(page, expected = () => true) {
   assert.ok(bounds && expected(bounds), `The rendered task duration must reach its expected position; found ${JSON.stringify(bounds)}`);
   return bounds;
 }
+async function assertTitleDividerEndsAtRows(page, firstBar, count) {
+  const x = firstBar.left - 4, y = firstBar.top - 20;
+  const bottom = (firstBar.top + firstBar.bottom) / 2 + count * 36 - 18;
+  await page.mouse.move(x, y);
+  await page.waitForFunction(() => document.body.style.cursor === "ew-resize", undefined, { timeout: 10000, polling: 25 });
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  const end = await page.evaluate(async ({ encoded, boundary, start, bottom }) => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    let end = null;
+    for (let py = Math.floor(start); py < Math.min(bitmap.height - 30, bottom + 180); py++) {
+      for (let px = Math.floor(boundary - 3); px <= Math.ceil(boundary + 3); px++) {
+        const offset = (py * bitmap.width + px) * 4;
+        if ([244, 107, 74].every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 3)) end = py;
+      }
+    }
+    bitmap.close();
+    return end;
+  }, { encoded: png.toString("base64"), boundary: firstBar.left, start: firstBar.top, bottom });
+  assert.ok(end !== null && Math.abs(end - bottom) <= 4,
+    `The title divider must end at the last visible task row, without an orange tail below it; expected ${bottom}, found ${end}`);
+  await page.mouse.move(x, bottom + 14);
+  await page.waitForFunction(() => document.body.style.cursor !== "ew-resize", undefined, { timeout: 10000, polling: 25 });
+  await page.mouse.move(x, y);
+  await page.waitForFunction(() => document.body.style.cursor === "ew-resize", undefined, { timeout: 10000, polling: 25 });
+  return bottom;
+}
 async function startBarResize(page, bounds, edge, distance) {
   const x = edge === "due" ? bounds.right - 1 : bounds.left + 1;
   const y = (bounds.top + bounds.bottom) / 2;
@@ -373,6 +413,7 @@ try {
   // This fixture starts on Monday, so the duration's left edge locates the
   // visible day-lane boundary. The divider hit region is on its title side.
   const labelGrip = { x: labelInitialBar.left - 4, y: labelInitialBar.top - 20 };
+  await assertTitleDividerEndsAtRows(current.page, labelInitialBar, 7);
   await current.page.mouse.move(labelGrip.x, labelGrip.y);
   await current.page.waitForFunction(() => document.body.style.cursor === "ew-resize", undefined, { timeout: 10000, polling: 25 });
   await current.page.mouse.down();
@@ -423,6 +464,28 @@ try {
   await key(current.page, "Escape");
   await key(current.page, "Control+z");
   await expectState(current.page, fixture, "One Undo must restore every record after dragging the start-date end");
+  await current.context.close();
+
+  progress("let a longer Tasks timeline grow into the available panel height");
+  const tall = {
+    ...structuredClone(fixture),
+    tasks: Array.from({ length: 14 }, (_, index) => ({
+      id: index + 1, text: `Sample: studio step ${index + 1}`, complete: false,
+      deadline: 101 + index, color: index === 0 ? "rose" : "lilac", start: "2026-10-26T12:00:00Z",
+    })),
+    deadlines: Array.from({ length: 14 }, (_, index) => ({
+      id: 101 + index, title: `Sample: studio step ${index + 1}`, at: "2026-10-30T18:00:00Z",
+    })),
+    featured: 101,
+  };
+  current = await open("timeline-tall", tall);
+  await key(current.page, "Control+Alt+2");
+  const tallBar = await waitForBar(current.page);
+  const tallBottom = await assertTitleDividerEndsAtRows(current.page, tallBar, tall.tasks.length);
+  assert.ok(tallBottom - (tallBar.top + tallBar.bottom) / 2 > 420,
+    "The Tasks workspace must show more than the old 420px of rows when the viewport has room");
+  assert.deepEqual(await state(current.page), tall, "Growing the chart must preserve the task data and featured countdown");
+  await capture(current.page, "timeline-tall");
   await current.context.close();
 
   progress("resize the Tasks and Gantt panes, persist their width, and restore the default");
@@ -569,7 +632,7 @@ try {
   assert.ok(await bar(current.page), "The incomplete task must retain a colored duration before completion");
   const incompleteRender = await current.page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
   await tasks(current.page);
-  await tab(current.page, 4); // Fresh journal: first checklist checkbox.
+  await tab(current.page, 6); // Data, Source, Tasks tab, +, star, checkbox.
   await key(current.page, "Space");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, storageKey);
   await timeline(current.page);

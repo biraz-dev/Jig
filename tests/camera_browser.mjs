@@ -109,6 +109,10 @@ async function modelPixels(page) {
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 async function open(label, viewport = { width: 1440, height: 1000 }) {
   const context = await browser.newContext({ viewport, acceptDownloads: true, hasTouch: viewport.width < 500, timezoneId: "Etc/UTC" });
+  // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
+  await context.addInitScript(path => {
+    if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
+  }, new URL(base).pathname);
   contexts.push(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await context.addInitScript(({ raw, storageKey, origin }) => {

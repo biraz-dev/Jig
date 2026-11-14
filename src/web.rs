@@ -2778,6 +2778,7 @@ impl BrowserApp {
             || egui::DragAndDrop::has_payload_of_type::<NoteDragPayload>(ctx)
         {
             egui::DragAndDrop::clear_payload(ctx);
+            ctx.stop_dragging();
         }
     }
 

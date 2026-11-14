@@ -385,6 +385,9 @@ impl StlPanel {
     }
 
     fn shrink_factor(&self, settings: &Settings) -> f64 {
+        if self.mode == ShrinkMode::Off {
+            return 1.0;
+        }
         let shrink = settings
             .selected_profile()
             .and_then(|profile| stl::shrinkage(profile.linear_shrinkage).ok());

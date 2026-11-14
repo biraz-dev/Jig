@@ -241,6 +241,19 @@ PDF/image/STL source bytes are session-only and are not embedded in saved state.
 
 ## Workbench, tasks and timeline
 
+Task lists appear as horizontal tabs, with a maximum of five. Click a tab to show
+one list; **Shift-click** tabs to combine them. Combined views use subtly different
+row shades while retaining each task's deadline color. **Multi** enables the same
+selection on touchscreens. **+** adds a list, double-clicking its name (or **F2**
+on a focused tab) renames it, and **−** removes the active list. Removing
+a list moves its tasks into a remaining list; the last list cannot be removed.
+Tasks, their dates and the featured countdown are preserved.
+
+New tasks go into the active list. The task editor can move an existing task to
+another list. Reorder and clear-completed actions apply to the visible lists.
+Lists and membership are included in JSON and ODS saves; older files open as one
+**Tasks** list. Selecting tabs or calendar dates never replaces the starred task.
+
 Drag the divider between tasks and the timeline to adjust their widths. Its
 grip shows horizontal resize arrows; focus it and use **Left/Right** for small
 adjustments or **Shift-Left/Right** for larger ones. Double-click to reset the
@@ -296,16 +309,18 @@ cleared when switching datasets or reloading; it is not saved in documents.
 
 ## Weather calendar
 
-Weather starts disabled. Select a calendar day, choose **Set location**, search
+Weather starts disabled. Choose **Set location** above the calendar/timeline, search
 for a town or postcode, and select a result. You can change location, switch
 °F/°C, refresh or disable it at any time. Settings stay in this browser; personal JSON exports
 also carry the chosen weather preference. Changing weather in sample mode does
 not save the sample checklist as personal data.
 
-The month grid stays compact with day numbers and task marks. Select a date for
-forecast high/low, rain probability and mean relative humidity beneath the grid. Weather
-controls and details appear after selecting a day; Timeline keeps the chart
-without a weather footer. Dates outside the returned forecast range have no
+The month grid stays compact with day numbers and task marks. The compact weather
+strip above the calendar/timeline shows today's forecast high/low, rain probability
+and mean relative humidity. Select a calendar day to show that date instead.
+Location settings open in the same header; no weather footer uses space beneath
+the chart. The timeline uses the remaining panel height as tasks grow, and its
+title divider stops at the last visible row. Dates outside the returned forecast range have no
 forecast. Calendar entry controls remain hidden and existing entries are preserved.
 
 Weather data comes from [Open-Meteo](https://open-meteo.com/) without a key or

@@ -156,6 +156,81 @@ fn ods_is_standard_zip_with_formulas_styles_merges_and_exact_jig_roundtrip() {
 }
 
 #[test]
+fn ods_standard_string_cells_keep_their_types_without_private_metadata() {
+    let strings = [
+        "$1,234.50",
+        "12%",
+        " TrUe ",
+        " fAlSe ",
+        " =1+2",
+        "\t=SUM(B1:B2)",
+        " 2026-11-11 ",
+        "'literal text",
+        "0012",
+        "ordinary text",
+    ];
+    let mut book = Workbook::default();
+    for (row, text) in strings.iter().enumerate() {
+        book.set_cell(1, CellAddr::new(row, 0), &format!("'{text}"))
+            .unwrap();
+    }
+    for (address, raw) in [("B1", "1234.5"), ("B2", "12%"), ("B3", "TRUE")] {
+        book.set_cell(1, addr(address), raw).unwrap();
+    }
+    book.set_cell(1, addr("C1"), "studio").unwrap();
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let bytes = save_ods(&state).unwrap();
+    let content = entry(&bytes, "content.xml");
+    let imported = read_ods(&package(&content, None)).unwrap();
+    assert!(imported.embedded_state.is_none());
+    let values = imported.workbook.recalculate();
+    for (row, text) in strings.iter().enumerate() {
+        assert_eq!(
+            values.value(1, CellAddr::new(row, 0)),
+            CellValue::Text((*text).into()),
+            "ODS string {text:?} must remain literal text"
+        );
+    }
+    assert_eq!(values.value(1, addr("B1")), CellValue::Number(1234.5));
+    assert_eq!(values.value(1, addr("B2")), CellValue::Number(0.12));
+    assert_eq!(values.value(1, addr("B3")), CellValue::Bool(true));
+    assert_eq!(imported.workbook.raw(1, addr("C1")), "studio");
+}
+
+#[test]
+fn ods_standard_leading_whitespace_formulas_still_recalculate_after_import() {
+    let mut book = Workbook::default();
+    book.set_cell(1, addr("A1"), "12.5").unwrap();
+    book.set_cell(1, addr("B1"), " \t=A1*2").unwrap();
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let bytes = save_ods(&state).unwrap();
+    assert_eq!(
+        read_ods(&bytes).unwrap().embedded_state.unwrap().workbook,
+        state.workbook,
+        "Jig metadata preserves the original raw formula"
+    );
+    let content = entry(&bytes, "content.xml");
+    let imported = read_ods(&package(&content, None)).unwrap();
+    assert!(imported.embedded_state.is_none());
+    let mut book = imported.workbook;
+    assert_eq!(
+        book.recalculate().value(1, addr("B1")),
+        CellValue::Number(25.0)
+    );
+    book.set_cell(1, addr("A1"), "20").unwrap();
+    assert_eq!(
+        book.recalculate().value(1, addr("B1")),
+        CellValue::Number(40.0)
+    );
+}
+
+#[test]
 fn ods_standard_styles_preserve_all_alignments_strike_and_foreign_currency_without_metadata() {
     let mut state = State::default();
     let mut book = Workbook::default();

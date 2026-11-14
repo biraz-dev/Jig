@@ -60,8 +60,8 @@ async function capture(page, name) {
   return png;
 }
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
-async function open(label, initial = fixture, phone = false, launchNotes = true) {
-  const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, hasTouch: phone, acceptDownloads: true, timezoneId: "Etc/UTC" });
+async function open(label, initial = fixture, phone = false, launchNotes = true, hasTouch = phone) {
+  const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, hasTouch, acceptDownloads: true, timezoneId: "Etc/UTC" });
   contexts.push(context);
   await installFrameFence(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
@@ -259,6 +259,33 @@ async function taskToNote(scene, listCount, complete) {
   await key(scene.page, "Space"); // Dated first row's edit; no other tasks in this list.
   await tab(scene.page, (listCount > 1 ? listCount : 0) + 6); // del, choices, input, Save, full body, Cancel, To note.
   await key(scene.page, "Space"); scene.undo = true;
+}
+
+async function noteCardFrames(page, minimumY = 80) {
+  // Read the saved card's ordinary graphite frame in the shared Tasks board.
+  // The Tasks panel rules use a different color; no widget IDs are exposed.
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  return page.evaluate(async ({ encoded, minimumY }) => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
+    const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const edge = (x, y) => [80, 72, 66].every((value, axis) => Math.abs(pixels[(y * bitmap.width + x) * 4 + axis] - value) <= 2);
+    const cards = [];
+    for (let y = minimumY; y < bitmap.height - 20; y++) {
+      for (let x = 5; x < Math.min(220, bitmap.width - 150); x++) {
+        if (edge(x, y) && edge(x, y + 2) && Array.from({ length: 130 }, (_, offset) => x + offset).every(px => edge(px, y))) {
+          cards.push({ left: x, top: y }); break;
+        }
+      }
+    }
+    bitmap.close(); return cards;
+  }, { encoded: png.toString("base64"), minimumY });
+}
+async function sharedNotePoints(page) {
+  const [card] = await noteCardFrames(page, 250);
+  assert.ok(card, "The shared Tasks board must expose the saved note card for a real pointer drop");
+  return { body: { x: card.left + 45, y: card.top + 85 }, grip: { x: card.left + 16, y: card.top + 16 } };
 }
 
 try {
@@ -543,6 +570,67 @@ try {
   await undo(current, archived); await undo(current, taskFixture);
   await current.context.close();
 
+  progress("drag a note grip onto a task row without losing text, dates or the featured countdown");
+  current = await open("notes-task-grip-drop", archived, false, false);
+  // Keep Show visible while Studio is active: a row drop must use the
+  // hovered task's list, rather than blindly using the active-list setting.
+  await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await key(current.page, "Control+Alt+2"); await tab(current.page, 4); await key(current.page, "Space");
+  await key(current.page, "Shift+Tab"); await key(current.page, "Shift+Space");
+  let notePoints = await sharedNotePoints(current.page);
+  await current.page.mouse.click(notePoints.body.x, notePoints.body.y); await paint(current.page);
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
+  await key(current.page, "Escape");
+  await expectState(current.page, archived, "A plain note-body click must still edit, and cancelling must preserve the saved note");
+  await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await key(current.page, "Control+Alt+2"); await tab(current.page, 10); // Header2, strip5, commands2, first star.
+  const rowStar = await focusedButtonRect(current.page);
+  const rowDrop = { x: rowStar.x + 110, y: rowStar.y + 12 }; // Lower half: insert after the dated row.
+  notePoints = await sharedNotePoints(current.page);
+  const beginNoteDrop = async () => {
+    await current.page.mouse.move(notePoints.grip.x, notePoints.grip.y); await current.page.mouse.down(); await paint(current.page);
+    await current.page.mouse.move(rowDrop.x, rowDrop.y, { steps: 10 }); await paint(current.page);
+  };
+  await beginNoteDrop(); await expectState(current.page, archived, "A note-to-task drag preview must not save before release");
+  await key(current.page, "Escape"); await current.page.mouse.up(); await paint(current.page);
+  await key(current.page, "Control+z");
+  await expectState(current.page, archived, "Cancelling a note drop must preserve its archive and create no Undo entry");
+  await beginNoteDrop(); await expectState(current.page, archived);
+  await current.page.mouse.up(); await paint(current.page); current.undo = true;
+  const rowConverted = structuredClone(restored); rowConverted.tasks[1].list_id = 2;
+  await expectState(current.page, rowConverted, "A row drop must move the same note ID into that list with its full body, dates, color and completion intact");
+  assert.equal((await state(current.page)).featured, taskFixture.featured, "Dropping a note must not replace the existing featured countdown");
+  await undo(current, archived); current.undo = false;
+  await key(current.page, "Control+z"); await expectState(current.page, archived, "A note conversion must be one atomic Undo step");
+  await current.context.close();
+
+  progress("drop a note onto the active Tasks list with real touch input and cancel safely");
+  // A touch-capable wide viewport keeps the source board and target visible;
+  // the separate phone checks exercise the narrow responsive layout.
+  current = await open("notes-task-touch-drop", archived, false, false, true);
+  notePoints = await sharedNotePoints(current.page);
+  const taskToolbar = await taskGanttButtonPoint(current.page);
+  const blankDrop = { x: 220, y: taskToolbar.y + 120 };
+  const dropSession = await current.context.newCDPSession(current.page);
+  const noteTouch = (type, point) => dropSession.send("Input.dispatchTouchEvent", {
+    type, touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+  });
+  const beginTouchDrop = async () => {
+    await noteTouch("touchStart", notePoints.grip); await paint(current.page);
+    for (let step = 1; step <= 10; step++) {
+      await noteTouch("touchMove", { x: notePoints.grip.x + (blankDrop.x - notePoints.grip.x) * step / 10, y: notePoints.grip.y + (blankDrop.y - notePoints.grip.y) * step / 10 });
+      await current.page.waitForTimeout(25);
+    }
+    await paint(current.page);
+  };
+  await beginTouchDrop(); await expectState(current.page, archived, "A touch note drop must remain a preview until release");
+  await noteTouch("touchCancel"); await paint(current.page);
+  await key(current.page, "Control+z"); await expectState(current.page, archived, "Touch cancellation must not convert a note or create Undo history");
+  await beginTouchDrop(); await expectState(current.page, archived);
+  await noteTouch("touchEnd"); await paint(current.page); current.undo = true;
+  await expectState(current.page, restored, "A blank-pane touch drop must use the active list and preserve the original note/task metadata");
+  await undo(current, archived); await current.context.close();
+
   progress("reorder the same notes using a real touch drag");
   current = await open("notes-mobile", fixture, true);
   const first = await grip(current, 0), second = await grip(current, 1);
@@ -567,8 +655,32 @@ try {
   await expectState(current.page, capped, "The disabled Add note must preserve all 81 records");
   assert.equal(await current.page.evaluate(() => document.activeElement?.tagName === "INPUT"), false, "The 81-note board must not open an unsavable extra draft");
   await capture(current.page, "notes-cap"); await current.context.close();
+
+  progress("swipe a note body to scroll the phone board without editing or moving records");
+  current = await open("notes-body-scroll", capped, true);
+  const beforeSwipe = await noteCardFrames(current.page);
+  assert.ok(beforeSwipe.length >= 2, "The phone must display several note rows before the real body swipe");
+  const swipeSession = await current.context.newCDPSession(current.page);
+  const swipe = (type, point) => swipeSession.send("Input.dispatchTouchEvent", {
+    type, touchPoints: type === "touchEnd" ? [] : [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+  });
+  const swipeFrom = { x: beforeSwipe[0].left + 55, y: beforeSwipe[0].top + 85 };
+  const swipeTo = { x: swipeFrom.x, y: swipeFrom.y - 70 };
+  await swipe("touchStart", swipeFrom); await paint(current.page);
+  for (let step = 1; step <= 8; step++) {
+    await swipe("touchMove", { x: swipeFrom.x, y: swipeFrom.y - 70 * step / 8 });
+    await current.page.waitForTimeout(25);
+  }
+  await current.page.waitForTimeout(100); await swipe("touchMove", swipeTo); await paint(current.page);
+  await swipe("touchEnd"); await paint(current.page);
+  const afterSwipe = await noteCardFrames(current.page);
+  assert.ok(afterSwipe.some(after => beforeSwipe.every(before => Math.abs(after.top - before.top) > 15)),
+    `A body swipe must visibly scroll note rows; before=${JSON.stringify(beforeSwipe)}, after=${JSON.stringify(afterSwipe)}`);
+  await expectState(current.page, capped, "Touch body scrolling must not reorder, convert or edit any of the 81 saved notes");
+  assert.equal(await current.page.evaluate(() => document.activeElement?.tagName === "INPUT"), false, "A scrolling body swipe must not open the editor");
+  await current.context.close();
   assert.deepEqual(issues, [], "The shared note board must stay local and emit no app errors");
-  console.log("Notes browser checks passed: titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, atomic Undo, shared Notes/Tasks board, safe task conversion preserving text/metadata and featured selection, reload, JSON import/export and 81-note limit.");
+  console.log("Notes browser checks passed: titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, atomic Undo, shared Notes/Tasks board, body-click editing and mouse/touch grip drops with release-only conversion and safe cancellation, full text/metadata/featured preservation, reload, JSON import/export and 81-note limit.");
 } catch (error) {
   console.error(`Notes browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) {

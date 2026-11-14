@@ -9,6 +9,7 @@ import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
+const sampleUrl = new URL(base); sampleUrl.searchParams.set("sample", "1"); sampleUrl.hash = "";
 const storageKey = "jig.personal.v1";
 const results = resolve("playwright-results");
 await mkdir(results, { recursive: true });
@@ -79,6 +80,10 @@ const browser = await chromium.launch({
 });
 async function open(label, saved = fixture, phone = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch: phone, timezoneId: "Etc/UTC" });
+  // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
+  await context.addInitScript(path => {
+    if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
+  }, new URL(base).pathname);
   contexts.push(context);
   await installFrameFence(context);
   await context.addInitScript(() => {
@@ -112,12 +117,12 @@ async function open(label, saved = fixture, phone = false) {
   // WASM startup can hold load open on the software renderer. Match the ready check.
   page.setDefaultNavigationTimeout(60000);
   await page.clock.setFixedTime(new Date("2026-11-11T12:00:00Z"));
-  await boot(page);
+  await boot(page, false, saved === null ? sampleUrl.href : base);
   return { context, page };
 }
-async function boot(page, reload = false) {
+async function boot(page, reload = false, address = base) {
   if (reload) await page.reload({ waitUntil: "load" });
-  else await page.goto(base, { waitUntil: "load" });
+  else await page.goto(address, { waitUntil: "load" });
   await page.bringToFront();
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined, "The Rust spreadsheet must start successfully");
@@ -732,8 +737,9 @@ try {
   await key(current.page, "Control+Alt+2");
   await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await key(current.page, "Escape");
-  await tab(current.page, 5); // Data, Undo, Source, dashboard scroll area, then Gantt chart.
-  await key(current.page, "Space");
+  const taskChartButton = await taskGanttButtonPoint(current.page);
+  await current.page.mouse.click(taskChartButton.x, taskChartButton.y);
+  await paint(current.page);
   saved = await state(current.page);
   assert.equal(saved.workbook.charts.length, 2, "Existing tasks must be available as a live Gantt chart from the retained task workspace");
   assert.equal(saved.workbook.charts[1].kind, "gantt");
@@ -918,6 +924,41 @@ try {
     console.error("Spreadsheet browser cleanup failed:", cleanupError);
     process.exit(1);
   }
+}
+
+async function taskGanttButtonPoint(page) {
+  const until = Date.now() + 10000; let point;
+  do {
+    const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+    point = await page.evaluate(async encoded => {
+      const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
+      const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, runs = [];
+      const rule = (x, y) => [113, 102, 93].every((value, axis) => Math.abs(pixels[(y * bitmap.width + x) * 4 + axis] - value) <= 3);
+      // The Gantt toolbar is directly beneath the task-list strip. Find its
+      // actual button frame rather than counting optional scroll-area tab stops.
+      for (let y = 78; y < 145; y++) {
+        let start;
+        for (let x = 5; x <= 150; x++) {
+          if (rule(x, y) && start === undefined) start = x;
+          if ((!rule(x, y) || x === 150) && start !== undefined) {
+            const end = x - 1;
+            if (start <= 20 && end - start >= 70 && end - start <= 120) runs.push({ left: start, right: end, y });
+            start = undefined;
+          }
+        }
+      }
+      bitmap.close();
+      for (const top of runs) for (const bottom of runs) {
+        if (bottom.y - top.y >= 12 && bottom.y - top.y <= 30 && Math.abs(top.left - bottom.left) <= 2 && Math.abs(top.right - bottom.right) <= 2)
+          return { x: (top.left + top.right) / 2, y: (top.y + bottom.y) / 2 };
+      }
+      return null;
+    }, png.toString("base64"));
+  } while (!point && Date.now() < until);
+  assert.ok(point, "The Tasks workspace must visibly expose its Gantt chart button");
+  return point;
 }
 
 async function pageTextInput(page, contents) {

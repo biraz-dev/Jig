@@ -195,6 +195,30 @@ fn ascii_and_binary_stl_produce_the_same_geometry() {
 }
 
 #[test]
+fn ascii_extreme_coordinates_keep_finite_surface_area() {
+    for length in [1e-90_f64, 1e90] {
+        let triangle = [[0.0; 3], [length, 0.0, 0.0], [0.0, length, 0.0]];
+        let mesh = stl::parse(&ascii(&[triangle], "Scaled triangle")).unwrap();
+        assert_eq!(mesh.metrics.degenerate_triangles, 0);
+        assert!(mesh.metrics.surface_area.is_finite());
+        assert!(mesh.metrics.surface_area > 0.0);
+        assert!(mesh
+            .bounds
+            .dimensions()
+            .iter()
+            .all(|value| value.is_finite()));
+
+        let measured = mesh
+            .measure(LengthUnit::Millimeters, length.recip())
+            .unwrap();
+        close(measured.surface_area_mm2, 0.5);
+        close(measured.dimensions_mm[0], 1.0);
+        close(measured.dimensions_mm[1], 1.0);
+        assert_eq!(measured.dimensions_mm[2], 0.0);
+    }
+}
+
+#[test]
 fn ascii_body_whitespace_and_multiple_solids_are_supported() {
     let first = ascii(&cube(), "first");
     let first = String::from_utf8(first)

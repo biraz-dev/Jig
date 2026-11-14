@@ -308,6 +308,7 @@ impl NotesPanel {
             ui.label(RichText::new(error).small().color(crate::web_theme::ERROR));
         }
         let mut cards = Vec::new();
+        // Override Grid's centered layout per cell so frames share the row's top edge.
         egui::Grid::new("notes-board")
             .num_columns(columns)
             .spacing([GAP, GAP])
@@ -315,18 +316,23 @@ impl NotesPanel {
                 let mut count = 0;
                 for note in &notes {
                     let rect = ui
-                        .push_id(("note", note.id), |ui| {
-                            self.card(
-                                ui,
-                                state,
-                                note,
-                                width,
-                                columns,
-                                active_list,
-                                &order,
-                                &mut actions,
-                            )
-                        })
+                        .scope_builder(
+                            egui::UiBuilder::new()
+                                .id_salt(("note", note.id))
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                            |ui| {
+                                self.card(
+                                    ui,
+                                    state,
+                                    note,
+                                    width,
+                                    columns,
+                                    active_list,
+                                    &order,
+                                    &mut actions,
+                                )
+                            },
+                        )
                         .inner;
                     cards.push((note.id, note.pinned, rect));
                     count += 1;
@@ -335,9 +341,14 @@ impl NotesPanel {
                     }
                 }
                 if self.draft.as_ref().is_some_and(|draft| draft.id.is_none()) {
-                    ui.push_id("new-note", |ui| {
-                        self.editor_card(ui, width, &mut actions);
-                    });
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .id_salt("new-note")
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                        |ui| {
+                            self.editor_card(ui, width, &mut actions);
+                        },
+                    );
                 }
             });
 

@@ -1,6 +1,6 @@
 //! A compact, day-based projection of the ordinary checklist and its dates.
 use crate::web::task_color;
-use crate::web_theme::{ACCENT, BG, MUTED, RULE, TEXT, WEEKEND};
+use crate::web_theme::{task_list_fill, ACCENT, BG, MUTED, RULE, TEXT, WEEKEND};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, FontId, RichText, Stroke, Ui};
@@ -36,6 +36,7 @@ impl GestureView {
             data: serde_json::to_vec(&(
                 &state.tasks,
                 &state.deadlines,
+                &state.task_lists,
                 state.preferences.timeline_label_percent,
             ))
             .unwrap_or_default(),
@@ -106,6 +107,7 @@ pub struct TimelinePanel {
     focus_requested: bool,
     gesture: Option<Gesture>,
     keyboard_ids: Vec<egui::Id>,
+    visible_lists: Vec<u64>,
     pub focused: bool,
 }
 
@@ -118,6 +120,7 @@ impl TimelinePanel {
             focus_requested: false,
             gesture: None,
             keyboard_ids: Vec::new(),
+            visible_lists: Vec::new(),
             focused: false,
         }
     }
@@ -143,9 +146,23 @@ impl TimelinePanel {
         })
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, state: &State, today: NaiveDate) -> Option<TimelineAction> {
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        state: &State,
+        today: NaiveDate,
+        rows_height: f32,
+        selected_lists: &[u64],
+    ) -> Option<TimelineAction> {
         self.focused = false;
         self.keyboard_ids.clear();
+        if self.visible_lists.as_slice() != selected_lists {
+            // A changed filter owns a different row layout. Never finish an
+            // old duration gesture against a task that has become hidden.
+            self.cancel_gesture();
+            self.selected = None;
+            self.visible_lists = selected_lists.to_vec();
+        }
         if ui.input(|input| {
             !input.focused
                 || input.key_pressed(egui::Key::Escape)
@@ -198,7 +215,8 @@ impl TimelinePanel {
             ui.label(RichText::new("Date outside supported range").color(MUTED));
             return None;
         };
-        let mut rows = timeline::rows(state, &Local);
+        let mut rows = timeline::rows_for_lists(state, &Local, selected_lists);
+        let combined = selected_lists.len() > 1;
         // Keep checklist order within each group, without reordering records.
         // Dated work remains immediately visible even with many undated notes.
         rows.sort_by_key(|row| row.due.is_none());
@@ -233,7 +251,7 @@ impl TimelinePanel {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("timeline-rows")
-                    .max_height(if width >= 760.0 { 420.0 } else { 220.0 })
+                    .max_height(rows_height.max(ROW_HEIGHT))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let mut bottom = header.bottom();
@@ -253,7 +271,15 @@ impl TimelinePanel {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::Button,
                                     ui.is_enabled(),
-                                    format!("{} · {} · {}", row.title, status(row), dates(row)),
+                                    format!(
+                                        "{} · {} · {} · {}",
+                                        row.title,
+                                        state
+                                            .task_list(row.list_id)
+                                            .map_or("Tasks", |list| list.name.as_str()),
+                                        status(row),
+                                        dates(row)
+                                    ),
                                 )
                             });
                             self.focused |= response.has_focus();
@@ -270,7 +296,28 @@ impl TimelinePanel {
                                     }
                                 }
                             }
-                            self.row(ui, rect, label_width, window, today, &display_row, selected);
+                            let list = state.task_list(row.list_id);
+                            let shade = if combined {
+                                let index = state
+                                    .task_lists
+                                    .iter()
+                                    .position(|list| list.id == row.list_id)
+                                    .unwrap_or(0);
+                                task_list_fill(index)
+                            } else {
+                                BG
+                            };
+                            self.row(
+                                ui,
+                                rect,
+                                label_width,
+                                window,
+                                today,
+                                &display_row,
+                                selected,
+                                combined.then_some(list.map_or("Tasks", |list| list.name.as_str())),
+                                shade,
+                            );
                             self.resize_handles(
                                 rect,
                                 ui.clip_rect(),
@@ -296,8 +343,9 @@ impl TimelinePanel {
                                     .or_else(|| row.deadline_id.map(TimelineAction::EditDeadline));
                             }
                             response.on_hover_text(format!(
-                                "{}\n{} · {}",
+                                "{}\n{} · {} · {}",
                                 row.title,
+                                list.map_or("Tasks", |list| list.name.as_str()),
                                 status(row),
                                 dates(row)
                             ));
@@ -712,7 +760,7 @@ impl TimelinePanel {
         );
         let lane =
             egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
-        self.grid(ui, lane, window, today);
+        self.grid(ui, lane, window, today, BG);
         let cell = lane.width() / window.days() as f32;
         let stride = if cell >= 15.0 {
             1
@@ -751,9 +799,16 @@ impl TimelinePanel {
         }
     }
 
-    fn grid(&self, ui: &Ui, rect: egui::Rect, window: DateRange, today: NaiveDate) {
+    fn grid(
+        &self,
+        ui: &Ui,
+        rect: egui::Rect,
+        window: DateRange,
+        today: NaiveDate,
+        background: egui::Color32,
+    ) {
         let painter = ui.painter().with_clip_rect(rect);
-        painter.rect_filled(rect, 0.0, BG);
+        painter.rect_filled(rect, 0.0, background);
         let cell = rect.width() / window.days() as f32;
         for offset in 0..window.days() {
             let Some(day) = window
@@ -770,7 +825,11 @@ impl TimelinePanel {
                         egui::vec2(cell, rect.height()),
                     ),
                     0.0,
-                    WEEKEND,
+                    if background == BG {
+                        WEEKEND
+                    } else {
+                        background.lerp_to_gamma(WEEKEND, 0.45)
+                    },
                 );
             }
             if self.scale == Scale::Week || day.weekday().number_from_monday() == 1 {
@@ -796,10 +855,13 @@ impl TimelinePanel {
         today: NaiveDate,
         row: &TimelineRow<'_>,
         selected: bool,
+        list_name: Option<&str>,
+        background: egui::Color32,
     ) {
         let lane =
             egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
-        self.grid(ui, lane, window, today);
+        ui.painter().rect_filled(rect, 0.0, background);
+        self.grid(ui, lane, window, today, background);
         let painter = ui.painter();
         let color = task_color(row.color, row.complete);
         let title_y = rect.top() + 10.0;
@@ -831,13 +893,19 @@ impl TimelinePanel {
                 Stroke::new(0.7_f32, MUTED),
             );
         }
+        let detail = row.due.map_or_else(
+            || format!("{} · No date", status(row)),
+            |date| format!("{} · {}", status(row), date.format("%d %b")),
+        );
+        let detail = if let Some(name) = list_name {
+            format!("{detail} · {name}")
+        } else {
+            detail
+        };
         painter.with_clip_rect(label_clip).text(
             egui::pos2(title_x, rect.top() + 26.0),
             egui::Align2::LEFT_CENTER,
-            row.due.map_or_else(
-                || format!("{} · No date", status(row)),
-                |date| format!("{} · {}", status(row), date.format("%d %b")),
-            ),
+            shortened(&detail, columns + 3),
             FontId::monospace(9.0),
             MUTED,
         );

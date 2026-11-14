@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
+const sampleUrl = new URL(base); sampleUrl.searchParams.set("sample", "1"); sampleUrl.hash = "";
 const key = "jig.personal.v1";
 const weatherSettingsKey = "jig.weather.settings.v1";
 const weatherCacheKey = "jig.weather.cache.v1";
@@ -89,6 +90,10 @@ async function newPage(label, {
   raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime, hasTouch = false,
 } = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true, hasTouch, timezoneId: "Etc/UTC" });
+  // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
+  await context.addInitScript(path => {
+    if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
+  }, new URL(base).pathname);
   if (fixedTime) {
     // Keep calendar fixtures deterministic without replacing the native RAF,
     // performance clock or timers that drive egui's real rendering and inputs.
@@ -410,8 +415,8 @@ function checkWeather(cache, config, at) {
 
 try {
   const demo = await newPage("sample-desktop");
-  await boot(demo.page, false, `${base}#weather=Sample%20Harbor`);
-  assert.equal(await saved(demo.page), null, "Fresh preview should start with temporary sample data");
+  await boot(demo.page, false, `${sampleUrl.href}#weather=Sample%20Harbor`);
+  assert.equal(await saved(demo.page), null, "The explicit sample preview must keep its data temporary");
   await capture(demo.page, "consolidated-sample");
   await calculate(demo.page, "1 / 3");
   await demo.page.waitForTimeout(1200);
@@ -804,7 +809,7 @@ try {
 
   // Independent browser contexts must not inherit another context's data.
   const compact = await newPage("sample-mobile", { viewport: { width: 390, height: 844 } });
-  await boot(compact.page);
+  await boot(compact.page, false, sampleUrl.href);
   assert.equal(await saved(compact.page), null);
   assert.equal(await saved(shared.page), fixtureRaw, "The other profile must still retain its separate dataset");
   await release(shared.context, "cross-tab pair");
@@ -813,7 +818,7 @@ try {
   // Reload explicit synthetic personal state so narrow-screen keyboard input
   // is verified through a real saved result rather than only a screenshot.
   await compact.page.evaluate(text => window.jigSave(text), fixtureRaw);
-  await boot(compact.page, true);
+  await boot(compact.page, false, base);
   await calculate(compact.page, "12 * 1.5");
   await expectCalculation(compact.page, "12 * 1.5", 18, 2);
   await calculate(compact.page, "72 in mm");

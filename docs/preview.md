@@ -127,7 +127,7 @@ browser profile and origin. Another computer, browser or profile has independent
 storage.
 
 Normal refreshes and deployed application updates retain that saved dataset.
-Unfinished task and note text is backed up per tab in session storage and restored
+Unfinished task/note text and date edits are backed up per tab in session storage and restored
 after refresh; changed underlying records are recovered as new drafts rather than
 overwritten. Save/Ctrl-Enter commits a note, and Enter adds a task. Workspace
 preferences are stored separately in this browser.

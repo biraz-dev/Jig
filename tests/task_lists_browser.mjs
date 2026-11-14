@@ -72,6 +72,10 @@ async function capture(page, name) {
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 async function open(label, data = fixture, phone = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, hasTouch: phone, acceptDownloads: true, timezoneId: "Etc/UTC" });
+  // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
+  await context.addInitScript(path => {
+    if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
+  }, new URL(base).pathname);
   contexts.push(context);
   await installFrameFence(context);
   await context.addInitScript(({ initial, key, origin }) => {

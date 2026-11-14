@@ -478,6 +478,10 @@ try {
     return draft?.task?.id === 1 && draft.task.details === text;
   }, { key: "jig.drafts.v1", text: reviewedBody }, { timeout: 10000 });
   await expectState(current.page, race, "Edit another task must wait for Save/Clear and leave both records unchanged");
+  // The native click may focus the blocked Edit button. Refocus the visible
+  // Details field for clipboard readback after checking the preserved draft.
+  const retainedDetails = await taskGanttButtonPoint(current.page, "details");
+  await current.page.mouse.click(retainedDetails.x, retainedDetails.y); await paint(current.page);
   await expectEditorText(current.page, reviewedBody);
 
   progress("route each character once when clicking from Details into the earlier title field");

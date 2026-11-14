@@ -898,7 +898,12 @@ impl BrowserApp {
                                             || ui.input(|input| input.modifiers.shift);
                                         self.select_task_list(list.id, combine, ui.ctx());
                                     }
-                                    if response.double_clicked() {
+                                    // Rapid touch choices in Multi are selections,
+                                    // not a request to edit a tab's name.
+                                    if response.double_clicked()
+                                        && !self.task_lists_combine
+                                        && !ui.input(|input| input.modifiers.shift)
+                                    {
                                         self.begin_task_list_rename(list.id, ui.ctx());
                                     }
                                     response.on_hover_text(format!(

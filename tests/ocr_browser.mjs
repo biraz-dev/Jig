@@ -7,6 +7,10 @@ const origin = new URL(base).origin;
 const requests = [], issues = [];
 const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage"] });
 const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+// Exercise the existing Sheet/tool flow using a normal saved workspace preference.
+await context.addInitScript(path => {
+  if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
+}, new URL(base).pathname);
 context.on("request", request => requests.push({ url: request.url(), method: request.method() }));
 await context.route("**/*", async route => {
   const url = new URL(route.request().url());

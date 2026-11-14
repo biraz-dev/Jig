@@ -150,9 +150,15 @@ impl Settings {
     }
 
     pub fn selected_profile(&self) -> Option<Profile> {
-        self.available_profiles()
+        builtin_profiles()
             .into_iter()
             .find(|profile| profile.id == self.selected)
+            .or_else(|| {
+                self.custom_profiles
+                    .iter()
+                    .find(|profile| profile.id == self.selected)
+                    .cloned()
+            })
     }
 
     pub fn validate(&self) -> Result<()> {

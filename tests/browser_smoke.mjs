@@ -89,6 +89,20 @@ async function newPage(label, {
   raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime, hasTouch = false,
 } = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true, hasTouch, timezoneId: "Etc/UTC" });
+  if (fixedTime) {
+    // Keep calendar fixtures deterministic without replacing the native RAF,
+    // performance clock or timers that drive egui's real rendering and inputs.
+    await context.addInitScript(value => {
+      const NativeDate = Date;
+      const fixed = NativeDate.parse(value);
+      const now = () => fixed;
+      globalThis.Date = new Proxy(NativeDate, {
+        apply: () => new NativeDate(fixed).toString(),
+        construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [fixed], newTarget),
+        get: (target, key, receiver) => key === "now" ? now : Reflect.get(target, key, receiver),
+      });
+    }, fixedTime);
+  }
   await context.addInitScript(() => {
     // Browser event diagnostics only; this does not expose or change Rust state.
     window.jigSmokeEvents = [];
@@ -159,7 +173,6 @@ async function newPage(label, {
     });
   }
   const page = await context.newPage();
-  if (fixedTime) await page.clock.setFixedTime(new Date(fixedTime));
   observe(page, label, weather ? weatherOrigins : []);
   return { context, page };
 }
@@ -272,10 +285,16 @@ async function tapToday(page) {
     }
     bitmap.close();
     const date = dates.sort((a, b) => b.count - a.count)[0];
-    return date ? { x: (date.left + date.right) / 2, y: (date.top + date.bottom) / 2 } : null;
+    return date ? {
+      x: (date.left + date.right) / 2,
+      y: (date.top + date.bottom) / 2,
+      top: date.top,
+      width: date.right - date.left + 1,
+    } : null;
   }, png.toString("base64"));
   assert.ok(point, "Today's calendar button must be visibly present before touching it");
   await page.touchscreen.tap(point.x, point.y);
+  return point;
 }
 
 function taskColorFixture(date = "2026-10-30") {
@@ -558,7 +577,7 @@ try {
   assert.equal(linkedRestored.featured, null, "Loading a dated task must not automatically feature it");
   assert.deepEqual(linkedRestored.entries, fixture.entries);
   // Maximize the checklist through ordinary selection keys. With text focus
-  // surrendered, Tab visits Data, Source, then its leading task-star button.
+  // surrendered, Tab visits Data, Source, the Tasks tab and +, then its star.
   progress("feature a dated task with the keyboard star");
   await linked.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
   await linked.page.keyboard.press("Control+Alt+4");
@@ -569,7 +588,7 @@ try {
   await paint(linked.page);
   await linked.page.keyboard.press("Control+m");
   await paint(linked.page);
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 5; index++) {
     await linked.page.keyboard.press("Tab");
     await paint(linked.page);
   }
@@ -601,8 +620,9 @@ try {
 
   progress("select calendar dates using keyboard without changing the featured task");
   await maximizeApplet(colored.page, "calendar");
-  // Data, Source, Calendar, Timeline, previous month, next month, Today, October 1.
-  await tab(colored.page, 8);
+  // Data, Source, Tasks tab, +, Calendar, Timeline, Set location,
+  // previous/next/Today, October 1.
+  await tab(colored.page, 11);
   await navigateKey(colored.page, "Space");
   await capture(colored.page, "task-colors-calendar-empty");
   const emptyDayRender = await colored.page.screenshot();
@@ -622,8 +642,8 @@ try {
 
   progress("choose a task color through the inline keyboard palette");
   await maximizeApplet(colored.page, "checklist");
-  // Data, Source, first row's star, checkbox, then its color swatch.
-  await tab(colored.page, 5);
+  // Data, Source, Tasks tab, +, first row's star, checkbox, then color.
+  await tab(colored.page, 7);
   await navigateKey(colored.page, "Space");
   // Date, edit, enabled down, del, None, Rose, Amber.
   await tab(colored.page, 7);
@@ -657,7 +677,7 @@ try {
 
   progress("complete a colored dated task, then reload its saved state");
   await maximizeApplet(colored.page, "checklist");
-  await tab(colored.page, 4); // First row checkbox.
+  await tab(colored.page, 6); // Tasks tab and + precede the first row checkbox.
   await navigateKey(colored.page, "Space");
   await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, key);
   coloredState = JSON.parse(await saved(colored.page));
@@ -704,7 +724,7 @@ try {
   });
   await boot(coloredMobile.page);
   await maximizeApplet(coloredMobile.page, "calendar");
-  await tab(coloredMobile.page, 8);
+  await tab(coloredMobile.page, 11);
   await navigateKey(coloredMobile.page, "Space"); // October 1 is empty.
   await paint(coloredMobile.page);
   const beforeTouch = await coloredMobile.page.screenshot();
@@ -806,14 +826,15 @@ try {
   // a URL hash prefills a city; all enabled cases below intercept the provider.
   const celsius = { name: "Sample Harbor", latitude: 51.5, longitude: -0.12, unit: "celsius" };
   const weatherFixture = { ...fixture, preferences: { ...fixture.preferences, weather: celsius } };
-  const weatherMock = { config: celsius, requests: [] };
+  const weatherDate = "2026-10-30T12:00:00Z"; // Friday, with Saturday's forecast alongside it.
+  const weatherMock = { config: celsius, requests: [], now: weatherDate };
   const weather = await newPage("weather-celsius", {
     raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: weatherMock,
-    viewport: { width: 1440, height: 1000 }, hasTouch: true,
+    viewport: { width: 1440, height: 1000 }, hasTouch: true, fixedTime: weatherDate,
   });
   await boot(weather.page);
   const cached = await expectWeatherCache(weather.page, celsius);
-  checkWeather(cached, celsius);
+  checkWeather(cached, celsius, weatherDate);
   assert.equal(weatherMock.requests.length, 1, "A configured location needs one forecast request");
   assert.deepEqual(JSON.parse(await saved(weather.page)).tasks, fixture.tasks);
   assert.deepEqual(JSON.parse(await saved(weather.page)).history, fixture.history);
@@ -821,31 +842,40 @@ try {
   await boot(weather.page, true);
   await weather.page.waitForTimeout(1600);
   assert.equal(weatherMock.requests.length, 1, "A fresh cached forecast should survive restart without another provider request");
-  checkWeather(await expectWeatherCache(weather.page, celsius), celsius);
-  progress("select a calendar day before using its weather controls");
+  checkWeather(await expectWeatherCache(weather.page, celsius), celsius, weatherDate);
+  progress("select a calendar day and update its compact weather header");
   await maximizeApplet(weather.page, "calendar");
   await capture(weather.page, "calendar-weather-unselected");
-  await tapToday(weather.page);
+  const todayButton = await tapToday(weather.page);
   await paint(weather.page);
   assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Selecting a day must not edit records or the featured countdown");
+  // Oct 30 is in the fifth 34px calendar row, with 3px gaps. Crop above the
+  // first date row: a changed date outline cannot satisfy this header check.
+  const header = { x: 0, y: 0, width: 1440, height: Math.floor(todayButton.top - 4 * 37) };
+  assert.ok(header.height > 80, "The weather strip must sit above the calendar dates");
+  const todayHeader = await weather.page.screenshot({ clip: header });
+  await weather.page.touchscreen.tap(todayButton.x + todayButton.width + 3, todayButton.y);
+  await paint(weather.page);
+  await weather.page.waitForTimeout(150);
+  assert.notDeepEqual(await weather.page.screenshot({ clip: header }), todayHeader,
+    "Touching Saturday must update the forecast above the calendar, not put weather below the work area");
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture,
+    "Selecting another forecast must preserve task dates, colors, completion and the featured countdown");
   await capture(weather.page, "calendar-weather-selected");
   // Touch selects the date without requesting keyboard focus. Reanchor through
   // normal shortcuts before traversing the calendar's known keyboard order.
   await maximizeApplet(weather.page, "calendar");
-  const daysInMonth = await weather.page.evaluate(() => {
-    const today = new Date();
-    return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-  });
-  // Data, Source, Calendar, Timeline, previous/next/Today, dates, location, °F.
-  await tab(weather.page, daysInMonth + 9);
+  // Data, Source, Tasks tab, +, Calendar, Timeline, location, °F. Header
+  // controls stay ahead of the month navigation and date buttons.
+  await tab(weather.page, 8);
   weatherMock.config = { ...celsius, unit: "fahrenheit" };
   await navigateKey(weather.page, "Space");
-  checkWeather(await expectWeatherCache(weather.page, weatherMock.config), weatherMock.config);
+  checkWeather(await expectWeatherCache(weather.page, weatherMock.config), weatherMock.config, weatherDate);
   assert.equal(JSON.parse(await saved(weather.page)).preferences.weather.unit, "fahrenheit");
   weatherMock.config = celsius;
   await tab(weather.page);
   await navigateKey(weather.page, "Space");
-  checkWeather(await expectWeatherCache(weather.page, celsius), celsius);
+  checkWeather(await expectWeatherCache(weather.page, celsius), celsius, weatherDate);
   assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Restoring Celsius must preserve tasks, deadlines, notes and the featured countdown");
   await weather.page.setViewportSize({ width: 390, height: 844 });
   await weather.page.waitForTimeout(500);

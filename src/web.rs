@@ -33,6 +33,8 @@ struct WorkingDrafts {
     kind: String,
     note: Option<NoteDraftSnapshot>,
     task: Option<TaskDraft>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schedule: Option<ScheduleDraft>,
     selected_lists: Vec<u64>,
     active_list: u64,
 }
@@ -44,6 +46,51 @@ struct TaskDraft {
     details: String,
     list_id: Option<u64>,
     original: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ScheduleDraft {
+    task_id: Option<u64>,
+    legacy_id: Option<u64>,
+    due: String,
+    start: String,
+    feature: bool,
+    timeline: bool,
+    initial_due: String,
+    initial_start: String,
+    initial_feature: bool,
+    original: String,
+}
+
+#[derive(Clone, Copy)]
+enum TaskEditorTarget {
+    Task(u64),
+    Deadline(u64),
+}
+
+fn has_text_edit_events(ctx: &egui::Context) -> bool {
+    ctx.input(|input| {
+        input.events.iter().any(|event| match event {
+            egui::Event::Text(_)
+            | egui::Event::Paste(_)
+            | egui::Event::Cut
+            | egui::Event::Ime(_) => true,
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => {
+                matches!(
+                    key,
+                    egui::Key::Backspace | egui::Key::Delete | egui::Key::Tab
+                ) || (*key == egui::Key::Enter && !modifiers.ctrl && !modifiers.command)
+                    || (matches!(key, egui::Key::Z | egui::Key::Y)
+                        && (modifiers.ctrl || modifiers.command))
+            }
+            _ => false,
+        })
+    })
 }
 
 fn task_split_id() -> egui::Id {
@@ -149,6 +196,8 @@ pub struct BrowserApp {
     task_date_error: Option<String>,
     feature_after_date: bool,
     focus_task_date: bool,
+    task_date_original: Option<String>,
+    task_date_initial: Option<(String, String, bool)>,
     year: i32,
     month: u32,
     selected_date: NaiveDate,
@@ -164,6 +213,9 @@ pub struct BrowserApp {
     notes_workspace: bool,
     notes: NotesPanel,
     pending_note_input: bool,
+    pending_task_input: Option<egui::Id>,
+    deferred_task_list: Option<(u64, bool)>,
+    deferred_task_edit: Option<TaskEditorTarget>,
     deferred_workspace: Option<DeferredWorkspace>,
     draft_backup_payload: Option<String>,
     draft_backup_error: Option<String>,
@@ -319,6 +371,8 @@ impl BrowserApp {
             task_date_error: None,
             feature_after_date: false,
             focus_task_date: false,
+            task_date_original: None,
+            task_date_initial: None,
             year: today.year(),
             month: today.month(),
             selected_date: today,
@@ -334,6 +388,9 @@ impl BrowserApp {
             notes_workspace: workspace == "notes",
             notes: NotesPanel::new(),
             pending_note_input: false,
+            pending_task_input: None,
+            deferred_task_list: None,
+            deferred_task_edit: None,
             deferred_workspace: None,
             draft_backup_payload: None,
             draft_backup_error: None,
@@ -352,25 +409,87 @@ impl BrowserApp {
         app
     }
 
-    fn task_draft_snapshot(&self) -> Option<TaskDraft> {
-        let changed = match self.task_edit {
-            Some(_) => self
-                .task_edit_original
-                .as_deref()
-                .and_then(|text| serde_json::from_str::<jig::model::Task>(text).ok())
+    fn has_task_draft(&self) -> bool {
+        match self.task_edit {
+            Some(id) => self
+                .state
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
                 .is_none_or(|task| {
                     self.task_text != task.text
                         || self.task_details != task.details.as_deref().unwrap_or_default()
                         || self.task_edit_list.is_some_and(|id| id != task.list_id)
                 }),
             None => !self.task_text.is_empty() || !self.task_details.is_empty(),
-        };
-        changed.then(|| TaskDraft {
+        }
+    }
+
+    fn task_draft_snapshot(&self) -> Option<TaskDraft> {
+        self.has_task_draft().then(|| TaskDraft {
             id: self.task_edit,
             text: self.task_text.clone(),
             details: self.task_details.clone(),
             list_id: self.task_edit_list.or(Some(self.active_task_list)),
             original: self.task_edit.and(self.task_edit_original.clone()),
+        })
+    }
+
+    fn schedule_source(&self, task_id: Option<u64>, legacy_id: Option<u64>) -> Option<String> {
+        let task = task_id.and_then(|id| self.state.tasks.iter().find(|task| task.id == id));
+        let deadline = match legacy_id {
+            Some(id) => self
+                .state
+                .deadlines
+                .iter()
+                .find(|deadline| deadline.id == id),
+            None => task.and_then(|task| self.state.task_deadline(task.id)),
+        };
+        if task_id.is_some() && task.is_none() || legacy_id.is_some() && deadline.is_none() {
+            return None;
+        }
+        (task.is_some() || deadline.is_some())
+            .then(|| serde_json::to_string(&(task, deadline)).ok())
+            .flatten()
+    }
+
+    fn capture_schedule_draft(&mut self) {
+        self.task_date_original = self.schedule_source(self.task_date_edit, self.task_date_legacy);
+        self.task_date_initial = Some((
+            self.task_date.clone(),
+            self.task_start.clone(),
+            self.feature_after_date,
+        ));
+    }
+
+    fn has_schedule_draft(&self) -> bool {
+        (self.task_date_edit.is_some() || self.task_date_legacy.is_some())
+            && self
+                .task_date_initial
+                .as_ref()
+                .is_some_and(|(due, start, feature)| {
+                    self.task_date != *due
+                        || self.task_start != *start
+                        || self.feature_after_date != *feature
+                })
+    }
+
+    fn schedule_draft_snapshot(&self) -> Option<ScheduleDraft> {
+        if !self.has_schedule_draft() {
+            return None;
+        }
+        let (due, start, feature) = self.task_date_initial.as_ref()?;
+        Some(ScheduleDraft {
+            task_id: self.task_date_edit,
+            legacy_id: self.task_date_legacy,
+            due: self.task_date.clone(),
+            start: self.task_start.clone(),
+            feature: self.feature_after_date,
+            timeline: self.task_date_timeline,
+            initial_due: due.clone(),
+            initial_start: start.clone(),
+            initial_feature: *feature,
+            original: self.task_date_original.clone()?,
         })
     }
 
@@ -434,8 +553,43 @@ impl BrowserApp {
                 }
                 self.focus_task_input = !self.notes_workspace;
             }
+            if let Some(schedule) = drafts.schedule {
+                if schedule.task_id.is_some() == schedule.legacy_id.is_some()
+                    || self
+                        .schedule_source(schedule.task_id, schedule.legacy_id)
+                        .as_ref()
+                        != Some(&schedule.original)
+                {
+                    return Err("An unfinished date edit belongs to a changed or missing item. Its backup has been preserved.".into());
+                }
+                self.task_date_edit = schedule.task_id;
+                self.task_date_legacy = schedule.legacy_id;
+                self.task_date = schedule.due;
+                self.task_start = schedule.start;
+                self.feature_after_date = schedule.feature;
+                self.task_date_timeline = schedule.timeline;
+                self.task_date_initial = Some((
+                    schedule.initial_due,
+                    schedule.initial_start,
+                    schedule.initial_feature,
+                ));
+                self.task_date_original = Some(schedule.original);
+                self.focus_task_date = true;
+                if self.task_date_timeline {
+                    self.timeline_view = true;
+                }
+                let list = schedule
+                    .task_id
+                    .and_then(|id| self.state.tasks.iter().find(|task| task.id == id))
+                    .map_or(self.state.default_list_id(), |task| task.list_id);
+                if !self.selected_task_lists.contains(&list) {
+                    self.selected_task_lists.push(list);
+                }
+            }
             if !self.storage_error
-                && (self.notes.has_unsaved_changes() || self.task_draft_snapshot().is_some())
+                && (self.notes.has_unsaved_changes()
+                    || self.has_task_draft()
+                    || self.has_schedule_draft())
             {
                 self.status = if recovered {
                     "Recovered unfinished edits as new items because the saved originals changed."
@@ -457,12 +611,13 @@ impl BrowserApp {
     /// or adding an Undo entry for each keystroke.
     fn backup_working_drafts(&mut self) -> bool {
         let task = self.task_draft_snapshot();
-        let has_task_draft = task.is_some();
+        let schedule = self.schedule_draft_snapshot();
+        let has_task_draft = task.is_some() || schedule.is_some();
         if self.draft_backup_blocked {
             return has_task_draft;
         }
         let note = self.notes.draft_snapshot();
-        let payload = if note.is_none() && task.is_none() {
+        let payload = if note.is_none() && task.is_none() && schedule.is_none() {
             None
         } else {
             match serde_json::to_string(&WorkingDrafts {
@@ -470,6 +625,7 @@ impl BrowserApp {
                 kind: if self.demo { "demo" } else { "personal" }.into(),
                 note,
                 task,
+                schedule,
                 selected_lists: self.selected_task_lists.clone(),
                 active_list: self.active_task_list,
             }) {
@@ -599,6 +755,9 @@ impl BrowserApp {
         self.notes.reset();
         self.deferred_workspace = None;
         self.pending_note_input = false;
+        self.pending_task_input = None;
+        self.deferred_task_edit = None;
+        self.deferred_task_list = None;
         self.pending_csv_target = None;
         browser_storage::cancel_csv();
         self.timeline = TimelinePanel::new(Local::now().date_naive());
@@ -617,8 +776,8 @@ impl BrowserApp {
             self.status = "Save or cancel the note edit before using Undo.".into();
             return;
         }
-        if self.task_draft_snapshot().is_some() {
-            self.status = "Save or clear the task edit before using Undo.".into();
+        if self.pending_task_input.is_some() || self.has_task_draft() || self.has_schedule_draft() {
+            self.status = "Save or clear task edits before using Undo.".into();
             return;
         }
         self.stl.finish_undo_gesture();
@@ -658,6 +817,9 @@ impl BrowserApp {
         self.notes.reset();
         self.deferred_workspace = None;
         self.pending_note_input = false;
+        self.pending_task_input = None;
+        self.deferred_task_edit = None;
+        self.deferred_task_list = None;
         self.charts.invalidate();
         self.task_edit = None;
         self.task_edit_original = None;
@@ -677,6 +839,8 @@ impl BrowserApp {
         self.task_start.clear();
         self.task_date_timeline = false;
         self.task_date_legacy = None;
+        self.task_date_original = None;
+        self.task_date_initial = None;
         self.task_date_error = None;
         self.feature_after_date = false;
         self.focus_task_date = false;
@@ -942,7 +1106,7 @@ impl BrowserApp {
     }
 
     fn show_notes(&mut self, ctx: &egui::Context) -> bool {
-        if self.pending_note_input {
+        if self.pending_note_input || self.pending_task_input.is_some() {
             self.deferred_workspace = Some(DeferredWorkspace::Notes);
             return false;
         }
@@ -971,7 +1135,7 @@ impl BrowserApp {
         if self.sheet_workspace == sheet && !self.tasks_workspace && !self.notes_workspace {
             return true;
         }
-        if self.pending_note_input {
+        if self.pending_note_input || self.pending_task_input.is_some() {
             self.deferred_workspace = Some(if sheet {
                 DeferredWorkspace::Sheet
             } else {
@@ -1041,7 +1205,7 @@ impl BrowserApp {
     }
 
     fn show_tasks(&mut self, ctx: &egui::Context) -> bool {
-        if self.pending_note_input {
+        if self.pending_note_input || self.pending_task_input.is_some() {
             self.deferred_workspace = Some(DeferredWorkspace::Tasks);
             return false;
         }
@@ -1147,6 +1311,11 @@ impl BrowserApp {
     }
 
     fn select_task_list(&mut self, id: u64, combine: bool, ctx: &egui::Context) {
+        if self.pending_task_input.is_some() {
+            self.deferred_task_list = Some((id, combine));
+            ctx.request_repaint();
+            return;
+        }
         let previous = (self.selected_task_lists.clone(), self.active_task_list);
         if combine {
             if self.selected_task_lists.contains(&id) {
@@ -1162,7 +1331,18 @@ impl BrowserApp {
             self.active_task_list = id;
         }
         self.sanitize_task_lists();
-        if self.task_draft_snapshot().is_some()
+        let schedule_list = self
+            .task_date_edit
+            .and_then(|id| self.state.tasks.iter().find(|task| task.id == id))
+            .map_or(self.state.default_list_id(), |task| task.list_id);
+        if self.has_schedule_draft() && !self.selected_task_lists.contains(&schedule_list) {
+            self.selected_task_lists = previous.0;
+            self.active_task_list = previous.1;
+            self.status = "Save or cancel the date edit before hiding its list.".into();
+            ctx.request_repaint();
+            return;
+        }
+        if self.has_task_draft()
             && self.task_edit.is_some_and(|id| {
                 self.state
                     .tasks
@@ -2086,6 +2266,10 @@ impl BrowserApp {
     }
 
     fn open_local(&mut self) {
+        if self.pending_task_input.is_some() || self.has_task_draft() || self.has_schedule_draft() {
+            self.status = "Save or clear task edits before opening another dataset.".into();
+            return;
+        }
         if !self.flush_notes_edit() {
             return;
         }
@@ -2183,7 +2367,9 @@ impl BrowserApp {
                     self.open_local();
                 }
                 if ui.button("Sample mode").clicked() && self.flush_notes_edit() {
-                    if self.dirty {
+                    if self.pending_task_input.is_some() || self.has_task_draft() || self.has_schedule_draft() {
+                        self.status = "Save or clear task edits before switching to sample mode.".into();
+                    } else if self.dirty {
                         self.status = "Save your changes before switching to sample mode. If saving is unavailable, export JSON, then reload before switching.".into();
                     } else {
                         self.state = jig::sample::state(Utc::now());
@@ -2458,7 +2644,79 @@ impl BrowserApp {
         }
     }
 
-    fn begin_task_date(&mut self, id: u64, feature_after: bool) {
+    fn edit_task_target(&mut self, target: TaskEditorTarget, ctx: &egui::Context) {
+        if self.pending_task_input.is_some() {
+            self.deferred_task_edit = Some(target);
+            ctx.request_repaint();
+            return;
+        }
+        let existing = match target {
+            TaskEditorTarget::Task(id) => Some(id),
+            TaskEditorTarget::Deadline(id) => self
+                .state
+                .tasks
+                .iter()
+                .find(|task| task.deadline == Some(id))
+                .map(|task| task.id),
+        };
+        if existing.is_some() && self.task_edit == existing {
+            self.focus_task_input = true;
+            ctx.request_repaint();
+            return;
+        }
+        if self.has_task_draft() {
+            self.status = "Save or clear the current task edit before editing another task.".into();
+            return;
+        }
+        let id = match (existing, target) {
+            (Some(id), _) => Ok(id),
+            (None, TaskEditorTarget::Deadline(id)) => self
+                .state
+                .ensure_task_for_deadline(id)
+                .inspect(|_| self.changed()),
+            (None, TaskEditorTarget::Task(_)) => Err("Task not found".into()),
+        };
+        match id {
+            Ok(id) => {
+                if let Some(task) = self.state.tasks.iter().find(|task| task.id == id) {
+                    self.task_edit = Some(id);
+                    self.task_edit_original = serde_json::to_string(task).ok();
+                    self.task_text = task.text.clone();
+                    self.task_details = task.details.clone().unwrap_or_default();
+                    self.task_edit_list = Some(task.list_id);
+                }
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn restore_task_input_focus(&self, ui: &Ui, id: egui::Id) {
+        if self.pending_task_input == Some(id) {
+            ui.memory_mut(|memory| memory.request_focus(id));
+        }
+    }
+
+    fn task_input_processed(&mut self, id: egui::Id) {
+        if self.pending_task_input == Some(id) {
+            self.pending_task_input = None;
+        }
+    }
+
+    fn begin_task_date(&mut self, id: u64, feature_after: bool) -> bool {
+        if self.pending_task_input.is_some() {
+            self.status = "Finish the current task input before opening a date editor.".into();
+            return false;
+        }
+        if self.has_schedule_draft() {
+            if self.task_date_edit == Some(id) {
+                self.feature_after_date |= feature_after;
+                self.focus_task_date = true;
+                return true;
+            }
+            self.status =
+                "Save or cancel the current date edit before editing another date.".into();
+            return false;
+        }
         self.task_start = self
             .state
             .tasks
@@ -2484,6 +2742,8 @@ impl BrowserApp {
         self.task_date_edit = Some(id);
         self.feature_after_date = feature_after;
         self.focus_task_date = true;
+        self.capture_schedule_draft();
+        true
     }
 
     fn task_editor_state(&self, id: u64) -> Result<State, String> {
@@ -2596,7 +2856,9 @@ impl BrowserApp {
                                             }
                                             self.apply(result);
                                         }
-                                        Ok(id) => self.begin_task_date(id, true),
+                                        Ok(id) => {
+                                            self.begin_task_date(id, true);
+                                        }
                                         Err(error) => self.status = error,
                                     }
                                 }
@@ -2685,35 +2947,10 @@ impl BrowserApp {
                                 }
                             }
                             if ui.small_button("edit").clicked() {
-                                match self.row_task(&row) {
-                                    Ok(id) if self.task_edit == Some(id) => {
-                                        self.focus_task_input = true;
-                                    }
-                                    Ok(_) if self.task_draft_snapshot().is_some() => {
-                                        self.status = "Save or clear the current task edit before editing another task.".into();
-                                    }
-                                    Ok(id) => {
-                                        self.task_edit = Some(id);
-                                        self.task_edit_original = self
-                                            .state
-                                            .tasks
-                                            .iter()
-                                            .find(|task| task.id == id)
-                                            .and_then(|task| serde_json::to_string(task).ok());
-                                        self.task_text = row.title.clone();
-                                        self.task_details = self
-                                            .state
-                                            .tasks
-                                            .iter()
-                                            .find(|task| task.id == id)
-                                            .and_then(|task| task.details.clone())
-                                            .unwrap_or_default();
-                                        self.task_edit_list = Some(row.list_id);
-                                        if row.task.is_none() {
-                                            self.changed();
-                                        }
-                                    }
-                                    Err(error) => self.status = error,
+                                if let Some(id) = row.task {
+                                    self.edit_task_target(TaskEditorTarget::Task(id), ui.ctx());
+                                } else if let Some(id) = row.deadline {
+                                    self.edit_task_target(TaskEditorTarget::Deadline(id), ui.ctx());
                                 }
                             }
                             if ui
@@ -2745,7 +2982,7 @@ impl BrowserApp {
                                     self.task_edit_original = None;
                                     self.task_edit_list = None;
                                     self.task_text.clear();
-        self.task_details.clear();
+                                    self.task_details.clear();
                                 }
                                 if row.task.is_some() && self.task_date_edit == row.task {
                                     self.task_date_edit = None;
@@ -2811,6 +3048,7 @@ impl BrowserApp {
         let mut save_task = false;
         ui.horizontal(|ui| {
             let id = egui::Id::new("task-input");
+            self.restore_task_input_focus(ui, id);
             let response = ui.add(
                 TextEdit::singleline(&mut self.task_text)
                     .id(id)
@@ -2818,6 +3056,7 @@ impl BrowserApp {
                     .hint_text("Add new task")
                     .desired_width((ui.available_width() - 55.0).max(80.0)),
             );
+            self.task_input_processed(id);
             response.clone().on_hover_text(format!(
                 "New tasks go to {}",
                 self.state
@@ -2856,13 +3095,16 @@ impl BrowserApp {
             })
         {
             ui.label(RichText::new("Details").small().color(MUTED));
+            let id = egui::Id::new("task-details-input");
+            self.restore_task_input_focus(ui, id);
             ui.add(
                 TextEdit::multiline(&mut self.task_details)
-                    .id(egui::Id::new("task-details-input"))
+                    .id(id)
                     .desired_width(f32::INFINITY)
                     .desired_rows(4)
                     .char_limit(jig::model::MAX_NOTE_BYTES),
             );
+            self.task_input_processed(id);
         }
         if self.task_edit.is_some() && ui.small_button("Cancel edit").clicked() {
             save_task = false;
@@ -2993,6 +3235,8 @@ impl BrowserApp {
         self.task_date_edit = None;
         self.task_date_legacy = None;
         self.task_date_timeline = false;
+        self.task_date_original = None;
+        self.task_date_initial = None;
         self.task_date_error = None;
         self.feature_after_date = false;
         self.focus_task_date = false;
@@ -3109,6 +3353,7 @@ impl BrowserApp {
             if self.focus_task_date {
                 ui.memory_mut(|memory| memory.request_focus(field));
             }
+            self.restore_task_input_focus(ui, field);
             let response = ui.add(
                 TextEdit::singleline(&mut self.task_date)
                     .id(field)
@@ -3116,6 +3361,7 @@ impl BrowserApp {
                     .hint_text("YYYY-MM-DD")
                     .desired_width(ui.available_width()),
             ).on_hover_text("Enter a date, or an RFC3339 timestamp with a timezone. Date edits retain the existing deadline time; new deadlines use 09:00 local time.");
+            self.task_input_processed(field);
             if response.has_focus() {
                 self.focus = owner;
             }
@@ -3127,13 +3373,16 @@ impl BrowserApp {
             let mut enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             ui.label(RichText::new("Start · optional").color(MUTED).size(11.0));
+            let start_field = egui::Id::new(("task-start-input", id));
+            self.restore_task_input_focus(ui, start_field);
             let start = ui.add(
                 TextEdit::singleline(&mut self.task_start)
-                    .id(egui::Id::new(("task-start-input", id)))
+                    .id(start_field)
                     .return_key(None)
                     .hint_text("YYYY-MM-DD")
                     .desired_width(ui.available_width()),
             );
+            self.task_input_processed(start_field);
             if start.has_focus() {
                 self.focus = owner;
                 if start.gained_focus() {
@@ -3281,9 +3530,15 @@ impl BrowserApp {
                 .selectable_label(!self.timeline_view, "Calendar")
                 .clicked()
             {
-                self.timeline_view = false;
-                if self.task_date_timeline {
-                    self.close_task_dates();
+                if self.task_date_timeline
+                    && (self.has_schedule_draft() || self.pending_task_input.is_some())
+                {
+                    self.status = "Save or cancel the date edit before changing views.".into();
+                } else {
+                    self.timeline_view = false;
+                    if self.task_date_timeline {
+                        self.close_task_dates();
+                    }
                 }
             }
             if ui
@@ -3336,17 +3591,23 @@ impl BrowserApp {
             }
             Some(TimelineAction::EditTask(id)) => {
                 self.calendar_weather_date = None;
-                self.begin_task_date(id, false);
-                self.task_date_timeline = true;
-                if let Some(deadline) = self.state.task_deadline(id) {
-                    self.selected_date = deadline.at.with_timezone(&Local).date_naive();
-                    self.year = self.selected_date.year();
-                    self.month = self.selected_date.month();
+                if self.begin_task_date(id, false) {
+                    self.task_date_timeline = true;
+                    if let Some(deadline) = self.state.task_deadline(id) {
+                        self.selected_date = deadline.at.with_timezone(&Local).date_naive();
+                        self.year = self.selected_date.year();
+                        self.month = self.selected_date.month();
+                    }
                 }
             }
             Some(TimelineAction::EditDeadline(id)) => {
                 self.calendar_weather_date = None;
-                if let Some(deadline) = self.state.deadlines.iter().find(|item| item.id == id) {
+                if self.has_schedule_draft() || self.pending_task_input.is_some() {
+                    self.status =
+                        "Save or cancel the current date edit before editing another date.".into();
+                } else if let Some(deadline) =
+                    self.state.deadlines.iter().find(|item| item.id == id)
+                {
                     self.task_date = deadline
                         .at
                         .with_timezone(&Local)
@@ -3362,6 +3623,7 @@ impl BrowserApp {
                     self.task_date_error = None;
                     self.feature_after_date = false;
                     self.focus_task_date = true;
+                    self.capture_schedule_draft();
                 }
             }
             None => {}
@@ -3646,30 +3908,20 @@ impl eframe::App for BrowserApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.pending_note_input = self.notes.has_draft()
-            && self.notes.owns_keyboard(ctx)
-            && ctx.input(|input| {
-                input.events.iter().any(|event| match event {
-                    egui::Event::Text(_)
-                    | egui::Event::Paste(_)
-                    | egui::Event::Cut
-                    | egui::Event::Ime(_) => true,
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } => {
-                        matches!(
-                            key,
-                            egui::Key::Backspace | egui::Key::Delete | egui::Key::Tab
-                        ) || (*key == egui::Key::Enter && !modifiers.ctrl && !modifiers.command)
-                            || (matches!(key, egui::Key::Z | egui::Key::Y)
-                                && (modifiers.ctrl || modifiers.command))
-                    }
-                    _ => false,
-                })
-            });
+        let text_input = has_text_edit_events(ctx);
+        let focused = ctx.memory(|memory| memory.focused());
+        let schedule_id = self.task_date_edit.or(self.task_date_legacy);
+        self.pending_task_input = focused.filter(|id| {
+            text_input
+                && (*id == egui::Id::new("task-input")
+                    || *id == egui::Id::new("task-details-input")
+                    || schedule_id.is_some_and(|target| {
+                        *id == egui::Id::new(("task-date-input", target))
+                            || *id == egui::Id::new(("task-start-input", target))
+                    }))
+        });
+        self.pending_note_input =
+            self.notes.has_draft() && self.notes.owns_keyboard(ctx) && text_input;
         self.sanitize_task_lists();
         if !ctx.style().visuals.dark_mode {
             ctx.set_theme(egui::ThemePreference::Dark);
@@ -3814,6 +4066,8 @@ impl eframe::App for BrowserApp {
             ctx.request_repaint();
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T))
+            && !(self.task_date_timeline
+                && (self.has_schedule_draft() || self.pending_task_input.is_some()))
             && self.set_workspace(false, ctx)
         {
             self.focus = 2;
@@ -4083,6 +4337,14 @@ impl eframe::App for BrowserApp {
         if self.collect_viewer_undo() {
             ctx.request_repaint();
         }
+        if self.pending_task_input.is_none() {
+            if let Some((id, combine)) = self.deferred_task_list.take() {
+                self.select_task_list(id, combine, ctx);
+            }
+            if let Some(target) = self.deferred_task_edit.take() {
+                self.edit_task_target(target, ctx);
+            }
+        }
         if let Some(workspace) = self.deferred_workspace.take() {
             match workspace {
                 DeferredWorkspace::Sheet => {
@@ -4101,6 +4363,11 @@ impl eframe::App for BrowserApp {
             ctx.request_repaint();
         }
         let task_draft = self.backup_working_drafts();
-        browser_storage::set_unsaved(self.dirty || self.notes.has_unsaved_changes() || task_draft);
+        browser_storage::set_unsaved(
+            self.dirty
+                || self.notes.has_unsaved_changes()
+                || task_draft
+                || (self.draft_backup_blocked && self.draft_backup_payload.is_some()),
+        );
     }
 }

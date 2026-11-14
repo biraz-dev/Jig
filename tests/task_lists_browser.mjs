@@ -180,8 +180,23 @@ async function focusedControlPoint(page, limit = 180) {
       }
       if (r.count > 100 && r.bottom - r.top >= 10 && r.bottom - r.top <= 40 && r.right - r.left < 180) regions.push(r);
     }
-    bitmap.close();
     const r = regions.sort((a, b) => a.top - b.top || b.count - a.count)[0];
+    if (r) {
+      // Combined rows may wrap controls. Read their full shaded frame rather
+      // than treating the first-line star as the vertical center of the row.
+      const shades = [[44, 39, 35], [50, 44, 39], [40, 36, 33], [47, 42, 38]];
+      const y = Math.round((r.top + r.bottom) / 2);
+      for (let x = 6; x < r.left; x++) {
+        const shade = shades.find(color => color.every((value, axis) => pixels[(y * bitmap.width + x) * 4 + axis] === value));
+        if (!shade) continue;
+        const row = py => shade.every((value, axis) => pixels[(py * bitmap.width + x) * 4 + axis] === value);
+        r.rowTop = y; r.rowBottom = y;
+        while (r.rowTop > 0 && row(r.rowTop - 1)) r.rowTop--;
+        while (r.rowBottom + 1 < bitmap.height && row(r.rowBottom + 1)) r.rowBottom++;
+        break;
+      }
+    }
+    bitmap.close();
     return r ? { ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
   }, { encoded: png.toString("base64"), limit });
   assert.ok(point, "A focused list control must be visibly identifiable for touch/cap checks");
@@ -308,7 +323,8 @@ try {
   await focusRowControl(current, 7); // Each visible dated task has six controls in its own list.
   const lastRow = await focusedControlPoint(current.page, 520);
   const taskGrip = { x: firstRow.left - 18, y: firstRow.y };
-  const afterLast = { x: lastRow.x + 110, y: lastRow.y + 12 };
+  assert.ok(Number.isFinite(lastRow.rowBottom), "The combined task row must expose its full shaded frame");
+  const afterLast = { x: lastRow.x + 110, y: lastRow.rowBottom - 2 };
   const beginTaskDrag = async () => {
     await current.page.mouse.move(taskGrip.x, taskGrip.y); await current.page.mouse.down(); await paint(current.page);
     await current.page.mouse.move(afterLast.x, afterLast.y, { steps: 8 }); await paint(current.page);

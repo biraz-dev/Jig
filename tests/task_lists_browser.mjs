@@ -388,6 +388,8 @@ try {
   await current.page.touchscreen.tap(multi.x, multi.y); await paint(current.page);
   await current.page.touchscreen.tap(show.x, show.y); await paint(current.page);
   await expectBars(current.page, ["amber", "sage"]);
+  assert.equal(await current.page.evaluate(() => document.activeElement?.tagName === "INPUT"), false,
+    "Rapid Multi-mode tab taps must combine lists without opening a rename editor");
   assert.deepEqual(await state(current.page), fixture, "Touch combinations must leave tasks and the featured countdown unchanged");
   assert.equal(await current.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "List tabs and controls must fit the phone viewport");
   await capture(current.page, "task-lists-mobile");

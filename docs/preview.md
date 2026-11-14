@@ -92,6 +92,7 @@ From a checkout of the repository:
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install trunk --version 0.21.14 --locked
+python3 scripts/fetch_ocr_assets.py
 trunk serve --public-url /
 ```
 
@@ -250,8 +251,8 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The seven browser suites run against the same built artifact in separate jobs,
-with at most three runners in parallel. Pages deploys only after all suites pass.
+The eleven browser suites run against the same built artifact in separate jobs,
+with at most six runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
 contains `[render]` also prints allowlisted synthetic screenshots as
@@ -294,8 +295,9 @@ publishing. To activate the public preview:
 2. Merge the reviewed milestone PR into `main`.
 3. Check the **Browser preview** deploy job and use its reported Pages URL.
 
-The expected repository URL is `https://biraz-dev.github.io/Jig/`; the deployment
-job is the authority for its publication status.
+The public app is `https://biraz.dev/Jig/`; the deployment job checks the live
+release marker and WebAssembly asset. The account's landing-page repository owns
+the domain. Keep Jig's custom-domain setting empty and its repository free of CNAME files.
 
 Only `dist/` is uploaded as the Pages artifact. Trunk copies the intended static
 bootstrap assets and compiled application, not state files, home directories,

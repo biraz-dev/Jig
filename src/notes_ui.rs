@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 const CARD_WIDTH: f32 = 150.0;
 const CARD_HEIGHT: f32 = 156.0;
 const GAP: f32 = 8.0;
+const PREVIEW_CHARS: usize = 512;
 
 /// Recovery may retain a working draft larger than the saved-note limit, so a
 /// failed Save can still be corrected or copied after a refresh.
@@ -417,6 +418,10 @@ impl NotesPanel {
             .stroke(Stroke::new(1.0_f32, if editing { ACCENT } else { RULE.gamma_multiply(0.6) }))
             .inner_margin(egui::Margin::same(6))
             .show(ui, |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2((width - 12.0).max(68.0), height - 12.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
                 ui.set_width((width - 12.0).max(68.0));
                 ui.set_min_height(height - 12.0);
                 let mut remove = false;
@@ -489,9 +494,18 @@ impl NotesPanel {
                     self.editor(ui, actions);
                 } else {
                     let (body_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 100.0), Sense::hover());
-                    let painter = ui.painter().with_clip_rect(body_rect);
-                    let galley = painter.layout(note.text.clone(), egui::FontId::monospace(12.0), TEXT, body_rect.width());
-                    painter.galley(body_rect.min, galley, TEXT);
+                    if ui.is_rect_visible(body_rect) {
+                        // The card shows only a few lines. Keep layout work
+                        // bounded while the editor and Copy retain all text.
+                        let mut chars = note.text.chars();
+                        let mut preview: String = chars.by_ref().take(PREVIEW_CHARS).collect();
+                        if chars.next().is_some() {
+                            preview.push('…');
+                        }
+                        let painter = ui.painter().with_clip_rect(body_rect);
+                        let galley = painter.layout(preview, egui::FontId::monospace(12.0), TEXT, body_rect.width());
+                        painter.galley(body_rect.min, galley, TEXT);
+                    }
                     // Keep even a very long note inside a fixed card. Opening
                     // the editor exposes all text without enlarging its preview.
                     let body = ui.interact(body_rect, ui.id().with("body"), Sense::click());
@@ -509,6 +523,8 @@ impl NotesPanel {
                     if converting { self.convert = None; }
                     actions.push(NoteAction::Remove(note.id));
                 }
+                    },
+                );
             });
         response.response.rect
     }
@@ -519,9 +535,15 @@ impl NotesPanel {
             .stroke(Stroke::new(1.0_f32, ACCENT))
             .inner_margin(egui::Margin::same(6))
             .show(ui, |ui| {
-                ui.set_width((width - 12.0).max(68.0));
-                ui.set_min_height(216.0);
-                self.editor(ui, actions);
+                ui.allocate_ui_with_layout(
+                    egui::vec2((width - 12.0).max(68.0), 216.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width((width - 12.0).max(68.0));
+                        ui.set_min_height(216.0);
+                        self.editor(ui, actions);
+                    },
+                );
             });
     }
 

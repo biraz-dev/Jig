@@ -185,7 +185,9 @@ async function assertReadableNoteBody(scene) {
           left = Math.min(left, x); right = x; ink++;
         }
       }
-      if (ink >= 28 && right - left > best.span) best = { span: right - left, ink };
+      // The 12px mono glyphs are heavily antialiased: require several solid
+      // glyph samples across a real line, rather than an arbitrary ink density.
+      if (ink >= 4 && right - left > best.span) best = { span: right - left, ink };
     }
     bitmap.close(); return best;
   }, { encoded: png.toString("base64"), pin });

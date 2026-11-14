@@ -105,6 +105,7 @@ pub struct BrowserApp {
     focus_task_list_name: bool,
     task_list_remove: Option<(u64, u64)>,
     task_list_tab_ids: Vec<(egui::Id, u64)>,
+    last_task_list_click: Option<(u64, f64)>,
     task_color_edit: Option<u64>,
     confirm_clear_completed: bool,
     task_date_edit: Option<u64>,
@@ -249,6 +250,7 @@ impl BrowserApp {
             focus_task_list_name: false,
             task_list_remove: None,
             task_list_tab_ids: Vec::new(),
+            last_task_list_click: None,
             task_color_edit: None,
             confirm_clear_completed: false,
             task_date_edit: None,
@@ -377,6 +379,7 @@ impl BrowserApp {
         browser_storage::cancel_csv();
         self.timeline = TimelinePanel::new(Local::now().date_naive());
         self.calendar_weather_date = None;
+        self.last_task_list_click = None;
         self.selected_task_lists.clear();
         self.sanitize_task_lists();
         self.undo_history.clear();
@@ -425,6 +428,7 @@ impl BrowserApp {
         self.task_edit_list = None;
         self.task_list_rename = None;
         self.task_list_remove = None;
+        self.last_task_list_click = None;
         self.focus_task_list_name = false;
         self.sanitize_task_lists();
         self.task_color_edit = None;
@@ -850,6 +854,19 @@ impl BrowserApp {
     fn task_list_tabs(&mut self, ui: &mut Ui) {
         self.sanitize_task_lists();
         self.task_list_tab_ids.clear();
+        let (pointer_clicked, click_time) = ui.input(|input| {
+            (
+                input.pointer.button_clicked(egui::PointerButton::Primary),
+                input.time,
+            )
+        });
+        // egui counts nearby clicks globally. A rename needs consecutive
+        // pointer clicks on this same tab, never quick choices across tabs.
+        let previous_click = if pointer_clicked {
+            self.last_task_list_click.take()
+        } else {
+            None
+        };
         let lists = self.state.task_lists.clone();
         ui.horizontal(|ui| {
             let controls = if lists.len() > 1 { 148.0 } else { 76.0 };
@@ -886,6 +903,12 @@ impl BrowserApp {
                                         ui.add_sized([width, 30.0], button)
                                     }).inner;
                                     self.task_list_tab_ids.push((response.id, list.id));
+                                    let pointer_tab_click = pointer_clicked
+                                        && response.clicked_by(egui::PointerButton::Primary)
+                                        && response.interact_pointer_pos().is_some_and(|position| response.rect.contains(position));
+                                    if pointer_tab_click {
+                                        self.last_task_list_click = Some((list.id, click_time));
+                                    }
                                     let shift_key = response.has_focus()
                                         && ui.input_mut(|input| {
                                             input.consume_key(egui::Modifiers::SHIFT, egui::Key::Space)
@@ -898,9 +921,9 @@ impl BrowserApp {
                                             || ui.input(|input| input.modifiers.shift);
                                         self.select_task_list(list.id, combine, ui.ctx());
                                     }
-                                    // Rapid touch choices in Multi are selections,
-                                    // not a request to edit a tab's name.
                                     if response.double_clicked()
+                                        && pointer_tab_click
+                                        && previous_click.is_some_and(|(id, time)| id == list.id && time != click_time)
                                         && !self.task_lists_combine
                                         && !ui.input(|input| input.modifiers.shift)
                                     {
@@ -3377,6 +3400,11 @@ impl eframe::App for BrowserApp {
         let selectable_labels = !self.sheet_workspace;
         if ctx.style().interaction.selectable_labels != selectable_labels {
             ctx.style_mut(|style| style.interaction.selectable_labels = selectable_labels);
+        }
+        if self.sheet_workspace
+            || (!self.tasks_workspace && self.expanded && !matches!(self.focus, 1 | 2))
+        {
+            self.last_task_list_click = None;
         }
         egui::TopBottomPanel::top("jig-header").show(ctx, |ui| self.toolbar(ui));
         egui::TopBottomPanel::bottom("jig-status").show(ctx, |ui| {

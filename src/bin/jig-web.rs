@@ -10,6 +10,10 @@ mod web;
 mod web_theme;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../text_input.rs"]
+mod text_input;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../stl_ui.rs"]
 mod stl_ui;
 

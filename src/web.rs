@@ -3,6 +3,7 @@ use crate::web_theme::{self, ACCENT, BG, ERROR, MUTED, RULE, SUCCESS, TEXT};
 use crate::{
     browser_storage,
     chart_ui::{ChartAction, ChartPanel},
+    notes_ui::{NoteAction, NoteDraftSnapshot, NotesPanel},
     pdf_import_ui::{PdfImportAction, PdfImportPanel},
     spreadsheet_ui::{SheetAction, SheetPanel},
     stl_ui::{Snapshot as StlSnapshot, StlPanel},
@@ -18,11 +19,32 @@ use jig::{
     spreadsheet::{self, CellAddr, Workbook},
     timeline,
 };
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const UNDO_STEPS: usize = 20;
 const UNDO_BYTES: usize = 64 * 1024 * 1024;
 const TASK_SPLIT_WIDTH: f32 = 12.0;
+const DRAFT_BACKUP_BYTES: usize = 128 * 1024;
+
+#[derive(Serialize, Deserialize)]
+struct WorkingDrafts {
+    version: u8,
+    kind: String,
+    note: Option<NoteDraftSnapshot>,
+    task: Option<TaskDraft>,
+    selected_lists: Vec<u64>,
+    active_list: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TaskDraft {
+    id: Option<u64>,
+    text: String,
+    details: String,
+    list_id: Option<u64>,
+    original: Option<String>,
+}
 
 fn task_split_id() -> egui::Id {
     egui::Id::new("task-timeline-divider")
@@ -65,6 +87,14 @@ enum Confirm {
     Clear,
 }
 
+#[derive(Clone, Copy)]
+enum DeferredWorkspace {
+    Sheet,
+    Workbench,
+    Tasks,
+    Notes,
+}
+
 struct ChecklistRow {
     task: Option<u64>,
     deadline: Option<u64>,
@@ -95,7 +125,10 @@ pub struct BrowserApp {
     scroll_selected: bool,
     calculation: String,
     task_text: String,
+    task_details: String,
     task_edit: Option<u64>,
+    task_edit_original: Option<String>,
+    focus_task_input: bool,
     task_edit_list: Option<u64>,
     selected_task_lists: Vec<u64>,
     active_task_list: u64,
@@ -128,6 +161,13 @@ pub struct BrowserApp {
     pending_csv_target: Option<(u64, CellAddr)>,
     pending_paste_target: Option<(u64, CellAddr)>,
     tasks_workspace: bool,
+    notes_workspace: bool,
+    notes: NotesPanel,
+    pending_note_input: bool,
+    deferred_workspace: Option<DeferredWorkspace>,
+    draft_backup_payload: Option<String>,
+    draft_backup_error: Option<String>,
+    draft_backup_blocked: bool,
     charts_view: bool,
     charts: ChartPanel,
     pdf_target: Option<(u64, CellAddr)>,
@@ -194,33 +234,48 @@ impl BrowserApp {
                 .insert(FontFamily::Name(name.into()), vec![name.into()]);
         }
         cc.egui_ctx.set_fonts(fonts);
-        let (mut state, demo, status, storage_error) = match browser_storage::load() {
-            Ok(Some(state)) => (
-                state,
-                false,
-                "Restored your browser-local data.".into(),
-                false,
-            ),
-            Ok(None) => (
+        // Observe the current saved file even in explicit sample mode, so a
+        // later confirmed replacement uses the same stale-tab save guard.
+        let loaded = browser_storage::load();
+        let (mut state, demo, status, storage_error) = if browser_storage::sample_requested() {
+            (
                 jig::sample::state(Utc::now()),
                 true,
                 "Sample changes are temporary. Start empty or import a file for your own data."
                     .into(),
                 false,
-            ),
-            Err(error) => (
-                jig::sample::state(Utc::now()),
-                true,
-                format!("Stored data could not be opened and has been preserved: {error}"),
-                true,
-            ),
+            )
+        } else {
+            match loaded {
+                Ok(Some(state)) => (
+                    state,
+                    false,
+                    "Restored your browser-local data.".into(),
+                    false,
+                ),
+                Ok(None) => (
+                    State::default(),
+                    false,
+                    "Your tasks and notes save in this browser. Export JSON for a portable backup."
+                        .into(),
+                    false,
+                ),
+                Err(error) => (
+                    State::default(),
+                    false,
+                    format!("Stored data could not be opened and has been preserved: {error}"),
+                    true,
+                ),
+            }
         };
         let today = Local::now().date_naive();
         let weather = WeatherPanel::new(state.preferences.weather.clone());
         state.preferences.weather = weather.config().cloned();
         let undo_baseline = state.clone();
         let undo_baseline_json = serde_json::to_vec(&state).unwrap_or_default();
-        Self {
+        let workspace = browser_storage::preferred_workspace();
+        browser_storage::set_workspace(&workspace);
+        let mut app = Self {
             state,
             weather,
             stl: StlPanel::new(cc),
@@ -234,13 +289,16 @@ impl BrowserApp {
             confirm: None,
             data_open: false,
             pending_import: None,
-            focus: 0,
+            focus: if workspace == "tasks" { 1 } else { 0 },
             expanded: false,
             focus_calculator: false,
             scroll_selected: false,
             calculation: String::new(),
             task_text: String::new(),
+            task_details: String::new(),
             task_edit: None,
+            task_edit_original: None,
+            focus_task_input: false,
             task_edit_list: None,
             selected_task_lists: Vec::new(),
             active_task_list: 1,
@@ -265,14 +323,21 @@ impl BrowserApp {
             month: today.month(),
             selected_date: today,
             calendar_weather_date: None,
-            timeline_view: false,
+            timeline_view: workspace == "tasks",
             task_split_draft: None,
             timeline: TimelinePanel::new(today),
             sheet: SheetPanel::new(),
-            sheet_workspace: true,
+            sheet_workspace: workspace == "sheet",
             pending_csv_target: None,
             pending_paste_target: None,
-            tasks_workspace: false,
+            tasks_workspace: workspace == "tasks",
+            notes_workspace: workspace == "notes",
+            notes: NotesPanel::new(),
+            pending_note_input: false,
+            deferred_workspace: None,
+            draft_backup_payload: None,
+            draft_backup_error: None,
+            draft_backup_blocked: false,
             charts_view: false,
             charts: ChartPanel::new(),
             pdf_target: None,
@@ -281,7 +346,162 @@ impl BrowserApp {
             pdf_errors: Vec::new(),
             ocr_original: None,
             ocr_running: false,
+        };
+        app.sanitize_task_lists();
+        app.restore_working_drafts();
+        app
+    }
+
+    fn task_draft_snapshot(&self) -> Option<TaskDraft> {
+        let changed = match self.task_edit {
+            Some(_) => self
+                .task_edit_original
+                .as_deref()
+                .and_then(|text| serde_json::from_str::<jig::model::Task>(text).ok())
+                .is_none_or(|task| {
+                    self.task_text != task.text
+                        || self.task_details != task.details.as_deref().unwrap_or_default()
+                        || self.task_edit_list.is_some_and(|id| id != task.list_id)
+                }),
+            None => !self.task_text.is_empty() || !self.task_details.is_empty(),
+        };
+        changed.then(|| TaskDraft {
+            id: self.task_edit,
+            text: self.task_text.clone(),
+            details: self.task_details.clone(),
+            list_id: self.task_edit_list.or(Some(self.active_task_list)),
+            original: self.task_edit.and(self.task_edit_original.clone()),
+        })
+    }
+
+    fn restore_working_drafts(&mut self) {
+        let restored = (|| -> Result<(), String> {
+            let Some(raw) = browser_storage::load_drafts()? else {
+                return Ok(());
+            };
+            if raw.len() > DRAFT_BACKUP_BYTES {
+                return Err("Draft backup exceeds 128 KiB".into());
+            }
+            let drafts: WorkingDrafts = serde_json::from_str(&raw)
+                .map_err(|error| format!("Draft backup could not be decoded: {error}"))?;
+            if drafts.version != 1 {
+                return Err("Unsupported draft backup version".into());
+            }
+            let kind = if self.demo { "demo" } else { "personal" };
+            if !matches!(drafts.kind.as_str(), "personal" | "demo") {
+                return Err("Unknown draft backup kind".into());
+            }
+            if drafts.kind != kind {
+                // Leave the other view's recovery record untouched until the
+                // user actually starts a draft in this view.
+                return Ok(());
+            }
+            self.draft_backup_payload = Some(raw);
+            self.selected_task_lists = drafts.selected_lists;
+            self.selected_task_lists.sort_unstable();
+            self.selected_task_lists.dedup();
+            self.active_task_list = drafts.active_list;
+            self.sanitize_task_lists();
+            let mut recovered = false;
+            if let Some(note) = drafts.note {
+                recovered |= self.notes.restore_draft(note, &self.state)?;
+            }
+            if let Some(task) = drafts.task {
+                let existing = task
+                    .id
+                    .and_then(|id| self.state.tasks.iter().find(|item| item.id == id));
+                let matches = existing.is_some_and(|item| {
+                    task.original.as_ref().is_some_and(|original| {
+                        serde_json::to_string(item).is_ok_and(|current| current == *original)
+                    })
+                });
+                self.task_text = task.text;
+                self.task_details = task.details;
+                self.task_edit_list = task
+                    .list_id
+                    .filter(|id| self.state.task_list(*id).is_some());
+                if matches {
+                    self.task_edit = task.id;
+                    self.task_edit_original = task.original;
+                } else {
+                    recovered |= task.id.is_some();
+                    self.task_edit = None;
+                    self.task_edit_original = None;
+                    self.active_task_list = self.task_edit_list.unwrap_or(self.active_task_list);
+                    if !self.selected_task_lists.contains(&self.active_task_list) {
+                        self.selected_task_lists.push(self.active_task_list);
+                    }
+                }
+                self.focus_task_input = !self.notes_workspace;
+            }
+            if !self.storage_error
+                && (self.notes.has_unsaved_changes() || self.task_draft_snapshot().is_some())
+            {
+                self.status = if recovered {
+                    "Recovered unfinished edits as new items because the saved originals changed."
+                        .into()
+                } else {
+                    "Restored your unfinished edits. Save them to keep them after closing this tab."
+                        .into()
+                };
+            }
+            Ok(())
+        })();
+        if let Err(error) = restored {
+            self.draft_backup_error = Some(error);
+            self.draft_backup_blocked = true;
         }
+    }
+
+    /// Working text is backed up per tab, without committing a partial record
+    /// or adding an Undo entry for each keystroke.
+    fn backup_working_drafts(&mut self) -> bool {
+        let task = self.task_draft_snapshot();
+        let has_task_draft = task.is_some();
+        if self.draft_backup_blocked {
+            return has_task_draft;
+        }
+        let note = self.notes.draft_snapshot();
+        let payload = if note.is_none() && task.is_none() {
+            None
+        } else {
+            match serde_json::to_string(&WorkingDrafts {
+                version: 1,
+                kind: if self.demo { "demo" } else { "personal" }.into(),
+                note,
+                task,
+                selected_lists: self.selected_task_lists.clone(),
+                active_list: self.active_task_list,
+            }) {
+                Ok(payload) => Some(payload),
+                Err(error) => {
+                    self.draft_backup_error = Some(error.to_string());
+                    return has_task_draft;
+                }
+            }
+        };
+        if payload == self.draft_backup_payload {
+            return has_task_draft;
+        }
+        let saved = match &payload {
+            Some(text) if text.len() > DRAFT_BACKUP_BYTES => Err(
+                "Draft backup exceeds 128 KiB. Save or copy unfinished edits before closing."
+                    .into(),
+            ),
+            Some(text) => browser_storage::save_drafts(text),
+            None => browser_storage::clear_drafts(),
+        };
+        // Remember failed attempts too: retry when text changes, rather than
+        // repeatedly writing the same payload every paint or countdown tick.
+        self.draft_backup_payload = payload;
+        self.draft_backup_error = saved.err();
+        has_task_draft
+    }
+
+    fn clear_working_drafts(&mut self) {
+        self.draft_backup_payload = None;
+        self.draft_backup_blocked = false;
+        self.draft_backup_error = browser_storage::clear_drafts().err();
     }
 
     fn changed(&mut self) {
@@ -372,9 +592,13 @@ impl BrowserApp {
     }
 
     fn reset_undo(&mut self) {
+        self.clear_working_drafts();
         self.cancel_document_import();
         self.charts.reset();
         self.sheet.reset();
+        self.notes.reset();
+        self.deferred_workspace = None;
+        self.pending_note_input = false;
         self.pending_csv_target = None;
         browser_storage::cancel_csv();
         self.timeline = TimelinePanel::new(Local::now().date_naive());
@@ -389,6 +613,14 @@ impl BrowserApp {
     }
 
     fn undo_last(&mut self, ctx: &egui::Context) {
+        if self.notes.has_draft() {
+            self.status = "Save or cancel the note edit before using Undo.".into();
+            return;
+        }
+        if self.task_draft_snapshot().is_some() {
+            self.status = "Save or clear the task edit before using Undo.".into();
+            return;
+        }
         self.stl.finish_undo_gesture();
         self.collect_viewer_undo();
         let Some(entry) = self.undo_history.pop() else {
@@ -423,8 +655,13 @@ impl BrowserApp {
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
         self.sheet.restore_data();
+        self.notes.reset();
+        self.deferred_workspace = None;
+        self.pending_note_input = false;
         self.charts.invalidate();
         self.task_edit = None;
+        self.task_edit_original = None;
+        self.focus_task_input = false;
         self.task_edit_list = None;
         self.task_list_rename = None;
         self.task_list_remove = None;
@@ -433,6 +670,7 @@ impl BrowserApp {
         self.sanitize_task_lists();
         self.task_color_edit = None;
         self.task_text.clear();
+        self.task_details.clear();
         self.confirm_clear_completed = false;
         self.task_date_edit = None;
         self.task_date.clear();
@@ -446,6 +684,17 @@ impl BrowserApp {
     }
 
     fn apply_sheet_action(&mut self, action: SheetAction) -> bool {
+        if matches!(
+            action,
+            SheetAction::SaveOds
+                | SheetAction::ExportPdf(_)
+                | SheetAction::OpenOds
+                | SheetAction::ImportCsv(_)
+                | SheetAction::ExportCsv(_)
+        ) && !self.flush_notes_edit()
+        {
+            return false;
+        }
         match &action {
             SheetAction::ImportCsv(id) => {
                 self.cancel_document_import();
@@ -640,15 +889,102 @@ impl BrowserApp {
         }
     }
 
+    fn apply_note_action(&mut self, action: NoteAction) -> bool {
+        let result = match &action {
+            NoteAction::Add { text } => self.state.add_note(text).map(|_| ()),
+            NoteAction::Edit { id, text } => self.state.edit_note(*id, text),
+            NoteAction::Remove(id) => self.state.remove_note(*id),
+            NoteAction::Pin { id, pinned } => self.state.set_note_pinned(*id, *pinned),
+            NoteAction::Move { id, target, after } => {
+                self.state.move_note_relative(*id, *target, *after)
+            }
+            NoteAction::ToTask { id, list_id } => {
+                self.state.note_to_task(*id, *list_id).map(|_| ())
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.changed();
+                true
+            }
+            Err(error) => {
+                self.status = error.clone();
+                self.notes.reject_action(&action, error);
+                false
+            }
+        }
+    }
+
+    fn flush_notes_edit(&mut self) -> bool {
+        if self.pending_note_input {
+            self.status = "Save the note edit before continuing.".into();
+            return false;
+        }
+        if let Some(action) = self.notes.finish_edit() {
+            return self.apply_note_action(action);
+        }
+        if self.notes.has_draft() {
+            self.status = "Finish or cancel the note edit before continuing.".into();
+            return false;
+        }
+        true
+    }
+
+    fn notes_board(&mut self, ui: &mut Ui) {
+        let actions = self.notes.ui(ui, &self.state, self.active_task_list);
+        self.pending_note_input = false;
+        for action in actions {
+            if !self.apply_note_action(action) {
+                break;
+            }
+            ui.ctx().request_repaint();
+        }
+    }
+
+    fn show_notes(&mut self, ctx: &egui::Context) -> bool {
+        if self.pending_note_input {
+            self.deferred_workspace = Some(DeferredWorkspace::Notes);
+            return false;
+        }
+        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
+            return false;
+        }
+        self.sheet_workspace = false;
+        self.tasks_workspace = false;
+        self.notes_workspace = true;
+        self.task_split_draft = None;
+        self.timeline.cancel_gesture();
+        self.expanded = false;
+        self.focus_calculator = false;
+        self.focus_task_date = false;
+        browser_storage::set_workspace("notes");
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+        ctx.request_repaint();
+        true
+    }
+
     fn set_workspace(&mut self, sheet: bool, ctx: &egui::Context) -> bool {
-        if self.sheet_workspace == sheet && !self.tasks_workspace {
+        if self.sheet_workspace == sheet && !self.tasks_workspace && !self.notes_workspace {
             return true;
         }
-        if !self.flush_sheet_edit() {
+        if self.pending_note_input {
+            self.deferred_workspace = Some(if sheet {
+                DeferredWorkspace::Sheet
+            } else {
+                DeferredWorkspace::Workbench
+            });
+            return false;
+        }
+        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
         self.sheet_workspace = sheet;
         self.tasks_workspace = false;
+        self.notes_workspace = false;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
         browser_storage::set_workspace(if sheet { "sheet" } else { "workbench" });
@@ -705,12 +1041,17 @@ impl BrowserApp {
     }
 
     fn show_tasks(&mut self, ctx: &egui::Context) -> bool {
-        if !self.flush_sheet_edit() {
+        if self.pending_note_input {
+            self.deferred_workspace = Some(DeferredWorkspace::Tasks);
+            return false;
+        }
+        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
         self.timeline.cancel_gesture();
         self.sheet_workspace = false;
         self.tasks_workspace = true;
+        self.notes_workspace = false;
         self.focus = 1;
         self.expanded = false;
         self.timeline_view = true;
@@ -750,7 +1091,18 @@ impl BrowserApp {
         {
             self.show_tasks(ui.ctx());
         }
-        if (self.sheet_workspace || self.tasks_workspace)
+        if ui
+            .add(
+                egui::Button::new("Notes")
+                    .selected(self.notes_workspace)
+                    .sense(sense),
+            )
+            .on_hover_text("Plain text notes · Ctrl-Alt-N")
+            .clicked()
+        {
+            self.show_notes(ui.ctx());
+        }
+        if (self.sheet_workspace || self.tasks_workspace || self.notes_workspace)
             && ui
                 .add(egui::Button::new("Workbench").sense(sense))
                 .on_hover_text("Calculator, calendar, weather and STL tools · Ctrl-Alt-W")
@@ -795,6 +1147,7 @@ impl BrowserApp {
     }
 
     fn select_task_list(&mut self, id: u64, combine: bool, ctx: &egui::Context) {
+        let previous = (self.selected_task_lists.clone(), self.active_task_list);
         if combine {
             if self.selected_task_lists.contains(&id) {
                 if self.selected_task_lists.len() > 1 {
@@ -809,6 +1162,21 @@ impl BrowserApp {
             self.active_task_list = id;
         }
         self.sanitize_task_lists();
+        if self.task_draft_snapshot().is_some()
+            && self.task_edit.is_some_and(|id| {
+                self.state
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == id)
+                    .is_some_and(|task| !self.selected_task_lists.contains(&task.list_id))
+            })
+        {
+            self.selected_task_lists = previous.0;
+            self.active_task_list = previous.1;
+            self.status = "Save or cancel the task edit before hiding its list.".into();
+            ctx.request_repaint();
+            return;
+        }
         self.timeline.cancel_gesture();
         self.confirm_clear_completed = false;
         self.task_list_rename = None;
@@ -822,8 +1190,10 @@ impl BrowserApp {
                 .is_some_and(|task| !self.selected_task_lists.contains(&task.list_id))
         }) {
             self.task_edit = None;
+            self.task_edit_original = None;
             self.task_edit_list = None;
             self.task_text.clear();
+            self.task_details.clear();
         }
         if self.task_date_edit.is_some_and(|id| {
             self.state
@@ -1049,34 +1419,51 @@ impl BrowserApp {
     }
 
     fn tasks_main(&mut self, ui: &mut Ui, height: f32) {
-        let top = ui.cursor().top();
-        self.task_list_tabs(ui);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Gantt chart").clicked() {
-                let action = SheetAction::AddChart {
-                    kind: jig::charts::ChartKind::Gantt,
-                    source: jig::charts::ChartSource::Tasks,
-                    title: "Task plan".into(),
-                };
-                if self.apply_sheet_action(action) {
-                    self.set_workspace(true, ui.ctx());
-                }
+        // Apply queued note text before allowing an upper control to move focus.
+        ui.scope(|ui| {
+            if self.pending_note_input {
+                ui.disable();
             }
-            if ui.button("Save .ods").clicked() {
-                self.apply_sheet_action(SheetAction::SaveOds);
+            let top = ui.cursor().top();
+            self.task_list_tabs(ui);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Gantt chart").clicked() {
+                    let action = SheetAction::AddChart {
+                        kind: jig::charts::ChartKind::Gantt,
+                        source: jig::charts::ChartSource::Tasks,
+                        title: "Task plan".into(),
+                    };
+                    if self.apply_sheet_action(action) {
+                        self.set_workspace(true, ui.ctx());
+                    }
+                }
+                if ui.button("Save .ods").clicked() {
+                    self.apply_sheet_action(SheetAction::SaveOds);
+                }
+            });
+            let height = (height - (ui.cursor().top() - top) - 8.0).max(230.0);
+            let panel_height = if self.expanded {
+                height
+            } else if !self.state.notes.is_empty() || self.notes.has_draft() {
+                (height * 0.58).clamp(350.0, 560.0).min(height)
+            } else {
+                (height - 52.0).max(230.0)
+            };
+            if self.expanded {
+                self.cancel_task_split(ui.ctx());
+                self.tool(ui, if self.focus == 2 { 2 } else { 1 }, panel_height);
+            } else if ui.available_width() >= 800.0 {
+                self.task_timeline_panels(ui, panel_height, true);
+            } else {
+                self.cancel_task_split(ui.ctx());
+                self.tool(ui, 1, 300.0);
+                ui.add_space(8.0);
+                self.tool(ui, 2, 350.0);
             }
         });
-        let height = (height - (ui.cursor().top() - top) - 8.0).max(230.0);
-        if self.expanded {
-            self.cancel_task_split(ui.ctx());
-            self.tool(ui, if self.focus == 2 { 2 } else { 1 }, height);
-        } else if ui.available_width() >= 800.0 {
-            self.task_timeline_panels(ui, height, true);
-        } else {
-            self.cancel_task_split(ui.ctx());
-            self.tool(ui, 1, 300.0);
-            ui.add_space(8.0);
-            self.tool(ui, 2, 350.0);
+        if !self.expanded {
+            ui.add_space(10.0);
+            self.notes_board(ui);
         }
     }
 
@@ -1331,6 +1718,9 @@ impl BrowserApp {
         date_columns: &[usize],
         amount_columns: &[usize],
     ) -> bool {
+        if !self.flush_notes_edit() {
+            return false;
+        }
         let apply = |book: &mut Workbook, target| -> Result<bool, String> {
             let mut changed = book.set_block(target, origin, &rows)?;
             if !rows.is_empty() {
@@ -1416,6 +1806,7 @@ impl BrowserApp {
                 self.sheet.activate(target);
                 self.sheet_workspace = true;
                 self.tasks_workspace = false;
+                self.notes_workspace = false;
                 browser_storage::set_workspace("sheet");
                 true
             }
@@ -1695,6 +2086,9 @@ impl BrowserApp {
     }
 
     fn open_local(&mut self) {
+        if !self.flush_notes_edit() {
+            return;
+        }
         if self.dirty {
             self.status =
                 "Save your changes before opening another dataset. If saving is unavailable, export JSON, then reload to reopen the saved copy."
@@ -1719,7 +2113,7 @@ impl BrowserApp {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        let wide = ui.available_width() >= 1000.0;
+        let wide = ui.available_width() >= 1120.0;
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("JIG")
@@ -1739,10 +2133,13 @@ impl BrowserApp {
                     .add_enabled(
                         !self.undo_history.is_empty()
                             || self.stl.has_pending_undo()
-                            || (self.sheet_workspace && self.sheet.is_editing()),
+                            || (self.sheet_workspace && self.sheet.is_editing())
+                            || self.notes.has_draft(),
                         egui::Button::new("Undo"),
                     )
-                    .on_hover_text("Undo the most recent spreadsheet, task or STL change (Ctrl-Z)")
+                    .on_hover_text(
+                        "Undo the most recent spreadsheet, task, note or STL change (Ctrl-Z)",
+                    )
                     .clicked()
                     && self.flush_sheet_edit()
                 {
@@ -1785,7 +2182,7 @@ impl BrowserApp {
                 if ui.button("Open local data").clicked() {
                     self.open_local();
                 }
-                if ui.button("Sample mode").clicked() {
+                if ui.button("Sample mode").clicked() && self.flush_notes_edit() {
                     if self.dirty {
                         self.status = "Save your changes before switching to sample mode. If saving is unavailable, export JSON, then reload before switching.".into();
                     } else {
@@ -1797,12 +2194,12 @@ impl BrowserApp {
                         self.status = "Sample mode. Your saved personal data has not changed.".into();
                     }
                 }
-                if ui.button("Import JSON").clicked() && self.flush_sheet_edit() {
+                if ui.button("Import JSON").clicked() && self.flush_sheet_edit() && self.flush_notes_edit() {
                     if let Err(error) = browser_storage::request_import() {
                         self.status = error;
                     }
                 }
-                if ui.button("Export JSON").clicked() && self.flush_sheet_edit() {
+                if ui.button("Export JSON").clicked() && self.flush_sheet_edit() && self.flush_notes_edit() {
                     self.status = match browser_storage::download(&self.state) {
                         Ok(()) => "JSON download prepared on this device.".into(),
                         Err(error) => error,
@@ -1837,10 +2234,10 @@ impl BrowserApp {
             let cells = import.workbook.as_ref().map_or(0, |book| {
                 book.sheets.iter().map(|sheet| sheet.cells.len()).sum()
             });
-            let summary = format!("Import {sheets} sheets / {cells} cells, {} tasks, {} deadlines and {} calculations? This replaces the browser's saved Jig data.", import.tasks.len(), import.deadlines.len(), import.history.len());
+            let summary = format!("Import {sheets} sheets / {cells} cells, {} tasks, {} notes, {} deadlines and {} calculations? This replaces the browser's saved Jig data.", import.tasks.len(), import.notes.len(), import.deadlines.len(), import.history.len());
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(summary).color(ACCENT));
-                if ui.button("Confirm import").clicked() {
+                if ui.button("Confirm import").clicked() && self.flush_notes_edit() {
                     if let Some(import) = self.pending_import.take() {
                         self.replace_personal(import);
                     }
@@ -2089,6 +2486,17 @@ impl BrowserApp {
         self.focus_task_date = true;
     }
 
+    fn task_editor_state(&self, id: u64) -> Result<State, String> {
+        let mut state = self.state.clone();
+        state.edit_task(id, &self.task_text)?;
+        state.set_task_list(id, self.task_edit_list.unwrap_or(self.active_task_list))?;
+        state.set_task_details(
+            id,
+            (!self.task_details.trim().is_empty()).then_some(self.task_details.as_str()),
+        )?;
+        Ok(state)
+    }
+
     fn tasks(&mut self, ui: &mut Ui) {
         let mut rows: Vec<_> = self
             .state
@@ -2278,9 +2686,28 @@ impl BrowserApp {
                             }
                             if ui.small_button("edit").clicked() {
                                 match self.row_task(&row) {
+                                    Ok(id) if self.task_edit == Some(id) => {
+                                        self.focus_task_input = true;
+                                    }
+                                    Ok(_) if self.task_draft_snapshot().is_some() => {
+                                        self.status = "Save or clear the current task edit before editing another task.".into();
+                                    }
                                     Ok(id) => {
                                         self.task_edit = Some(id);
+                                        self.task_edit_original = self
+                                            .state
+                                            .tasks
+                                            .iter()
+                                            .find(|task| task.id == id)
+                                            .and_then(|task| serde_json::to_string(task).ok());
                                         self.task_text = row.title.clone();
+                                        self.task_details = self
+                                            .state
+                                            .tasks
+                                            .iter()
+                                            .find(|task| task.id == id)
+                                            .and_then(|task| task.details.clone())
+                                            .unwrap_or_default();
                                         self.task_edit_list = Some(row.list_id);
                                         if row.task.is_none() {
                                             self.changed();
@@ -2315,8 +2742,10 @@ impl BrowserApp {
                                 self.apply(result);
                                 if row.task.is_some() && self.task_edit == row.task {
                                     self.task_edit = None;
+                                    self.task_edit_original = None;
                                     self.task_edit_list = None;
                                     self.task_text.clear();
+        self.task_details.clear();
                                 }
                                 if row.task.is_some() && self.task_date_edit == row.task {
                                     self.task_date_edit = None;
@@ -2379,6 +2808,7 @@ impl BrowserApp {
             });
         }
         ui.add_space(6.0);
+        let mut save_task = false;
         ui.horizontal(|ui| {
             let id = egui::Id::new("task-input");
             let response = ui.add(
@@ -2397,6 +2827,12 @@ impl BrowserApp {
             if response.has_focus() {
                 self.focus = 1;
             }
+            if self.focus_task_input {
+                response.request_focus();
+                response.scroll_to_me(Some(egui::Align::Center));
+                self.focus_task_input = false;
+                ui.ctx().request_repaint();
+            }
             let enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             if ui
@@ -2408,32 +2844,96 @@ impl BrowserApp {
                 .clicked()
                 || enter
             {
-                let result = if let Some(id) = self.task_edit {
-                    let list = self.task_edit_list.unwrap_or(self.active_task_list);
-                    jig::model::title(&self.task_text).and_then(|_| {
-                        if self.state.task_list(list).is_none() {
-                            return Err("Task list not found".into());
+                save_task = true;
+            }
+        });
+        if !self.task_details.is_empty()
+            || self.task_edit.is_some_and(|id| {
+                self.state
+                    .tasks
+                    .iter()
+                    .any(|task| task.id == id && task.details.is_some())
+            })
+        {
+            ui.label(RichText::new("Details").small().color(MUTED));
+            ui.add(
+                TextEdit::multiline(&mut self.task_details)
+                    .id(egui::Id::new("task-details-input"))
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(4)
+                    .char_limit(jig::model::MAX_NOTE_BYTES),
+            );
+        }
+        if self.task_edit.is_some() && ui.small_button("Cancel edit").clicked() {
+            save_task = false;
+            self.task_edit = None;
+            self.task_edit_original = None;
+            self.task_edit_list = None;
+            self.task_text.clear();
+            self.task_details.clear();
+        }
+        if let Some(id) = self.task_edit {
+            if ui
+                .add_enabled(
+                    self.state.notes.len() < jig::model::MAX_NOTES,
+                    egui::Button::new("To note").small(),
+                )
+                .on_hover_text(
+                    "Move this task to Notes; its dates and list are kept for conversion back",
+                )
+                .clicked()
+            {
+                save_task = false;
+                let converted = self.task_editor_state(id).and_then(|mut state| {
+                    state.task_to_note(id)?;
+                    Ok(state)
+                });
+                match converted {
+                    Ok(state) => {
+                        self.state = state;
+                        self.task_edit = None;
+                        self.task_edit_original = None;
+                        self.task_edit_list = None;
+                        self.task_text.clear();
+                        self.task_details.clear();
+                        if self.task_date_edit == Some(id) {
+                            self.close_task_dates();
                         }
-                        self.state.edit_task(id, &self.task_text)?;
-                        self.state.set_task_list(id, list)
-                    })
-                } else {
+                        self.changed();
+                        ui.ctx().request_repaint();
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        // Process the optional multiline editor before committing this frame.
+        if save_task {
+            let result = if let Some(id) = self.task_edit {
+                self.task_editor_state(id).map(|state| self.state = state)
+            } else {
+                if self.task_details.is_empty() {
                     self.state
                         .add_task_to_list(self.active_task_list, &self.task_text)
                         .map(|_| ())
-                };
-                if result.is_ok() {
-                    self.task_text.clear();
-                    self.task_edit = None;
-                    self.task_edit_list = None;
+                } else {
+                    let mut state = self.state.clone();
+                    state
+                        .add_task_to_list(self.active_task_list, &self.task_text)
+                        .and_then(|id| {
+                            state.set_task_details(id, Some(&self.task_details))?;
+                            self.state = state;
+                            Ok(())
+                        })
                 }
-                self.apply(result);
+            };
+            if result.is_ok() {
+                self.task_text.clear();
+                self.task_details.clear();
+                self.task_edit = None;
+                self.task_edit_original = None;
+                self.task_edit_list = None;
             }
-        });
-        if self.task_edit.is_some() && ui.small_button("Cancel edit").clicked() {
-            self.task_edit = None;
-            self.task_edit_list = None;
-            self.task_text.clear();
+            self.apply(result);
         }
         let completed = self
             .state
@@ -2454,8 +2954,10 @@ impl BrowserApp {
                             .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
                         {
                             self.task_edit = None;
+                            self.task_edit_original = None;
                             self.task_edit_list = None;
                             self.task_text.clear();
+                            self.task_details.clear();
                         }
                         if self
                             .task_date_edit
@@ -3144,6 +3646,30 @@ impl eframe::App for BrowserApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.pending_note_input = self.notes.has_draft()
+            && self.notes.owns_keyboard(ctx)
+            && ctx.input(|input| {
+                input.events.iter().any(|event| match event {
+                    egui::Event::Text(_)
+                    | egui::Event::Paste(_)
+                    | egui::Event::Cut
+                    | egui::Event::Ime(_) => true,
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => {
+                        matches!(
+                            key,
+                            egui::Key::Backspace | egui::Key::Delete | egui::Key::Tab
+                        ) || (*key == egui::Key::Enter && !modifiers.ctrl && !modifiers.command)
+                            || (matches!(key, egui::Key::Z | egui::Key::Y)
+                                && (modifiers.ctrl || modifiers.command))
+                    }
+                    _ => false,
+                })
+            });
         self.sanitize_task_lists();
         if !ctx.style().visuals.dark_mode {
             ctx.set_theme(egui::ThemePreference::Dark);
@@ -3206,7 +3732,14 @@ impl eframe::App for BrowserApp {
             }
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::N)) {
-            self.confirm = Some(Confirm::Empty);
+            self.show_notes(ctx);
+        }
+        if self.notes_workspace
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::S))
+            && self.flush_notes_edit()
+            && self.dirty
+        {
+            self.save_current();
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
             self.open_local();
@@ -3307,6 +3840,8 @@ impl eframe::App for BrowserApp {
             ctx.request_repaint();
         }
         if !self.sheet_workspace
+            && !self.notes_workspace
+            && !self.notes.owns_keyboard(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M))
         {
             self.timeline.cancel_gesture();
@@ -3315,6 +3850,8 @@ impl eframe::App for BrowserApp {
             ctx.request_repaint();
         }
         if !self.sheet_workspace
+            && !self.notes_workspace
+            && !self.notes.owns_keyboard(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
             let focused = ctx.memory(|memory| memory.focused());
@@ -3334,6 +3871,8 @@ impl eframe::App for BrowserApp {
             self.confirm = None;
         }
         if !self.sheet_workspace
+            && !self.notes_workspace
+            && !self.notes.owns_keyboard(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             let list_editor =
@@ -3359,14 +3898,17 @@ impl eframe::App for BrowserApp {
                 self.undo_last(ctx);
             }
             let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()))
-                || self.timeline.owns_keyboard(ctx);
+                || self.timeline.owns_keyboard(ctx)
+                || self.notes.owns_keyboard(ctx);
             let previous = !self.sheet_workspace
+                && !self.notes_workspace
                 && !divider_focused
                 && ctx.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
                         || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
                 });
             let next = !self.sheet_workspace
+                && !self.notes_workspace
                 && !divider_focused
                 && ctx.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
@@ -3397,11 +3939,13 @@ impl eframe::App for BrowserApp {
         }
         // Static label selection runs after app UI and can overwrite a cell's
         // clipboard output. Sheet owns selection; TextEdit keeps normal copy.
-        let selectable_labels = !self.sheet_workspace;
+        let selectable_labels =
+            !(self.sheet_workspace || self.notes_workspace || self.tasks_workspace);
         if ctx.style().interaction.selectable_labels != selectable_labels {
             ctx.style_mut(|style| style.interaction.selectable_labels = selectable_labels);
         }
         if self.sheet_workspace
+            || self.notes_workspace
             || (!self.tasks_workspace && self.expanded && !matches!(self.focus, 1 | 2))
         {
             self.last_task_list_click = None;
@@ -3417,9 +3961,18 @@ impl eframe::App for BrowserApp {
                     },
                 ));
                 ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
+                if let Some(error) = &self.draft_backup_error {
+                    ui.label(
+                        RichText::new(format!("Draft backup: {error}"))
+                            .small()
+                            .color(ERROR),
+                    );
+                }
                 ui.label(
                     RichText::new(if self.sheet_workspace {
                         "Arrows cells | Enter edit | Ctrl+G go to | Ctrl+Alt+W tools"
+                    } else if self.notes_workspace {
+                        "Ctrl+Enter save note | Esc cancel | Ctrl+Alt+2 tasks"
                     } else {
                         "Arrows select | Ctrl+M maximize | Esc return"
                     })
@@ -3431,6 +3984,12 @@ impl eframe::App for BrowserApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.sheet_workspace {
                 self.spreadsheet(ui);
+                return;
+            }
+            if self.notes_workspace {
+                egui::ScrollArea::vertical()
+                    .id_salt("notes-workspace")
+                    .show(ui, |ui| self.notes_board(ui));
                 return;
             }
             let height = ui.available_height().max(500.0);
@@ -3524,6 +4083,24 @@ impl eframe::App for BrowserApp {
         if self.collect_viewer_undo() {
             ctx.request_repaint();
         }
-        browser_storage::set_unsaved(self.dirty);
+        if let Some(workspace) = self.deferred_workspace.take() {
+            match workspace {
+                DeferredWorkspace::Sheet => {
+                    self.set_workspace(true, ctx);
+                }
+                DeferredWorkspace::Workbench => {
+                    self.set_workspace(false, ctx);
+                }
+                DeferredWorkspace::Tasks => {
+                    self.show_tasks(ctx);
+                }
+                DeferredWorkspace::Notes => {
+                    self.show_notes(ctx);
+                }
+            }
+            ctx.request_repaint();
+        }
+        let task_draft = self.backup_working_drafts();
+        browser_storage::set_unsaved(self.dirty || self.notes.has_unsaved_changes() || task_draft);
     }
 }

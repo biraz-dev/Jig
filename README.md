@@ -261,6 +261,12 @@ another list. Reorder and clear-completed actions apply to the visible lists.
 Lists and membership are included in JSON and ODS saves; older files open as one
 **Tasks** list. Selecting tabs or calendar dates never replaces the starred task.
 
+Drag the grip at the start of a task to reorder it. An insertion line previews
+the destination; release commits one Undo step and updates the Gantt row order.
+List membership, dates, colors and completion stay with the task. The existing
+up/down buttons remain available from the keyboard. Mouse and touch use the same
+grip, leaving the task text available for swipe scrolling.
+
 Drag the divider between tasks and the timeline to adjust their widths. Its
 grip shows horizontal resize arrows; focus it and use **Left/Right** for small
 adjustments or **Shift-Left/Right** for larger ones. Double-click to reset the
@@ -333,6 +339,16 @@ The task editor's **To note** action converts it back. Conversion moves the
 existing record. A scheduled task's dates, color and completion are retained
 while it is a note, with no active calendar or Gantt entry; converting it back
 restores them. An existing featured task is never replaced by a restored one.
+
+On the **Tasks** page, drag a note's **↕** handle into the task list above it.
+Dropping on a task row uses that row's list; dropping in blank space uses the
+active list. The highlighted destination names the list, and the insertion line
+shows the new task's position. This moves the record with its complete text and
+retained schedule, as with the **task** button. Reordering and conversion save
+only when released on a valid target and can be undone once; **Escape** or
+releasing outside a target cancels. Screen edges scroll during a drag so distant
+rows can be reached. Use the handle on touchscreens to keep body swipes available
+for scrolling.
 
 Notes are saved locally with the document and included in JSON/ODS backups.
 Older documents open with an empty board. Text is limited to 16 KiB per note;

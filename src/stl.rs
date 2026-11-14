@@ -438,7 +438,7 @@ fn analyze(triangles: &[Triangle], bounds: Bounds) -> Result<Metrics> {
             subtract(triangle[1], triangle[0]),
             subtract(triangle[2], triangle[0]),
         );
-        let area = dot(normal, normal).sqrt() * 0.5;
+        let area = normal_length(normal) * 0.5;
         if !area.is_finite() {
             return Err("STL geometry exceeds numeric limits".into());
         }

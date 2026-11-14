@@ -263,21 +263,21 @@ try {
   progress("undo task deletion, completion, date edits and color changes with stable links");
   current = await open("undo-dated-task");
   await tasks(current.page);
-  await tab(current.page, 8); // One dated row: Data, Source, star, checkbox, color, date, edit, del.
+  await tab(current.page, 10); // Data, Source, Tasks tab, +, star, checkbox, color, date, edit, del.
   await key(current.page, "Space");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.length === 0, storageKey);
   assert.equal((await state(current.page)).deadlines.length, 0);
   await undoButton(current.page);
   await expectState(current.page, fixture, "Undo must restore task, linked date, color and featured selection exactly");
   await tasks(current.page);
-  await tab(current.page, 4); // Empty journal again, first checkbox.
+  await tab(current.page, 6); // Empty journal again, Tasks tab and + before the first checkbox.
   await key(current.page, "Space");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete, storageKey);
   assert.equal((await state(current.page)).featured, null);
   await undoKey(current.page);
   await expectState(current.page, fixture, "Completion undo must restore the featured dated task");
   await tasks(current.page);
-  await tab(current.page, 6);
+  await tab(current.page, 8);
   await key(current.page, "Space");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await current.page.keyboard.press("Control+a");
@@ -287,7 +287,7 @@ try {
   await undoKey(current.page);
   await expectState(current.page, fixture, "Date undo must move the existing linked deadline back without copying it");
   await tasks(current.page);
-  await tab(current.page, 5);
+  await tab(current.page, 7);
   await key(current.page, "Space");
   // Date, edit, del, None, Rose, Amber.
   await tab(current.page, 6);
@@ -310,10 +310,10 @@ try {
   current = await open("undo-bulk", bulk);
   await tasks(current.page);
   // Disabled stars and edge reorder buttons are skipped in this fixed three-row fixture.
-  await tab(current.page, 25);
+  await tab(current.page, 27);
   await key(current.page, "Space");
   await tasks(current.page); // Reset focus; the inline confirmation stays open.
-  await tab(current.page, 25); // Confirm replaces the old bulk button at this position.
+  await tab(current.page, 27); // Confirm replaces the old bulk button at this position.
   await key(current.page, "Space");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.length === 1, storageKey);
   assert.equal((await state(current.page)).tasks[0].id, 3);

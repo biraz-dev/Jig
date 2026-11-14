@@ -120,7 +120,11 @@ async function resetTasks(scene, escape = true) {
   await key(scene.page, "Control+Alt+2");
 }
 async function lists(scene) { return (await state(scene.page)).task_lists ?? [{ id: 1, name: "Tasks" }]; }
-function headerTargets(scene) { return scene.undo ? 3 : 2; } // Data, optional Undo, Source.
+function headerTargets(scene) {
+  // The phone's stacked Tasks/Gantt/Notes board overflows vertically, adding
+  // the ordinary dashboard scroll-area target before the list-tab controls.
+  return (scene.undo ? 3 : 2) + (scene.page.viewportSize().width < 500 ? 1 : 0);
+}
 async function focusList(scene, index) {
   await resetTasks(scene);
   await tab(scene.page, headerTargets(scene) + index + 1);

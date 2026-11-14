@@ -3,6 +3,7 @@ use jig::{
     documents::{read_ods, save_ods},
     model::{State, TaskColor, TaskList, DEFAULT_TASK_LIST_ID, MAX_TASK_LISTS},
     spreadsheet::Workbook,
+    timeline,
 };
 use serde_json::{json, Value};
 
@@ -175,6 +176,129 @@ fn scoped_completed_clear_keeps_hidden_lists_and_reuses_deadline_records() {
     assert_eq!(state.tasks.len(), 1);
     assert!(state.deadlines.is_empty());
     state.validate().unwrap();
+}
+
+#[test]
+fn relative_task_moves_handle_both_directions_and_the_checklist_edges() {
+    let cases = [
+        (0, 4, true, [1, 2, 3, 4, 0]),
+        (4, 0, false, [4, 0, 1, 2, 3]),
+        (1, 3, false, [0, 2, 1, 3, 4]),
+        (1, 3, true, [0, 2, 3, 1, 4]),
+        (3, 1, false, [0, 3, 1, 2, 4]),
+        (3, 1, true, [0, 1, 3, 2, 4]),
+        (0, 1, false, [0, 1, 2, 3, 4]),
+        (1, 0, true, [0, 1, 2, 3, 4]),
+    ];
+    for (source, target, after, expected) in cases {
+        let mut state = State::default();
+        let ids: Vec<_> = ["A", "B", "C", "D", "E"]
+            .iter()
+            .map(|text| state.add_task(text).unwrap())
+            .collect();
+        state
+            .move_task_relative(ids[source], ids[target], after)
+            .unwrap();
+        assert_eq!(
+            state.tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            expected.map(|index| ids[index]),
+            "source={source}, target={target}, after={after}"
+        );
+        state.validate().unwrap();
+    }
+}
+
+#[test]
+fn relative_task_moves_validate_both_ids_and_leave_self_moves_unchanged() {
+    let mut state = State::default();
+    let task = state.add_task("Cast study").unwrap();
+    state
+        .set_task_deadline(task, Some("2026-11-20T18:00:00Z"))
+        .unwrap();
+    state.feature_task(task).unwrap();
+    let before = snapshot(&state);
+    for (source, target) in [(999, task), (task, 999), (999, 999), (0, task)] {
+        for after in [false, true] {
+            assert!(state.move_task_relative(source, target, after).is_err());
+            assert_eq!(snapshot(&state), before);
+        }
+    }
+    for after in [false, true] {
+        state.move_task_relative(task, task, after).unwrap();
+        assert_eq!(snapshot(&state), before);
+    }
+}
+
+#[test]
+fn relative_task_order_roundtrips_and_preserves_lists_metadata_and_timeline() {
+    let mut state = State::default();
+    let studio = state.default_list_id();
+    let home = state.add_task_list("Home").unwrap();
+    let hidden = state.add_task_list("Hidden").unwrap();
+    let a = state.add_task_to_list(studio, "Cast main form").unwrap();
+    let b = state.add_task_to_list(hidden, "Hidden first").unwrap();
+    let c = state.add_task_to_list(studio, "Order clay").unwrap();
+    let d = state.add_task_to_list(hidden, "Hidden second").unwrap();
+    let e = state.add_task_to_list(home, "Repair shelf").unwrap();
+    let f = state
+        .add_task_to_list(studio, "Photograph studies")
+        .unwrap();
+    for id in [a, c] {
+        state
+            .set_task_schedule(
+                id,
+                Some("2026-11-15T09:00:00-05:00"),
+                Some("2026-11-20T18:00:00-05:00"),
+            )
+            .unwrap();
+    }
+    state.set_task_color(a, Some(TaskColor::Rose)).unwrap();
+    state.set_task_color(c, Some(TaskColor::Sage)).unwrap();
+    state
+        .set_task_details(a, Some("Cast main form\r\n\r\n  Keep this detail"))
+        .unwrap();
+    state.toggle_task(c).unwrap();
+    state.feature_task(a).unwrap();
+    state.add_note("Keep the test tile measurements").unwrap();
+    let mut expected = snapshot(&state);
+    let ordered: Vec<_> = [b, f, c, d, e, a]
+        .iter()
+        .map(|id| {
+            expected["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|task| task["id"] == *id)
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    expected["tasks"] = Value::Array(ordered);
+
+    state.move_task_relative(f, c, false).unwrap();
+    state.move_task_relative(a, e, true).unwrap();
+    assert_eq!(snapshot(&state), expected);
+    state.validate().unwrap();
+
+    let json = State::from_json(&serde_json::to_string(&state).unwrap()).unwrap();
+    let ods = read_ods(&save_ods(&state).unwrap())
+        .unwrap()
+        .embedded_state
+        .unwrap();
+    for restored in [&state, &json, &ods] {
+        assert_eq!(snapshot(restored), expected);
+        let ids = |lists: &[u64]| {
+            timeline::rows_for_lists(restored, &Utc, lists)
+                .iter()
+                .filter_map(|row| row.task_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&[studio, home, hidden]), [b, f, c, d, e, a]);
+        assert_eq!(ids(&[studio]), [f, c, a]);
+        assert_eq!(ids(&[home]), [e]);
+        assert_eq!(ids(&[hidden]), [b, d]);
+        assert_eq!(ids(&[home, studio]), [f, c, e, a]);
+    }
 }
 
 #[test]

@@ -162,6 +162,45 @@ async function maximize(page) {
   await page.waitForTimeout(250);
 }
 async function saved(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
+async function visibleOpenPoint(page) {
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  const point = await page.evaluate(async encoded => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
+    const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const near = (x, y, color) => color.every((value, axis) => Math.abs(pixels[(y * bitmap.width + x) * 4 + axis] - value) <= 3);
+    const ratio = bitmap.width / innerWidth;
+    let panelTop;
+    for (let y = 0; y < Math.min(bitmap.height * 0.45, 800); y++) {
+      let accent = 0, samples = 0;
+      for (let x = 20; x < bitmap.width - 20; x += 8) { samples++; if (near(x, y, [244, 107, 74])) accent++; }
+      if (accent > samples * 0.75) { panelTop = y; break; }
+    }
+    const runs = [];
+    if (panelTop !== undefined) for (let y = panelTop + 1; y < Math.min(bitmap.height, panelTop + 100 * ratio); y++) {
+      let start;
+      for (let x = 5; x < bitmap.width * 0.45; x++) {
+        const rule = near(x, y, [113, 102, 93]);
+        if (rule && start === undefined) start = x;
+        if (!rule && start !== undefined) {
+          if (start < bitmap.width * 0.25 && x - start >= 35 * ratio && x - start <= 250 * ratio) runs.push({ left: start, right: x - 1, y });
+          start = undefined;
+        }
+      }
+    }
+    const buttons = [];
+    for (const top of runs) for (const bottom of runs) {
+      if (bottom.y - top.y >= 8 * ratio && bottom.y - top.y <= 80 * ratio && Math.abs(top.left - bottom.left) <= 2 && Math.abs(top.right - bottom.right) <= 2)
+        buttons.push({ x: (top.left + top.right) / 2, y: (top.y + bottom.y) / 2, top: top.y, left: top.left });
+    }
+    const first = buttons.sort((a, b) => a.top - b.top || a.left - b.left)[0];
+    bitmap.close();
+    return first ? { x: first.x / ratio, y: first.y / ratio } : null;
+  }, png.toString("base64"));
+  assert.ok(point, "Open STL must remain visibly present after high-DPI view navigation");
+  return point;
+}
 async function upload(page, bytes, name) {
   await page.locator("#jig-stl-import").setInputFiles({ name, mimeType: "model/stl", buffer: bytes });
   // STL I/O is polled by the same low-frequency idle repaint as other applets.
@@ -580,8 +619,9 @@ try {
   await capture(current.page, "stl-hidpi");
   // The first action row used to scroll above the maximized panel after Tab
   // navigation. Activate its visible position without reanchoring the view.
+  const openPoint = await visibleOpenPoint(current.page);
   const visibleOpenEvent = current.page.waitForEvent("filechooser", { timeout: 5000 });
-  await current.page.locator("#jig_canvas").click({ position: { x: 80, y: 64 }, delay: 50 });
+  await current.page.mouse.click(openPoint.x, openPoint.y, { delay: 50 });
   const visibleOpen = await visibleOpenEvent;
   await visibleOpen.setFiles([]);
   assert.equal(await saved(current.page), fixtureRaw);

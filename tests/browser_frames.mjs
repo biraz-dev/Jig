@@ -6,7 +6,7 @@ export async function installFrameFence(context) {
     window.jigTestFrames = state;
     const app = target => target?.id === "jig_canvas" || (target instanceof HTMLInputElement
       && target.type === "text" && !target.id && target.parentElement === document.body);
-    for (const type of ["keydown", "keyup", "beforeinput", "input", "copy", "cut", "paste", "pointerdown", "pointerup", "touchstart", "touchend"]) {
+    for (const type of ["keydown", "keyup", "beforeinput", "input", "copy", "cut", "paste", "pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel"]) {
       document.addEventListener(type, event => {
         if (app(event.target)) state.input++;
       }, true);

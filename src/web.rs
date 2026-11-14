@@ -68,31 +68,6 @@ enum TaskEditorTarget {
     Deadline(u64),
 }
 
-fn has_text_edit_events(ctx: &egui::Context) -> bool {
-    ctx.input(|input| {
-        input.events.iter().any(|event| match event {
-            egui::Event::Text(_)
-            | egui::Event::Paste(_)
-            | egui::Event::Cut
-            | egui::Event::Ime(_) => true,
-            egui::Event::Key {
-                key,
-                pressed: true,
-                modifiers,
-                ..
-            } => {
-                matches!(
-                    key,
-                    egui::Key::Backspace | egui::Key::Delete | egui::Key::Tab
-                ) || (*key == egui::Key::Enter && !modifiers.ctrl && !modifiers.command)
-                    || (matches!(key, egui::Key::Z | egui::Key::Y)
-                        && (modifiers.ctrl || modifiers.command))
-            }
-            _ => false,
-        })
-    })
-}
-
 fn task_split_id() -> egui::Id {
     egui::Id::new("task-timeline-divider")
 }
@@ -213,6 +188,7 @@ pub struct BrowserApp {
     notes_workspace: bool,
     notes: NotesPanel,
     pending_note_input: bool,
+    ordered_input: crate::text_input::OrderedInput,
     pending_task_input: Option<egui::Id>,
     deferred_task_list: Option<(u64, bool)>,
     deferred_task_edit: Option<TaskEditorTarget>,
@@ -388,6 +364,7 @@ impl BrowserApp {
             notes_workspace: workspace == "notes",
             notes: NotesPanel::new(),
             pending_note_input: false,
+            ordered_input: crate::text_input::OrderedInput::default(),
             pending_task_input: None,
             deferred_task_list: None,
             deferred_task_edit: None,
@@ -2690,12 +2667,6 @@ impl BrowserApp {
         }
     }
 
-    fn restore_task_input_focus(&self, ui: &Ui, id: egui::Id) {
-        if self.pending_task_input == Some(id) {
-            ui.memory_mut(|memory| memory.request_focus(id));
-        }
-    }
-
     fn task_input_processed(&mut self, id: egui::Id) {
         if self.pending_task_input == Some(id) {
             self.pending_task_input = None;
@@ -3048,7 +3019,6 @@ impl BrowserApp {
         let mut save_task = false;
         ui.horizontal(|ui| {
             let id = egui::Id::new("task-input");
-            self.restore_task_input_focus(ui, id);
             let response = ui.add(
                 TextEdit::singleline(&mut self.task_text)
                     .id(id)
@@ -3096,7 +3066,6 @@ impl BrowserApp {
         {
             ui.label(RichText::new("Details").small().color(MUTED));
             let id = egui::Id::new("task-details-input");
-            self.restore_task_input_focus(ui, id);
             ui.add(
                 TextEdit::multiline(&mut self.task_details)
                     .id(id)
@@ -3353,7 +3322,6 @@ impl BrowserApp {
             if self.focus_task_date {
                 ui.memory_mut(|memory| memory.request_focus(field));
             }
-            self.restore_task_input_focus(ui, field);
             let response = ui.add(
                 TextEdit::singleline(&mut self.task_date)
                     .id(field)
@@ -3374,7 +3342,6 @@ impl BrowserApp {
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             ui.label(RichText::new("Start · optional").color(MUTED).size(11.0));
             let start_field = egui::Id::new(("task-start-input", id));
-            self.restore_task_input_focus(ui, start_field);
             let start = ui.add(
                 TextEdit::singleline(&mut self.task_start)
                     .id(start_field)
@@ -3903,23 +3870,48 @@ impl BrowserApp {
 }
 
 impl eframe::App for BrowserApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        let schedule = self.task_date_edit.or(self.task_date_legacy);
+        let protect = ctx.memory(|memory| memory.focused()).is_some_and(|id| {
+            id == egui::Id::new("task-input")
+                || id == egui::Id::new("task-details-input")
+                || id == egui::Id::new("notes-text-input")
+                || schedule.is_some_and(|target| {
+                    id == egui::Id::new(("task-date-input", target))
+                        || id == egui::Id::new(("task-start-input", target))
+                })
+        });
+        self.ordered_input.process(ctx, input, protect);
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.stl.destroy();
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let text_input = has_text_edit_events(ctx);
+        if self.ordered_input.has_pending() {
+            ctx.request_repaint();
+        }
+        let text_input = crate::text_input::has_edit_events(ctx);
         let focused = ctx.memory(|memory| memory.focused());
         let schedule_id = self.task_date_edit.or(self.task_date_legacy);
-        self.pending_task_input = focused.filter(|id| {
-            text_input
-                && (*id == egui::Id::new("task-input")
-                    || *id == egui::Id::new("task-details-input")
-                    || schedule_id.is_some_and(|target| {
-                        *id == egui::Id::new(("task-date-input", target))
-                            || *id == egui::Id::new(("task-start-input", target))
-                    }))
-        });
+        let mut inputs = vec![
+            egui::Id::new("task-input"),
+            egui::Id::new("task-details-input"),
+        ];
+        if let Some(target) = schedule_id {
+            inputs.push(egui::Id::new(("task-date-input", target)));
+            inputs.push(egui::Id::new(("task-start-input", target)));
+        }
+        self.pending_task_input = if text_input {
+            focused.filter(|id| inputs.contains(id)).or_else(|| {
+                inputs
+                    .into_iter()
+                    .find(|id| ctx.memory(|memory| memory.had_focus_last_frame(*id)))
+            })
+        } else {
+            None
+        };
         self.pending_note_input =
             self.notes.has_draft() && self.notes.owns_keyboard(ctx) && text_input;
         self.sanitize_task_lists();

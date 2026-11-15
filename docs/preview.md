@@ -1,8 +1,10 @@
 # Browser development preview
 
 The egui/eframe browser application opens Tasks by default and remembers the
-selected workspace. Data precedes the Sheet, Tasks and Notes tabs on the left;
-calculator, Undo and Redo sit on the right. The title and tagline no longer
+selected workspace. Data, Sheet, Tasks, Notes and the calculator sit on the left;
+the date and Settings sit on the right. Undo/Redo and personal/local labels no
+longer occupy the header; explicit demos retain a quiet sample marker when space
+permits. The title and tagline no longer
 occupy header space. Sheet retains its named tabs, formulas,
 formatting and charts. An older saved Workbench preference opens Tasks.
 Tasks and task Gantt charts read the same records;
@@ -10,10 +12,12 @@ they are never copied into a second task store. ODS is the portable document,
 CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 [spreadsheet guide](../README.md#spreadsheet) for controls and limits.
 
-The warm Graphite palette uses charcoal surfaces, soft warm white text and a
-blood-orange red focus color. Shared RGB constants keep browser and terminal
-chrome consistent, including the loading screen. Task and chart category colors, explicit cell formatting and light document exports retain
-their own colors. The matching SVG favicon has an opaque charcoal interior.
+The default Graphite palette keeps charcoal surfaces, soft warm white text and a
+blood-orange red focus color. Settings also offers warm Light and System
+appearance; System follows the browser/OS preference. Graphite retains the
+existing browser and terminal palette. Task and chart category colors, explicit
+cell formatting and document exports retain their own colors. The matching SVG
+favicon has an opaque charcoal interior.
 
 Sheet formatting includes left, center and right alignment, an Auto reset,
 strikeout and range-aware border presets. Row/column headers have insert/delete
@@ -34,7 +38,7 @@ cost formulas. Invalid units and mixed dimensions remain visible errors.
 The Tasks board uses the same Rust task, deadline and calendar records as the
 CLI and Ratatui dashboard. Its checklist and Gantt share a resizable panel, with
 notes below and a compact featured countdown above. The separate Workbench tab
-is removed. A calculator icon beside Undo opens the shared arithmetic/conversion
+is removed. A calculator icon beside the workspace tabs opens the shared arithmetic/conversion
 input, result, precision control and history without leaving the workspace.
 Click outside or press Esc to close the popover. There is no application backend,
 account or telemetry. Optional weather uses Open-Meteo; only the chosen location
@@ -50,7 +54,10 @@ shrinkage limits.
 A single crate remains sufficient. Default Cargo features build the native
 `jig` binary. The `web` feature builds `jig-web`; terminal dependencies are
 excluded on WASM. `src/web.rs` contains the egui adapter, while
-`src/browser_storage.rs` and `web/bridge.js` handle browser files and storage.
+`src/browser_storage.rs` and `web/bridge.js` handle document files and storage.
+`src/app_settings.rs` holds portable application preferences; the settings UI,
+browser adapter and `web/settings.js` handle settings persistence and explicitly
+chosen backup folders separately from document state.
 The shared core has no DOM, filesystem or terminal API. Trunk builds the root
 `index.html` with the `wasm32-unknown-unknown` target.
 
@@ -90,8 +97,8 @@ are temporary and never write the saved personal dataset.
 Open **Data** (or Ctrl-Alt-D) for the dataset controls. **Start empty** asks before
 creating or replacing personal data. **Open local
 data** returns to the saved personal dataset; **Sample mode** returns to a new
-temporary demo. The wide header distinguishes samples from **your local data**;
-the status message also identifies temporary sample mode.
+temporary demo. Status messages identify temporary sample mode, with a quiet
+sample marker when header space permits. Personal/local labels are removed.
 Successful personal edits save to localStorage key `jig.personal.v1` in this
 browser profile and origin. Another computer, browser or profile has independent
 storage.
@@ -124,9 +131,77 @@ personal dataset, and returns to temporary samples. Browser site-data clearing
 can also remove it. JSON downloads are user-owned backups; localStorage is not a
 backup service.
 
+## Application settings
+
+Open **Settings** at the top right, or press **Ctrl+,** by default. Settings uses
+the main view, with **Done** returning to the existing workspace. The header
+keeps Data, Sheet, Tasks, Notes and the calculator together on the left, and the
+date and Settings on the right. Application Undo/Redo remain available through
+their shortcuts; there are no header Undo/Redo buttons or personal/local labels.
+
+**Appearance** offers Graphite, Light and System. Graphite is the existing warm
+dark palette, Light uses warm light surfaces and graphite text, and System
+follows the browser/OS appearance. Explicit sheet cell formatting and task/chart
+category colors retain their own values.
+
+Application preferences use localStorage key `jig.settings.v1`, independently of
+`jig.personal.v1`. Theme, shortcut overrides, Undo levels and the automatic-backup
+option are version-1 settings, not document edits or document Undo entries.
+**Export settings** downloads `jig-settings.json`; **Import settings** accepts up
+to 32 KiB, validates it, and presents a review before **Apply imported settings**.
+Invalid or conflicting files leave the current settings and task document
+unchanged. Settings imports never replace tasks, notes, dates or sheets. Task
+JSON and Jig ODS preserve document preferences such as decimal places and panel
+widths; application settings travel through their separate export.
+
+The twelve application actions have editable bindings: Sheet/Tasks, Tasks,
+Notes, Calculator, Calendar/Timeline, Data, Settings, Undo, Redo, Maximize panel,
+Rename list/expand panel and Open local data. Select a binding and press its new
+combination; Esc cancels capture. Each action can be reset or unassigned, and
+**Reset all shortcuts** restores the defaults. Duplicate combinations and keys
+reserved for typing, editing, files, the browser or the operating system are
+rejected. Ctrl-Z and Ctrl-Shift-Z are the standard Undo/Redo defaults; editors
+retain their own local Undo/Redo. **Hotkey cheatsheet** shows the current
+application bindings alongside fixed contextual controls. Shortcut examples in
+this guide describe the defaults.
+
+**Undo levels** accepts 0–100 combined Undo/Redo steps, with 20 by default and a
+shared 64 MiB cap. Slider drags apply on release, and numeric entry applies when
+finished, so passing through a lower preview value does not trim history. A
+committed lower limit discards the furthest entries; raising it cannot recover
+them. Zero disables application history while text-editor history remains
+available. The journal is session-only and is cleared on reload/dataset switches.
+
+### Files and backups
+
+Supporting Chromium browsers expose **Choose folder** through the File System
+Access API. Selecting or reconnecting a folder asks the browser for write
+permission. The handle is remembered only in browser IndexedDB as permission
+metadata; task documents stay in localStorage and portable JSON files. Folder
+access is not included in settings JSON and must be established on another
+computer. Restoring a remembered handle does not silently request permission;
+use **Reconnect folder** when needed, or **Disconnect folder** to stop using it.
+
+**Back up now** writes successfully saved personal data to a fresh timestamped,
+unique JSON filename and does not overwrite earlier backups. Automatic folder
+backups are opt-in and queue no sooner than five minutes after enabling, opening
+valid saved personal data, or eligible saved changes. Refresh restarts that wait.
+They run while Jig is open, ignore samples, and pause when the
+current document is unsaved or browser data is corrupt/stale. Dataset resets
+cancel pending writes so an earlier document cannot be backed up afterward.
+Backup failures remain visible; there is no automatic retention or deletion.
+
+**Download backup** keeps a recovery copy of the current personal document even
+when normal browser saving has failed. Browsers without folder access use this
+explicit download path. **Restore backup** opens the existing JSON import review
+and confirms before replacement. A backup folder controls only these JSON
+backups; CSV, ODS and PDF exports continue to use the browser's configured
+download location. No document or folder contents are sent to a backend.
+
 ## Browser controls
 
-The wide Tasks workspace has a draggable separator between the task list and
+Task-list add/remove controls sit beside their tabs, with a small gap before the
+panels. The wide Tasks workspace has a draggable separator between the task list and
 timeline. It has a horizontal resize cursor and grip,
 keyboard Left/Right adjustment (Shift for larger steps), and double-click reset.
 Resizing commits one preference change at the end of the drag; it does not write
@@ -255,7 +330,7 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The seven browser suites run against the same built artifact in separate jobs,
+The eight browser suites run against the same built artifact in separate jobs,
 with at most six runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
@@ -264,14 +339,19 @@ bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
 locally to request named scenes; personal application data is never used.
 
 The deployment gates cover spreadsheets, local OCR, the timeline, task lists,
-notes, general browser flows and Undo/Redo. The four STL-only browser suites are
+notes, general browser flows, Undo/Redo and Settings. The Settings browser suite
+also runs `tests/settings_bridge.mjs`, which covers settings and backup bridge
+races with synthetic files and handles. The four STL-only browser suites are
 not deployment gates while that interface is hidden. Native geometry, scale,
 camera, comparison and shrinkage tests still run in `cargo test`.
 
-The header Undo/Ctrl-Z and Redo/Ctrl-Shift-Z share one chronological journal for
-spreadsheet, task, note, calculator and preference changes. Undo/Redo navigation
+Application Undo/Ctrl-Z and Redo/Ctrl-Shift-Z share one chronological journal for
+spreadsheet, task, note, calculator and document-preference changes, including
+weather and panel widths. Application Settings stay outside that journal.
+Undo/Redo navigation
 moves snapshots between stacks; a new committed edit clears Redo and a no-op
-keeps it. Twenty combined steps and a shared 64 MiB budget bound history. Data
+keeps it. The configured combined step limit (20 by default, at most 100) and a
+shared 64 MiB budget bound history. Data
 restores use the normal safe-save path and update weather when its preference
 changes. Draft guards prevent history navigation from discarding unfinished
 work. Dataset switches and reload clear this session journal; it is not included

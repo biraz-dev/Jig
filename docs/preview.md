@@ -188,9 +188,11 @@ within the calendar panel, alongside the existing selected-day weather. This
 never changes the starred task or featured countdown. Date, color and completion
 changes are reflected from the shared task/deadline links immediately.
 
-Weather controls and forecast details appear only after selecting a calendar
-day by pointer, touch or keyboard (or choosing Today). This selection is temporary
-UI state and does not change saved records. Timeline has no weather footer.
+Weather controls and a compact forecast strip sit above Calendar/Timeline. The
+strip shows today's available forecast by default; select a calendar day by
+pointer, touch or keyboard to see that date instead. This selection is temporary
+UI state and does not change saved records. No weather footer takes space beneath
+the chart.
 
 `Task.color` is an optional named value in the existing version-1 JSON format.
 Missing colors default to neutral, unknown colors are rejected on import, and

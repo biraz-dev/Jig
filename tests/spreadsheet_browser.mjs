@@ -222,7 +222,7 @@ async function exportCsv(page) {
 async function exportJson(page) {
   await boot(page, true); // Reload also verifies the exported workbook was saved.
   await key(page, "Control+Alt+d");
-  await tab(page, 8);
+  await tab(page, 10);
   const event = page.waitForEvent("download", { timeout: 5000 });
   await key(page, "Space");
   const download = await event;
@@ -237,7 +237,7 @@ async function importJson(page, imported, confirm = true) {
   if (confirm) {
     await canvasFocus(page);
     await key(page, "Escape");
-    await tab(page, 4); // Data, Calculator, Settings, Confirm import.
+    await tab(page, 6); // Data, Settings, Calculator, About, Help, Confirm import.
     await key(page, "Space");
   }
 }
@@ -351,10 +351,10 @@ async function showCharts(page) {
   await key(page, "Space");
 }
 async function backToCells(page) {
-  // Chart gallery controls follow Data, Calculator, Settings and the footer Source link.
+  // Chart gallery controls follow the five header buttons and the footer Source link.
   await canvasFocus(page);
   await key(page, "Escape");
-  await tab(page, 7); // Data, Calculator, Settings, Source, Save ODS, Export PDF, Back to cells.
+  await tab(page, 9); // Data, Settings, Calculator, About, Help, Source, Save ODS, Export PDF, Back to cells.
   await key(page, "Space");
 }
 async function renderedBarWidths(page) {
@@ -814,7 +814,7 @@ try {
   assert.equal(await raw(current.page), beforeOdsReview, "Opening ODS must wait for the user's review before replacing current data");
   await canvasFocus(current.page);
   await key(current.page, "Escape");
-  await tab(current.page, 4); // Data, Calculator, Settings, then Confirm import.
+  await tab(current.page, 6); // Data, Settings, Calculator, About, Help, then Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, beforeOds, "Confirming a locally saved ODS must restore formulas and all original Jig records");
   assert.deepEqual(sheet(await state(current.page)).styles.D15, { strike: true, alignment: "center" }, "ODS import must restore the actual alignment and strike style");
@@ -831,12 +831,12 @@ try {
   await importStatementPdf(current.page);
   await expectState(current.page, beforeStatement, "Reading a PDF must preserve the entire workbook until reviewed rows are applied");
   await capture(current.page, "sheet-import");
-  await reviewControl(current.page, 5); // Data, Calculator, Settings, Source, then Cancel import.
+  await reviewControl(current.page, 7); // Data, Settings, Calculator, About, Help, Source, then Cancel import.
   await value(current.page, "M1", "");
   await expectState(current.page, beforeStatement, "Cancelling document review must preserve every original record");
   await select(current.page, "M1");
   await importStatementPdf(current.page);
-  await reviewControl(current.page, 17); // Apply reviewed rows, including the four global header/footer controls.
+  await reviewControl(current.page, 19); // Apply reviewed rows, including the six global header/footer controls.
   saved = await state(current.page);
   assert.equal(sheet(saved).cells.M1, "Column 1");
   assert.equal(sheet(saved).cells.M2, "11/10/2026");
@@ -860,7 +860,7 @@ try {
   await importOds(current.page, odsWithOnlyStandardWorkbook(ods));
   await canvasFocus(current.page);
   await key(current.page, "Escape");
-  await tab(current.page, 4); // Data, Calculator, Settings, Confirm import.
+  await tab(current.page, 6); // Data, Settings, Calculator, About, Help, Confirm import.
   await key(current.page, "Space");
   saved = await state(current.page);
   assert.deepEqual(sheet(saved).styles.D15, { strike: true, alignment: "center" }, "Standard ODS XML must restore strikethrough and centered text without Jig metadata");

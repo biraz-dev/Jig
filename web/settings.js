@@ -87,6 +87,15 @@
     bounded(text, settingsLimit, "Settings");
     download(text, "jig-settings.json");
   };
+  function removeImportInput(input, token) {
+    input.remove();
+    if (importInput === input) importInput = null;
+    if (token !== importGeneration) return;
+    // eframe receives keyboard events on the canvas, not the body left focused
+    // when a native file chooser's input is removed.
+    try { document.getElementById("jig_canvas")?.focus({ preventScroll: true }); }
+    catch { /* A focus failure must not discard an otherwise usable import. */ }
+  }
   window.jigSettingsCancelImport = () => {
     ++importGeneration;
     importedSettings = null; importError = null;
@@ -102,8 +111,7 @@
     importInput = input;
     input.addEventListener("change", async () => {
       const file = input.files?.[0];
-      input.remove();
-      if (importInput === input) importInput = null;
+      removeImportInput(input, token);
       if (!file || token !== importGeneration) return;
       try {
         if (file.size > settingsLimit) throw new Error("Settings exceeds 32 KiB.");
@@ -115,8 +123,7 @@
       }
     });
     input.addEventListener("cancel", () => {
-      input.remove();
-      if (importInput === input) importInput = null;
+      removeImportInput(input, token);
     });
     document.body.append(input);
     try { input.click(); }

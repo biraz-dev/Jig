@@ -58,8 +58,14 @@ async function confirmDraft(page, expected) {
   await page.evaluate(() => navigator.clipboard.writeText("Jig draft pending"));
   await key(page, "Control+a");
   await key(page, "Control+c");
-  await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected,
-    expected, { timeout: 10000, polling: 50 });
+  const until = Date.now() + 10000;
+  let actual;
+  do {
+    actual = await page.evaluate(() => navigator.clipboard.readText());
+    if (actual === expected) break;
+    await page.waitForTimeout(50);
+  } while (Date.now() < until);
+  assert.equal(actual, expected, "The real clipboard must contain the complete editor draft before changing focus");
   await key(page, "ArrowRight");
 }
 async function capture(page, name, timeout = 60000) {

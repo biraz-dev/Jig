@@ -829,6 +829,53 @@ impl State {
         let lists: Vec<_> = self.task_lists.iter().map(|list| list.id).collect();
         self.remove_completed_tasks_in_lists(&lists)
     }
+    /// Sort the visible tasks once: earliest open deadlines, undated tasks,
+    /// then completed tasks. Ties retain their order; hidden slots stay put.
+    /// Returns false when no order changed, so adapters can avoid an empty Undo.
+    pub fn sort_tasks_in_lists(&mut self, list_ids: &[u64]) -> bool {
+        let slots: Vec<_> = self
+            .tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, task)| list_ids.contains(&task.list_id))
+            .map(|(index, _)| index)
+            .collect();
+        if slots.len() < 2 {
+            return false;
+        }
+        let deadlines: HashMap<_, _> = self
+            .deadlines
+            .iter()
+            .map(|deadline| (deadline.id, deadline.at))
+            .collect();
+        let mut ordered = slots.clone();
+        ordered.sort_by_key(|index| {
+            let task = &self.tasks[*index];
+            let due = task.deadline.and_then(|id| deadlines.get(&id)).copied();
+            match (task.complete, due) {
+                (true, _) => (2, None),
+                (false, Some(due)) => (0, Some(due)),
+                (false, None) => (1, None),
+            }
+        });
+        if ordered == slots {
+            return false;
+        }
+        // Each task carries its destination through the swaps. Moving records
+        // rather than cloning them also keeps long note-derived details cheap.
+        let mut destinations: Vec<_> = (0..self.tasks.len()).collect();
+        for (target, source) in slots.into_iter().zip(ordered) {
+            destinations[source] = target;
+        }
+        for index in 0..destinations.len() {
+            while destinations[index] != index {
+                let target = destinations[index];
+                self.tasks.swap(index, target);
+                destinations.swap(index, target);
+            }
+        }
+        true
+    }
     /// Hidden lists are untouched when the visible checklist is cleared.
     pub fn remove_completed_tasks_in_lists(&mut self, list_ids: &[u64]) -> usize {
         let before = self.tasks.len();

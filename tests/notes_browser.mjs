@@ -133,11 +133,21 @@ async function typeBody(page, text) {
     await paint(page);
   }
 }
+async function expectClipboard(page, expected) {
+  const until = Date.now() + 10000;
+  let actual;
+  do {
+    actual = await page.evaluate(() => navigator.clipboard.readText());
+    if (actual === expected) return;
+    await page.waitForTimeout(50);
+  } while (Date.now() < until);
+  assert.equal(actual, expected, "The real clipboard must contain the complete expected text");
+}
 async function expectEditorText(page, text) {
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
   await page.evaluate(() => navigator.clipboard.writeText("Working editor read pending"));
   await key(page, "Control+a"); await key(page, "Control+c");
-  await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, text, { timeout: 10000, polling: 50 });
+  await expectClipboard(page, text);
 }
 async function attemptSample(scene) {
   // Data is fixed at the top left of this known desktop viewport.
@@ -377,7 +387,7 @@ try {
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
   await current.page.evaluate(() => navigator.clipboard.writeText("Draft recovery pending"));
   await key(current.page, "Control+a"); await key(current.page, "Control+c");
-  await current.page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, recoveredBody, { timeout: 10000, polling: 50 });
+  await expectClipboard(current.page, recoveredBody);
   await key(current.page, "Control+Enter");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).notes.length === 2, storageKey);
   const recoveredNotes = await state(current.page);
@@ -411,7 +421,7 @@ try {
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
   await current.page.evaluate(() => navigator.clipboard.writeText("Task draft recovery pending"));
   await key(current.page, "Control+a"); await key(current.page, "Control+c");
-  await current.page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, unsent, { timeout: 10000, polling: 50 });
+  await expectClipboard(current.page, unsent);
   await key(current.page, "Enter");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.length === 2, storageKey);
   const kept = await state(current.page);
@@ -442,7 +452,7 @@ try {
   progress("copy the full clipped body and keep the final character during a quick workspace change");
   await current.page.evaluate(() => navigator.clipboard.writeText("Notes copy pending"));
   await focusNote(current, 0, 3); await key(current.page, "Space");
-  await current.page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, updated, { timeout: 10000, polling: 50 });
+  await expectClipboard(current.page, updated);
   await expectState(current.page, edited, "Copy must preserve the note and all other records");
   await focusNote(current, 0, 6); await key(current.page, "Space");
   const quickBody = updated + "\nFinal character: ";

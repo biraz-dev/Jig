@@ -193,8 +193,9 @@ try {
   current = await open("settings-mobile", { phone: true });
   await current.page.touchscreen.tap(350, 16); await paint(current.page); current.settingsOpen = true;
   await current.page.waitForTimeout(150); await paint(current.page);
-  // A real tap must open Settings and focus Done before its Theme control.
-  await tab(current.page); await key(current.page, "Space"); await tab(current.page, 3); await key(current.page, "Space");
+  // A real tap must open Settings and focus Done. The overflowing phone
+  // ScrollArea contributes one Tab stop before its Theme control.
+  await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 3); await key(current.page, "Space");
   await waitSettings(current.page, { theme: "light" }); await waitBrightness(current.page, true);
   assert.equal(await raw(current.page), taskRaw); await boot(current, true);
   assert.equal((await settings(current.page)).theme, "light"); await waitBrightness(current.page, true);

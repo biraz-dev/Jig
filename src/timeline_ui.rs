@@ -1,11 +1,11 @@
 //! A compact, day-based projection of the ordinary checklist and its dates.
 use crate::web::task_color;
 use crate::web_theme::{task_list_fill, ACCENT, BG, MUTED, RULE, TEXT, WEEKEND};
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc};
 use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, FontId, RichText, Stroke, Ui};
 use jig::{
-    model::State,
+    model::{State, Task, TaskColor},
     timeline::{self, DateRange, ResizeEdge, Scale, TimelineRow},
 };
 
@@ -19,27 +19,63 @@ fn edge_id(task: u64, edge: ResizeEdge) -> egui::Id {
     egui::Id::new(("timeline-resize", task, matches!(edge, ResizeEdge::Due)))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
+struct GestureTask {
+    id: u64,
+    list_id: u64,
+    deadline: Option<u64>,
+    start: Option<DateTime<Utc>>,
+    complete: bool,
+    color: Option<TaskColor>,
+}
+
+impl From<&Task> for GestureTask {
+    fn from(task: &Task) -> Self {
+        Self {
+            id: task.id,
+            list_id: task.list_id,
+            deadline: task.deadline,
+            start: task.start,
+            complete: task.complete,
+            color: task.color,
+        }
+    }
+}
+
 struct GestureView {
+    ctx: egui::Context,
     header: egui::Rect,
     clip: egui::Rect,
     window: DateRange,
-    data: Vec<u8>,
+    tasks: Vec<GestureTask>,
+    deadlines: Vec<(u64, DateTime<Utc>)>,
+    lists: Vec<u64>,
+    label_percent: Option<u8>,
 }
 
 impl GestureView {
-    fn new(header: egui::Rect, clip: egui::Rect, window: DateRange, state: &State) -> Self {
+    fn new(
+        ctx: &egui::Context,
+        header: egui::Rect,
+        clip: egui::Rect,
+        window: DateRange,
+        state: &State,
+    ) -> Self {
         Self {
+            ctx: ctx.clone(),
             header,
             clip,
             window,
-            data: serde_json::to_vec(&(
-                &state.tasks,
-                &state.deadlines,
-                &state.task_lists,
-                state.preferences.timeline_label_percent,
-            ))
-            .unwrap_or_default(),
+            // Rows have fixed heights. Full note-derived task details and
+            // titles do not affect a date gesture, so keep only its metadata.
+            tasks: state.tasks.iter().map(GestureTask::from).collect(),
+            deadlines: state
+                .deadlines
+                .iter()
+                .map(|item| (item.id, item.at))
+                .collect(),
+            lists: state.task_lists.iter().map(|list| list.id).collect(),
+            label_percent: state.preferences.timeline_label_percent,
         }
     }
 
@@ -53,7 +89,22 @@ impl GestureView {
         self.header == header
             && self.clip == clip
             && self.window == window
-            && self.data == Self::new(header, clip, window, state).data
+            && self
+                .tasks
+                .iter()
+                .copied()
+                .eq(state.tasks.iter().map(GestureTask::from))
+            && self
+                .deadlines
+                .iter()
+                .copied()
+                .eq(state.deadlines.iter().map(|item| (item.id, item.at)))
+            && self
+                .lists
+                .iter()
+                .copied()
+                .eq(state.task_lists.iter().map(|list| list.id))
+            && self.label_percent == state.preferences.timeline_label_percent
     }
 }
 
@@ -135,7 +186,19 @@ impl TimelinePanel {
     }
 
     pub fn cancel_gesture(&mut self) -> bool {
-        self.gesture.take().is_some()
+        let Some(gesture) = self.gesture.take() else {
+            return false;
+        };
+        let (view, id) = match gesture {
+            Gesture::Label { view, .. } => (view, label_split_id()),
+            Gesture::Bar(drag) => (drag.view, edge_id(drag.task, drag.edge)),
+        };
+        if view.ctx.dragged_id() == Some(id) {
+            // Web TouchCancel does not release egui's native pointer drag.
+            // Clear our own control so the next gesture can start normally.
+            view.ctx.stop_dragging();
+        }
+        true
     }
 
     pub fn owns_keyboard(&self, ctx: &egui::Context) -> bool {
@@ -307,17 +370,20 @@ impl TimelinePanel {
                             } else {
                                 BG
                             };
-                            self.row(
-                                ui,
-                                rect,
-                                label_width,
-                                window,
-                                today,
-                                &display_row,
-                                selected,
-                                combined.then_some(list.map_or("Tasks", |list| list.name.as_str())),
-                                shade,
-                            );
+                            if ui.is_rect_visible(rect) {
+                                self.row(
+                                    ui,
+                                    rect,
+                                    label_width,
+                                    window,
+                                    today,
+                                    &display_row,
+                                    selected,
+                                    combined
+                                        .then_some(list.map_or("Tasks", |list| list.name.as_str())),
+                                    shade,
+                                );
+                            }
                             self.resize_handles(
                                 rect,
                                 ui.clip_rect(),
@@ -455,7 +521,7 @@ impl TimelinePanel {
                 self.gesture = Some(Gesture::Label {
                     percent,
                     original: percent,
-                    view: GestureView::new(header, ui.clip_rect(), window, state),
+                    view: GestureView::new(ui.ctx(), header, ui.clip_rect(), window, state),
                 });
             }
             if response.dragged() || response.drag_stopped() {
@@ -645,7 +711,7 @@ impl TimelinePanel {
                     pointer_origin: origin.x,
                     row_y: handle.cap.center().y,
                     cell: handle.cell,
-                    view: GestureView::new(header, ui.clip_rect(), window, state),
+                    view: GestureView::new(ui.ctx(), header, ui.clip_rect(), window, state),
                 }));
             }
         }

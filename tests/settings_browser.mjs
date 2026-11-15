@@ -171,9 +171,14 @@ async function downloadAt(scene, index) {
   const download = await event; return { name: download.suggestedFilename(), data: JSON.parse(await readFile(await download.path(), "utf8")) };
 }
 async function importSettings(scene, value, name = "sample-settings.json") {
-  await focusSetting(scene, 3); const event = scene.page.waitForEvent("filechooser"); await key(scene.page, "Space");
+  await focusSetting(scene, 3);
+  const routing = await scene.page.evaluate(() => ({ tag: document.activeElement?.tagName, id: document.activeElement?.id, focused: document.hasFocus(), activation: { active: navigator.userActivation.isActive, previouslyActive: navigator.userActivation.hasBeenActive } }));
+  console.log(`Settings file chooser keyboard routing: ${JSON.stringify(routing)}`);
+  assert.equal(routing.id, "jig_canvas", "Settings import activation must reach the app's keyboard handler");
+  const event = scene.page.waitForEvent("filechooser"); await key(scene.page, "Space");
   const chooser = await event; assert.equal(await chooser.element().getAttribute("id"), "jig-settings-import");
   await chooser.setFiles({ name, mimeType: "application/json", buffer: Buffer.from(typeof value === "string" ? value : JSON.stringify(value)) });
+  await scene.page.waitForFunction(() => document.activeElement?.id === "jig_canvas", undefined, { polling: 25 });
   await scene.page.waitForTimeout(1200);
   const { width, height } = scene.page.viewportSize(); await scene.page.mouse.move(width - 6, height - 6); await paint(scene.page);
 }

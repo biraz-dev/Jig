@@ -156,18 +156,29 @@ async function renameList(scene, index, name) {
   await scene.page.waitForFunction(({ key, index, name }) => JSON.parse(localStorage.getItem(key)).task_lists?.[index]?.name === name, { key: storageKey, index, name });
   scene.undo = true; scene.redo = false;
 }
-async function focusedControlPoint(page, limit = 180) {
+async function focusedControlPoint(page, limit = 180, minHeight = 10) {
+  const until = Date.now() + 2000;
+  let point;
+  do {
+    point = await readFocusedControlPoint(page, limit, minHeight);
+    if (point) return point;
+    await paint(page);
+  } while (Date.now() < until);
+  assert.ok(point, "A focused list control must be visibly identifiable for touch/cap checks");
+}
+async function readFocusedControlPoint(page, limit, minHeight) {
   // The ordinary keyboard-focused button has Jig's active graphite fill.
   // Read its visible pixels; no Rust/widget state is exposed to this driver.
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  const point = await page.evaluate(async ({ encoded, limit }) => {
+  const point = await page.evaluate(async ({ encoded, limit, minHeight }) => {
     const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
     const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
     const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
     const matches = index => [77, 49, 39].every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
     const bottom = Math.min(limit, bitmap.height);
-    for (let y = 42; y < bottom; y++) for (let x = 6; x < bitmap.width - 6; x++) {
+    const top = bitmap.width < 500 ? 60 : 42; // Phone workspace tabs occupy y34..54.
+    for (let y = top; y < bottom; y++) for (let x = 6; x < bitmap.width - 6; x++) {
       const start = y * bitmap.width + x;
       if (seen[start] || !matches(start)) continue;
       const stack = [start], r = { left: x, right: x, top: y, bottom: y, count: 0 }; seen[start] = 1;
@@ -175,12 +186,12 @@ async function focusedControlPoint(page, limit = 180) {
         const index = stack.pop(), px = index % bitmap.width, py = Math.floor(index / bitmap.width);
         r.left = Math.min(r.left, px); r.right = Math.max(r.right, px); r.top = Math.min(r.top, py); r.bottom = Math.max(r.bottom, py); r.count++;
         for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
-          if (nx < 0 || nx >= bitmap.width || ny < 42 || ny >= bottom) continue;
+          if (nx < 0 || nx >= bitmap.width || ny < top || ny >= bottom) continue;
           const next = ny * bitmap.width + nx;
           if (!seen[next] && matches(next)) { seen[next] = 1; stack.push(next); }
         }
       }
-      if (r.count > 100 && r.bottom - r.top >= 10 && r.bottom - r.top <= 40 && r.right - r.left < 180) regions.push(r);
+      if (r.count > 100 && r.bottom - r.top >= minHeight && r.bottom - r.top <= 40 && r.right - r.left < 180) regions.push(r);
     }
     const r = regions.sort((a, b) => a.top - b.top || b.count - a.count)[0];
     if (r) {
@@ -200,8 +211,7 @@ async function focusedControlPoint(page, limit = 180) {
     }
     bitmap.close();
     return r ? { ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
-  }, { encoded: png.toString("base64"), limit });
-  assert.ok(point, "A focused list control must be visibly identifiable for touch/cap checks");
+  }, { encoded: png.toString("base64"), limit, minHeight });
   return point;
 }
 async function bars(page) {
@@ -486,9 +496,12 @@ try {
   progress("combine lists using the touch-friendly Multi toggle");
   current = await open("task-lists-mobile", fixture, true);
   await focusList(current, 1);
-  const home = await focusedControlPoint(current.page);
+  const home = await focusedControlPoint(current.page, 180, 24);
   await focusList(current, 2);
-  const show = await focusedControlPoint(current.page);
+  const show = await focusedControlPoint(current.page, 180, 24);
+  console.log(`Task-list phone touch targets: ${JSON.stringify({ home, show })}`);
+  assert.ok(Math.abs(home.x - show.x) >= 40 && home.bottom - home.top >= 24 && show.bottom - show.top >= 24,
+    "Touch targets must be two distinct complete task-list tabs below the workspace header");
   // Observe actual public pointer events so this really exercises egui's
   // sub-300ms double-click window, rather than two slow independent choices.
   await current.page.evaluate(() => {

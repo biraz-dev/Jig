@@ -1496,7 +1496,7 @@ impl BrowserApp {
             let tabs_width = natural_width.min((ui.available_width() - controls).max(24.0));
             ui.allocate_ui_with_layout(
                 egui::vec2(tabs_width, 32.0),
-                egui::Layout::left_to_right(egui::Align::Center),
+                egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
                     egui::ScrollArea::horizontal()
                         .id_salt("task-list-tabs")
@@ -4299,17 +4299,18 @@ impl BrowserApp {
 impl eframe::App for BrowserApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         let schedule = self.task_date_edit.or(self.task_date_legacy);
-        let protect = ctx.memory(|memory| memory.focused()).is_some_and(|id| {
-            id == egui::Id::new("task-input")
-                || id == egui::Id::new("task-details-input")
-                || id == egui::Id::new("notes-text-input")
-                || schedule.is_some_and(|target| {
-                    id == egui::Id::new(("task-date-input", target))
-                        || id == egui::Id::new(("task-start-input", target))
-                        || id == egui::Id::new(("task-due-picker", target)).with("time")
-                        || id == egui::Id::new(("task-start-picker", target)).with("time")
-                })
-        });
+        let protect = self.settings_open
+            || ctx.memory(|memory| memory.focused()).is_some_and(|id| {
+                id == egui::Id::new("task-input")
+                    || id == egui::Id::new("task-details-input")
+                    || id == egui::Id::new("notes-text-input")
+                    || schedule.is_some_and(|target| {
+                        id == egui::Id::new(("task-date-input", target))
+                            || id == egui::Id::new(("task-start-input", target))
+                            || id == egui::Id::new(("task-due-picker", target)).with("time")
+                            || id == egui::Id::new(("task-start-picker", target)).with("time")
+                    })
+            });
         self.ordered_input.process(ctx, input, protect);
     }
 

@@ -632,18 +632,28 @@ try {
   const noteTouch = (type, point) => dropSession.send("Input.dispatchTouchEvent", {
     type, touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
   });
-  const beginTouchDrop = async () => {
-    await noteTouch("touchStart", notePoints.grip); await paint(current.page);
+  const moveTouchDrop = async () => {
     for (let step = 1; step <= 10; step++) {
       await noteTouch("touchMove", { x: notePoints.grip.x + (blankDrop.x - notePoints.grip.x) * step / 10, y: notePoints.grip.y + (blankDrop.y - notePoints.grip.y) * step / 10 });
       await current.page.waitForTimeout(25);
     }
     await paint(current.page);
   };
+  const beginTouchDrop = async () => {
+    await noteTouch("touchStart", notePoints.grip); await paint(current.page);
+    await moveTouchDrop();
+  };
   await beginTouchDrop(); await expectState(current.page, archived, "A touch note drop must remain a preview until release");
   await noteTouch("touchCancel"); await paint(current.page);
   await key(current.page, "Control+z"); await expectState(current.page, archived, "Touch cancellation must not convert a note or create Undo history");
   await beginTouchDrop(); await expectState(current.page, archived);
+  // Send a new press directly after cancellation, without an app-paint fence.
+  // Chromium may paint between these events, so this checks a rapid real
+  // gesture rather than guaranteeing that both arrive in the same app frame.
+  await noteTouch("touchCancel");
+  await noteTouch("touchStart", notePoints.grip); await paint(current.page);
+  await moveTouchDrop();
+  await expectState(current.page, archived, "A rapid cancel/restart on the same note grip must remain a preview until release");
   await noteTouch("touchEnd"); await paint(current.page); current.undo = true;
   await expectState(current.page, restored, "A blank-pane touch drop must use the active list and preserve the original note/task metadata");
   await undo(current, archived); await current.context.close();
@@ -697,7 +707,7 @@ try {
   assert.equal(await current.page.evaluate(() => document.activeElement?.tagName === "INPUT"), false, "A scrolling body swipe must not open the editor");
   await current.context.close();
   assert.deepEqual(issues, [], "The shared note board must stay local and emit no app errors");
-  console.log("Notes browser checks passed: titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, atomic Undo, shared Notes/Tasks board, body-click editing and mouse/touch grip drops with release-only conversion and safe cancellation, full text/metadata/featured preservation, reload, JSON import/export and 81-note limit.");
+  console.log("Notes browser checks passed: titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, atomic Undo, shared Notes/Tasks board, body-click editing and mouse/touch grip drops with release-only conversion and safe cancellation/rapid restart, full text/metadata/featured preservation, reload, JSON import/export and 81-note limit.");
 } catch (error) {
   console.error(`Notes browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) {

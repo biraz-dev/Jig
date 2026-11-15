@@ -2,8 +2,6 @@
 body { margin: 0; }
 #jig_canvas { display: block; width: 100vw; height: 100dvh; touch-action: none; }
 #loading { position: fixed; z-index: 2; inset: 0; padding: 10vh 7vw; background: #1e1b19; }
-h1 { color: #e6e1db; letter-spacing: .08em; }
-h1 span { font-size: 1rem; color: #aca39b; letter-spacing: 0; }
 p { max-width: 65ch; line-height: 1.6; }
 a { color: #f46b4a; }
 #load-message { color: #f46b4a; }

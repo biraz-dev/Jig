@@ -55,18 +55,25 @@ function bridge({ supported = false, stored = new Map(), handles = new Map(), re
   const nodes = [], downloads = [], listeners = new Map();
   let uuid = 0;
   class Input {
-    constructor(tag) { this.tag = tag; this.id = ""; this.type = ""; this.handlers = new Map(); }
+    constructor(tag) { this.tag = tag; this.id = ""; this.type = ""; this.handlers = new Map(); this.focusCalls = []; }
     addEventListener(name, callback) { this.handlers.set(name, callback); }
     setAttribute() {}
-    click() { if (this.tag === "a") downloads.push({ name: this.download, blob: urls.get(this.href) }); }
-    remove() { this.removed = true; }
+    click() {
+      if (this.tag === "a") downloads.push({ name: this.download, blob: urls.get(this.href) });
+      if (this.type === "file") this.focus();
+    }
+    focus(options) { this.focusCalls.push(options); document.activeElement = this; }
+    remove() { this.removed = true; if (document.activeElement === this) document.activeElement = document.body; }
   }
   const urls = new Map();
   const document = {
     body: { append(node) { nodes.push(node); node.parentElement = this; } },
     createElement: tag => new Input(tag),
+    getElementById: id => nodes.find(node => !node.removed && node.id === id) ?? null,
     addEventListener: (name, callback) => listeners.set(name, callback),
   };
+  const canvas = document.createElement("canvas"); canvas.id = "jig_canvas";
+  document.body.append(canvas); canvas.focus();
   const window = {
     isSecureContext: true,
     crypto: { randomUUID: () => `00000000-0000-0000-0000-${String(++uuid).padStart(12, "0")}` },
@@ -110,7 +117,7 @@ function bridge({ supported = false, stored = new Map(), handles = new Map(), re
     setTimeout: callback => setImmediate(callback),
   });
   return {
-    window, stored, handles, nodes, downloads,
+    window, document, canvas, stored, handles, nodes, downloads,
     status: () => JSON.parse(window.jigBackupStatus()),
     textAgent: () => { const input = document.createElement("input"); input.type = "text"; document.body.append(input); return input; },
     choose: file => {
@@ -154,14 +161,55 @@ async function connected(handle = folder(), options = {}) {
   assert.equal(await context.downloads[0].blob.text(), "{}\n");
   checks++;
 }
+{
+  const context = bridge();
+  context.window.jigSettingsImport();
+  const input = context.document.activeElement;
+  assert.equal(input.id, "jig-settings-import");
+  await context.choose({ size: 13, text: async () => '{"version":1}' });
+  assert.equal(context.document.activeElement, context.canvas, "Selecting a settings file restores canvas keyboard routing");
+  assert.equal(context.canvas.focusCalls.at(-1).preventScroll, true);
+  assert.equal(input.removed, true);
+  assert.equal(context.window.jigSettingsTakeImport(), '{"version":1}');
+  context.window.jigSettingsImport(); await context.choose(null);
+  assert.equal(context.document.activeElement, context.canvas, "An empty file selection also restores canvas focus");
+  checks++;
+}
+{
+  const context = bridge();
+  context.window.jigSettingsImport();
+  const input = context.document.activeElement;
+  input.handlers.get("cancel")();
+  assert.equal(input.removed, true);
+  assert.equal(context.document.activeElement, context.canvas, "Canceling the native chooser restores canvas keyboard routing");
+  assert.equal(context.window.jigSettingsTakeImport(), null);
+  context.window.jigSettingsImport();
+  const current = context.document.activeElement;
+  input.handlers.get("cancel")();
+  await input.handlers.get("change")();
+  assert.equal(context.document.activeElement, current, "Late events from an old chooser must not steal a newer chooser's focus");
+  checks++;
+}
+{
+  const context = bridge();
+  context.canvas.focus = () => { throw new Error("Synthetic focus failure"); };
+  context.window.jigSettingsImport();
+  await context.choose({ size: 13, text: async () => '{"version":1}' });
+  assert.equal(context.window.jigSettingsTakeImport(), '{"version":1}', "A focus failure must not reject settings JSON");
+  checks++;
+}
 for (const rejectEarlier of [false, true]) {
   const context = bridge(), previous = deferred();
   context.window.jigSettingsImport();
   const earlier = context.choose({ size: 10, text: () => previous.promise });
   context.window.jigSettingsImport();
   await context.choose({ size: 10, text: async () => "newer" });
+  const editing = context.textAgent(); editing.focus();
+  const focusCalls = context.canvas.focusCalls.length;
   if (rejectEarlier) previous.reject(new Error("old failure")); else previous.resolve("older");
   await earlier;
+  assert.equal(context.document.activeElement, editing, "A stale asynchronous import must not steal focus on completion");
+  assert.equal(context.canvas.focusCalls.length, focusCalls);
   assert.equal(context.window.jigSettingsTakeImport(), "newer");
   assert.equal(context.window.jigSettingsTakeImport(), null);
   assert.equal(context.stored.size, 0);

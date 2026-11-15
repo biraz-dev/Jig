@@ -3312,6 +3312,9 @@ impl BrowserApp {
             if response.has_focus() {
                 self.focus = 1;
             }
+            if response.gained_focus() {
+                response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+            }
             if self.focus_task_input {
                 response.request_focus();
                 response.scroll_to_me(Some(egui::Align::Center));
@@ -3477,8 +3480,8 @@ impl BrowserApp {
                 "Sort selected lists: earliest due first, undated tasks in their ",
                 "current order, completed tasks last. Undo restores the previous order."
             ));
-            if sort.has_focus() {
-                sort.scroll_to_me(None);
+            if sort.gained_focus() {
+                sort.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
             }
             if sort.clicked() {
                 self.sort_visible_tasks(ui.ctx());

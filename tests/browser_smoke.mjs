@@ -194,8 +194,8 @@ async function expectCalculation(page, expression, result, length, unit) {
 }
 async function openTaskDates(page) {
   await resetFocus(page); await navigateKey(page, "Control+Alt+2");
-  // Data/Calculator/Settings/Source, Tasks/+, Gantt/Save, then row date.
-  await tab(page, 12); await navigateKey(page, "Space");
+  // Data/Settings/Calculator/About/Help/Source, Tasks/+, Gantt/Save, then row date.
+  await tab(page, 14); await navigateKey(page, "Space");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
 }
 async function openDuePicker(page) {
@@ -250,8 +250,8 @@ async function exportData(page) {
 }
 async function confirmImport(page) {
   await resetFocus(page);
-  // Data, Calculator, Settings, then the pending import's real Confirm control.
-  await tab(page, 4); await navigateKey(page, "Space");
+  // Five header buttons, then the pending import's real Confirm control.
+  await tab(page, 6); await navigateKey(page, "Space");
 }
 async function expectClipChange(page, before, clip, message) {
   const until = Date.now() + 5000; let actual;
@@ -295,8 +295,8 @@ async function selectedDay(page) {
 }
 async function clickCalculatorIcon(page, touch = false) {
   await resetFocus(page);
-  // Header order is stable: Data, Calculator, Settings; tabs are pointer controls.
-  await tab(page, 2);
+  // Header order is stable: Data, Settings, Calculator; tabs are pointer controls.
+  await tab(page, 3);
   const regions = await filledRegions(page, [77, 49, 39], 0, 90);
   const icon = regions.find(r => r.count > 200 && r.width >= 24 && r.width <= 34 && r.height >= 22 && r.height <= 32);
   assert.ok(icon, "The focused Calculator icon must be visible in the header");

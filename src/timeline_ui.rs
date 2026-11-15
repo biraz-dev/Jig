@@ -1,6 +1,6 @@
 //! A compact, day-based projection of the ordinary checklist and its dates.
 use crate::web::task_color;
-use crate::web_theme::{task_list_fill, ACCENT, BG, MUTED, RULE, TEXT, WEEKEND};
+use crate::web_theme;
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc};
 use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, FontId, RichText, Stroke, Ui};
@@ -217,6 +217,7 @@ impl TimelinePanel {
         rows_height: f32,
         selected_lists: &[u64],
     ) -> Option<TimelineAction> {
+        let colors = web_theme::colors(ui.ctx());
         self.focused = false;
         self.keyboard_ids.clear();
         if self.visible_lists.as_slice() != selected_lists {
@@ -275,7 +276,7 @@ impl TimelinePanel {
             }
         });
         let Ok(window) = timeline::window(self.anchor, self.scale) else {
-            ui.label(RichText::new("Date outside supported range").color(MUTED));
+            ui.label(RichText::new("Date outside supported range").color(colors.muted));
             return None;
         };
         // Sort and drag ordering must be shared with the checklist, for every row.
@@ -302,7 +303,7 @@ impl TimelinePanel {
             .clamp(88.0_f32.min(width * 0.5), (width - 90.0).max(width * 0.5));
         self.header(ui, header, label_width, window, today);
         if rows.is_empty() {
-            ui.label(RichText::new("No tasks yet").color(MUTED).size(12.0));
+            ui.label(RichText::new("No tasks yet").color(colors.muted).size(12.0));
             return self.label_splitter(ui, header, header.bottom(), label_width, window, state);
         }
         let mut action = None;
@@ -364,9 +365,9 @@ impl TimelinePanel {
                                     .iter()
                                     .position(|list| list.id == row.list_id)
                                     .unwrap_or(0);
-                                task_list_fill(index)
+                                web_theme::task_list_fill_for(ui.ctx(), index)
                             } else {
-                                BG
+                                colors.bg
                             };
                             if ui.is_rect_visible(rect) {
                                 self.row(
@@ -395,7 +396,7 @@ impl TimelinePanel {
                                 ui.painter().hline(
                                     rect.x_range(),
                                     rect.bottom() - 1.0,
-                                    Stroke::new(0.8_f32, ACCENT),
+                                    Stroke::new(0.8_f32, colors.accent),
                                 );
                             }
                             if response.clicked() {
@@ -452,7 +453,7 @@ impl TimelinePanel {
                 }
                 ui.label(
                     RichText::new(format!("Preview · {}", dates(&preview)))
-                        .color(ACCENT)
+                        .color(colors.accent)
                         .size(11.0),
                 );
             }
@@ -464,12 +465,16 @@ impl TimelinePanel {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(selected.title)
-                    .color(if selected.complete { MUTED } else { TEXT })
+                    .color(if selected.complete {
+                        colors.muted
+                    } else {
+                        colors.text
+                    })
                     .size(12.0),
             );
             ui.label(
                 RichText::new(format!("{} · {}", status(selected), dates(selected)))
-                    .color(MUTED)
+                    .color(colors.muted)
                     .size(11.0),
             );
         } else {
@@ -487,6 +492,7 @@ impl TimelinePanel {
         window: DateRange,
         state: &State,
     ) -> Option<TimelineAction> {
+        let colors = web_theme::colors(ui.ctx());
         let boundary = header.left() + label_width;
         let hit = egui::Rect::from_min_max(
             egui::pos2(boundary - 8.0, header.top()),
@@ -565,7 +571,7 @@ impl TimelinePanel {
             )
         });
         let active = response.hovered() || response.has_focus() || response.dragged();
-        let color = if active { ACCENT } else { RULE };
+        let color = if active { colors.accent } else { colors.rule };
         let x = boundary.round_to_pixel_center(ui.painter().pixels_per_point());
         ui.painter()
             .vline(x, hit.y_range(), Stroke::new(1.0_f32, color));
@@ -573,19 +579,19 @@ impl TimelinePanel {
             egui::pos2(boundary - 4.0, header.center().y),
             egui::vec2(8.0, 18.0),
         );
-        ui.painter().rect_filled(grip, 2.0, BG);
+        ui.painter().rect_filled(grip, 2.0, colors.bg);
         for dy in [-3.0, 0.0, 3.0] {
             ui.painter().hline(
                 (boundary - 6.0)..=(boundary - 2.0),
                 header.center().y + dy,
-                Stroke::new(1.0_f32, if active { ACCENT } else { MUTED }),
+                Stroke::new(1.0_f32, if active { colors.accent } else { colors.muted }),
             );
         }
         if response.has_focus() {
             ui.painter().rect_stroke(
                 grip,
                 2.0,
-                Stroke::new(1.0_f32, ACCENT),
+                Stroke::new(1.0_f32, colors.accent),
                 egui::StrokeKind::Inside,
             );
         }
@@ -678,6 +684,7 @@ impl TimelinePanel {
         window: DateRange,
         state: &State,
     ) -> Option<TimelineAction> {
+        let colors = web_theme::colors(ui.ctx());
         let id = edge_id(handle.task, handle.edge);
         self.keyboard_ids.push(id);
         let response = ui
@@ -782,12 +789,16 @@ impl TimelinePanel {
         });
         let active = response.hovered() || response.dragged() || response.has_focus();
         let painter = ui.painter().with_clip_rect(handle.clip);
-        painter.rect_filled(handle.cap, 0.5, if active { ACCENT } else { TEXT });
+        painter.rect_filled(
+            handle.cap,
+            0.5,
+            if active { colors.accent } else { colors.text },
+        );
         if response.has_focus() {
             painter.rect_stroke(
                 handle.hit.shrink(1.0),
                 1.0,
-                Stroke::new(1.0_f32, ACCENT),
+                Stroke::new(1.0_f32, colors.accent),
                 egui::StrokeKind::Inside,
             );
         }
@@ -805,6 +816,7 @@ impl TimelinePanel {
         window: DateRange,
         today: NaiveDate,
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let label = if self.scale == Scale::Month {
             window.start.format("%b %Y").to_string()
         } else {
@@ -820,11 +832,11 @@ impl TimelinePanel {
             egui::Align2::LEFT_CENTER,
             label,
             FontId::monospace(9.0),
-            MUTED,
+            colors.muted,
         );
         let lane =
             egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
-        self.grid(ui, lane, window, today, BG);
+        self.grid(ui, lane, window, today, colors.bg);
         let cell = lane.width() / window.days() as f32;
         let stride = if cell >= 15.0 {
             1
@@ -841,7 +853,11 @@ impl TimelinePanel {
                 continue;
             };
             let x = lane.left() + (offset as f32 + 0.5) * cell;
-            let color = if day == today { ACCENT } else { MUTED };
+            let color = if day == today {
+                colors.accent
+            } else {
+                colors.muted
+            };
             if cell >= 25.0 {
                 ui.painter().text(
                     egui::pos2(x, rect.top() + 7.0),
@@ -871,6 +887,7 @@ impl TimelinePanel {
         today: NaiveDate,
         background: egui::Color32,
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let painter = ui.painter().with_clip_rect(rect);
         painter.rect_filled(rect, 0.0, background);
         let cell = rect.width() / window.days() as f32;
@@ -889,21 +906,21 @@ impl TimelinePanel {
                         egui::vec2(cell, rect.height()),
                     ),
                     0.0,
-                    if background == BG {
-                        WEEKEND
+                    if background == colors.bg {
+                        colors.weekend
                     } else {
-                        background.lerp_to_gamma(WEEKEND, 0.45)
+                        background.lerp_to_gamma(colors.weekend, 0.45)
                     },
                 );
             }
             if self.scale == Scale::Week || day.weekday().number_from_monday() == 1 {
-                painter.vline(x, rect.y_range(), Stroke::new(0.5_f32, RULE));
+                painter.vline(x, rect.y_range(), Stroke::new(0.5_f32, colors.rule));
             }
             if day == today {
                 painter.vline(
                     x + cell * 0.5,
                     rect.y_range(),
-                    Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.65)),
+                    Stroke::new(1.0_f32, colors.accent.gamma_multiply(0.65)),
                 );
             }
         }
@@ -922,6 +939,7 @@ impl TimelinePanel {
         list_name: Option<&str>,
         background: egui::Color32,
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let lane =
             egui::Rect::from_min_max(egui::pos2(rect.left() + label_width, rect.top()), rect.max);
         ui.painter().rect_filled(rect, 0.0, background);
@@ -948,13 +966,17 @@ impl TimelinePanel {
             egui::Align2::LEFT_CENTER,
             &title,
             FontId::monospace(11.0),
-            if row.complete { MUTED } else { TEXT },
+            if row.complete {
+                colors.muted
+            } else {
+                colors.text
+            },
         );
         if row.complete {
             painter.hline(
                 title_x..=(title_x + title.chars().count() as f32 * 6.6).min(lane.left() - 4.0),
                 title_y,
-                Stroke::new(0.7_f32, MUTED),
+                Stroke::new(0.7_f32, colors.muted),
             );
         }
         let detail = row.due.map_or_else(
@@ -971,7 +993,7 @@ impl TimelinePanel {
             egui::Align2::LEFT_CENTER,
             shortened(&detail, columns + 3),
             FontId::monospace(9.0),
-            MUTED,
+            colors.muted,
         );
         if let Some(span) = timeline::clipped(row, window) {
             let cell = lane.width() / window.days() as f32;
@@ -988,7 +1010,7 @@ impl TimelinePanel {
                 ];
                 painter.add(egui::Shape::convex_polygon(
                     points,
-                    if row.complete { BG } else { color },
+                    if row.complete { colors.bg } else { color },
                     Stroke::new(0.8_f32, color),
                 ));
             } else {
@@ -1020,14 +1042,14 @@ impl TimelinePanel {
                                 egui::pos2(x - direction * 2.0, center_y - 2.5),
                                 egui::pos2(x + direction * 2.0, center_y),
                             ],
-                            Stroke::new(1.0_f32, BG),
+                            Stroke::new(1.0_f32, colors.bg),
                         );
                         painter.line_segment(
                             [
                                 egui::pos2(x + direction * 2.0, center_y),
                                 egui::pos2(x - direction * 2.0, center_y + 2.5),
                             ],
-                            Stroke::new(1.0_f32, BG),
+                            Stroke::new(1.0_f32, colors.bg),
                         );
                     }
                 }
@@ -1042,7 +1064,7 @@ impl TimelinePanel {
                     due.format("%d %b")
                 ),
                 FontId::monospace(10.0),
-                MUTED,
+                colors.muted,
             );
         }
         if today >= window.start && today <= window.end {
@@ -1051,12 +1073,20 @@ impl TimelinePanel {
             painter.vline(
                 x,
                 lane.y_range(),
-                Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.65)),
+                Stroke::new(1.0_f32, colors.accent.gamma_multiply(0.65)),
             );
         }
-        painter.hline(rect.x_range(), rect.bottom(), Stroke::new(0.4_f32, RULE));
+        painter.hline(
+            rect.x_range(),
+            rect.bottom(),
+            Stroke::new(0.4_f32, colors.rule),
+        );
         if selected {
-            painter.vline(rect.left(), rect.y_range(), Stroke::new(1.0_f32, ACCENT));
+            painter.vline(
+                rect.left(),
+                rect.y_range(),
+                Stroke::new(1.0_f32, colors.accent),
+            );
         }
     }
 }

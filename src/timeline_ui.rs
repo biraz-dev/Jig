@@ -278,11 +278,9 @@ impl TimelinePanel {
             ui.label(RichText::new("Date outside supported range").color(MUTED));
             return None;
         };
-        let mut rows = timeline::rows_for_lists(state, &Local, selected_lists);
+        // Sort and drag ordering must be shared with the checklist, for every row.
+        let rows = timeline::rows_for_lists(state, &Local, selected_lists);
         let combined = selected_lists.len() > 1;
-        // Keep checklist order within each group, without reordering records.
-        // Dated work remains immediately visible even with many undated notes.
-        rows.sort_by_key(|row| row.due.is_none());
         let width = (ui.available_width() - 16.0).max(1.0);
         let (header, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
         if self.gesture.as_ref().is_some_and(|gesture| {

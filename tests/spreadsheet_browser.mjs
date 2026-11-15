@@ -1129,6 +1129,20 @@ async function sheetControl(page, control) {
   const button = buttons[target];
   await page.mouse.click((button.left + button.right) / 2, (button.top + button.bottom) / 2);
   await paint(page);
+  if (control === "minus") {
+    // A normalized pointer press can paint its hover before the release opens
+    // confirmation. Observe the actual focused button before pressing Space.
+    const until = Date.now() + 10000;
+    let confirm;
+    do {
+      const { shapes, height } = await selectedShapes(page, [77, 49, 39], Math.max(1, until - Date.now()));
+      confirm = shapes.find(item => item.top > height - 140
+        && item.right - item.left >= 70 && item.right - item.left <= 140
+        && item.bottom - item.top <= 30);
+      if (!confirm) await page.waitForTimeout(25);
+    } while (!confirm && Date.now() < until);
+    assert.ok(confirm, "The bottom - must reveal a visibly focused Delete sheet confirmation before keyboard activation");
+  }
 }
 async function waitForCellInk(page, bounds, expected) {
   const until = Date.now() + 60000;

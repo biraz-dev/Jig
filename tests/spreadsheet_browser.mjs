@@ -942,7 +942,7 @@ async function taskGanttButtonPoint(page) {
       const rule = (x, y) => [113, 102, 93].every((value, axis) => Math.abs(pixels[(y * bitmap.width + x) * 4 + axis] - value) <= 3);
       // The Gantt toolbar is directly beneath the task-list strip. Find its
       // actual button frame rather than counting optional scroll-area tab stops.
-      for (let y = 78; y < 145; y++) {
+      for (let y = 60; y < 180; y++) {
         let start;
         for (let x = 5; x <= 150; x++) {
           if (rule(x, y) && start === undefined) start = x;
@@ -955,7 +955,7 @@ async function taskGanttButtonPoint(page) {
       }
       bitmap.close();
       for (const top of runs) for (const bottom of runs) {
-        if (bottom.y - top.y >= 12 && bottom.y - top.y <= 30 && Math.abs(top.left - bottom.left) <= 2 && Math.abs(top.right - bottom.right) <= 2)
+        if (bottom.y - top.y >= 12 && bottom.y - top.y <= 22 && Math.abs(top.left - bottom.left) <= 2 && Math.abs(top.right - bottom.right) <= 2)
           return { x: (top.left + top.right) / 2, y: (top.y + bottom.y) / 2 };
       }
       return null;

@@ -72,8 +72,8 @@ async function capture(page, name) {
   return png;
 }
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
-async function open(label, state = fixture, phone = false) {
-  const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch: phone, timezoneId: phone ? "America/New_York" : "Etc/UTC" });
+async function open(label, state = fixture, phone = false, hasTouch = phone) {
+  const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, acceptDownloads: true, hasTouch, timezoneId: phone ? "America/New_York" : "Etc/UTC" });
   // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
   await context.addInitScript(path => {
     if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
@@ -470,6 +470,65 @@ try {
   await expectState(current.page, fixture, "One Undo must restore every record after dragging the start-date end");
   await current.context.close();
 
+  progress("cancel real touch gestures and immediately reuse the same timeline controls");
+  current = await open("timeline-touch-cancel", fixture, false, true);
+  await timeline(current.page);
+  const touchSession = await current.context.newCDPSession(current.page);
+  const timelineTouch = (type, point) => touchSession.send("Input.dispatchTouchEvent", {
+    type, touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+  });
+  const beginTimelineTouch = async (point, distance) => {
+    await timelineTouch("touchStart", point); await paint(current.page);
+    for (let step = 1; step <= 8; step++) {
+      await timelineTouch("touchMove", { x: point.x + distance * step / 8, y: point.y });
+      await current.page.waitForTimeout(25);
+    }
+    await paint(current.page);
+  };
+  const touchInitialBar = await waitForBar(current.page);
+  const touchLabelGrip = { x: touchInitialBar.left - 4, y: touchInitialBar.top - 20 };
+  await beginTimelineTouch(touchLabelGrip, 120);
+  await waitForBar(current.page, item => item.left - touchInitialBar.left >= 30);
+  await expectState(current.page, fixture, "A touch title-width preview must preserve the saved records");
+  // TouchCancel is intentionally sent without a synthetic PointerUp. The next
+  // gesture uses the same control without a keyboard or mouse reset in between.
+  await timelineTouch("touchCancel"); await paint(current.page);
+  await waitForBar(current.page, item => Math.abs(item.left - touchInitialBar.left) <= 3);
+  await expectState(current.page, fixture, "Cancelling a title-width touch must restore its preview without saving");
+  await beginTimelineTouch(touchLabelGrip, 120);
+  await waitForBar(current.page, item => item.left - touchInitialBar.left >= 30);
+  await expectState(current.page, fixture, "Restarting the same title grip must still wait for release before saving");
+  await timelineTouch("touchEnd"); await paint(current.page);
+  await current.page.waitForFunction(key => Number.isInteger(JSON.parse(localStorage.getItem(key)).preferences.timeline_label_percent), storageKey);
+  const touchLabelState = await state(current.page);
+  assert.ok(touchLabelState.preferences.timeline_label_percent >= 10 && touchLabelState.preferences.timeline_label_percent <= 80);
+  delete touchLabelState.preferences.timeline_label_percent;
+  assert.deepEqual(touchLabelState, fixture, "A restarted title grip must preserve task metadata and the featured countdown");
+  await key(current.page, "Escape"); await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "One Undo must restore the restarted title-width change");
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "The cancelled title-width preview must leave no extra Undo entry");
+
+  const touchRangeBar = await waitForBar(current.page, item => Math.abs(item.left - touchInitialBar.left) <= 3);
+  const touchDayPixels = (touchRangeBar.width + 1) / 5;
+  const touchDueGrip = { x: touchRangeBar.right - 1, y: (touchRangeBar.top + touchRangeBar.bottom) / 2 };
+  await beginTimelineTouch(touchDueGrip, touchDayPixels);
+  await waitForBar(current.page, item => item.width - touchRangeBar.width >= touchDayPixels * 0.5);
+  await expectState(current.page, fixture, "A touch due-date preview must not save before release");
+  await timelineTouch("touchCancel"); await paint(current.page);
+  await waitForBar(current.page, item => Math.abs(item.width - touchRangeBar.width) <= 3);
+  await expectState(current.page, fixture, "Cancelling a duration touch must restore the original dates");
+  await beginTimelineTouch(touchDueGrip, touchDayPixels);
+  await waitForBar(current.page, item => item.width - touchRangeBar.width >= touchDayPixels * 0.5);
+  await expectState(current.page, fixture, "Restarting the same duration end must remain a preview until release");
+  await timelineTouch("touchEnd"); await paint(current.page);
+  await expectState(current.page, resizedDue, "The restarted touch must change only the due date by one day, preserving its time and linked task");
+  await key(current.page, "Escape"); await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "One Undo must restore the restarted duration change");
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "The cancelled duration preview must leave no extra Undo entry");
+  await current.context.close();
+
   progress("let a longer Tasks timeline grow into the available panel height");
   const tall = {
     ...structuredClone(fixture),
@@ -713,7 +772,7 @@ try {
   await boot(current.page, true);
   await expectState(current.page, phone);
   assert.deepEqual(issues, [], "The local timeline must emit no app errors or network requests");
-  console.log("Timeline browser checks passed: persistent timeline title widths and duration-end date resizing with live previews and atomic Undo; draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
+  console.log("Timeline browser checks passed: persistent timeline title widths and duration-end date resizing with live previews, real touch cancellation/restart and atomic Undo; draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
 } catch (error) {
   originalError = error;
   console.error(`Timeline browser failed during: ${phase}`);

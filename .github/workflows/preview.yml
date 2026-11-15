@@ -35,6 +35,7 @@ jobs:
           test -f dist/jig-release.txt
           test -f dist/favicon.svg
           test -f dist/bridge.js
+          test -f dist/settings.js
           test -f dist/document_bridge.js
           test -f dist/ocr_bridge.js
           test -f dist/font-license.txt
@@ -65,7 +66,7 @@ jobs:
       fail-fast: false
       max-parallel: 6
       matrix:
-        suite: [spreadsheet_browser, ocr_browser, timeline_browser, task_lists_browser, notes_browser, browser_smoke, undo_browser]
+        suite: [spreadsheet_browser, ocr_browser, timeline_browser, task_lists_browser, notes_browser, browser_smoke, undo_browser, settings_browser]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
@@ -78,7 +79,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'sheet-desktop,sheet-mobile,sheet-edit,sheet-chart,sheet-formats,sheet-import,sheet-failure,undo-desktop,redo-desktop,undo-failure,timeline-desktop,timeline-dashboard,timeline-mobile,timeline-edit,timeline-failure,task-lists-desktop,task-lists-combined,task-lists-mobile,task-lists-failure,notes-desktop,notes-tasks,notes-mobile,notes-cap,notes-failure,calendar-weather-unselected,calendar-weather-selected,consolidated-sample,consolidated-data-open,calculator-popup-desktop,task-date-time-popup,task-date-time-picker,calendar-task-picking,consolidated-mobile,consolidated-medium,calendar-mobile' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'sheet-desktop,sheet-mobile,sheet-edit,sheet-chart,sheet-formats,sheet-import,sheet-failure,undo-desktop,redo-desktop,undo-failure,timeline-desktop,timeline-dashboard,timeline-mobile,timeline-edit,timeline-failure,task-lists-desktop,task-lists-combined,task-lists-mobile,task-lists-failure,notes-desktop,notes-tasks,notes-mobile,notes-cap,notes-failure,calendar-weather-unselected,calendar-weather-selected,consolidated-sample,consolidated-data-open,calculator-popup-desktop,task-date-time-popup,task-date-time-picker,calendar-task-picking,consolidated-mobile,consolidated-medium,calendar-mobile,settings-graphite,settings-light,settings-mobile,settings-shortcuts,settings-backup,settings-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"

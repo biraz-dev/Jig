@@ -55,14 +55,19 @@ async function paint(page) {
 async function key(page, value) {
   await page.keyboard.press(value);
   if (value === "Control+Alt+t") timelineMode.set(page, !timelineMode.get(page));
+  if (value === "Control+Alt+2") timelineMode.set(page, true);
   await paint(page);
 }
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
+async function canvasFocus(page) {
+  const viewport = page.viewportSize();
+  await page.locator("#jig_canvas").click({ position: { x: viewport.width - 6, y: viewport.height - 6 } });
+}
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-mobile", "timeline-edit", "timeline-failure"]);
+  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-mobile", "timeline-edit", "timeline-calendar", "timeline-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  const requestedDivider = ["timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall"].includes(name) && requested.has("timeline-dashboard");
+  const requestedDivider = ["timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-calendar"].includes(name) && requested.has("timeline-dashboard");
   if (allowed.has(name) && (requested.has(name) || requestedDivider) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
@@ -121,10 +126,9 @@ async function boot(page, reload = false) {
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   await page.waitForTimeout(500);
-  // The spreadsheet is the launch workspace; exercise the retained Workbench.
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await page.keyboard.press("Control+Alt+w");
-  await paint(page);
+  // Open the shared Tasks/Calendar board through its normal workspace shortcut.
+  await canvasFocus(page);
+  await key(page, "Control+Alt+2");
 }
 async function state(page) { return page.evaluate(key => JSON.parse(localStorage.getItem(key)), storageKey); }
 async function raw(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
@@ -195,7 +199,7 @@ async function expectState(page, expected, message) {
   assert.deepEqual(await state(page), expected, message);
 }
 async function resetFocus(page) {
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await canvasFocus(page);
   await key(page, "Escape");
 }
 async function timeline(page) {
@@ -215,10 +219,7 @@ async function timeline(page) {
 }
 async function tasks(page) {
   await resetFocus(page);
-  await key(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await key(page, "Escape");
-  await key(page, "ArrowLeft");
+  await key(page, "Control+Alt+2");
   await key(page, "Control+m");
 }
 async function bar(page, color = "rose", timeout = 60000) {
@@ -330,47 +331,49 @@ async function assertMilestone(page, firstBar) {
   }, { encoded: png.toString("base64"), centerY: (firstBar.top + firstBar.bottom) / 2 + 3 * 36 });
   assert.ok(marker && marker.count >= 8 && marker.width <= 13 && marker.height >= 6, "A task with only a due date must render as a compact colored milestone rather than an invented duration");
 }
-async function assertCompactRows(page, png) {
-  const visible = await page.evaluate(async encoded => {
-    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const context = canvas.getContext("2d");
+async function assertDashboardRows(page) {
+  const firstBar = await waitForBar(page);
+  const bottom = await assertTitleDividerEndsAtRows(page, firstBar, 7);
+  assert.ok(bottom < page.viewportSize().height - 30,
+    "The shared Tasks board must expose its seven timeline rows without expanding or scrolling");
+}
+async function calendarMarks(page) {
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  return page.evaluate(async encoded => {
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d");
     context.drawImage(bitmap, 0, 0);
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
-    // Confine this inspection to the actual left calendar/timeline panel.
-    // Locate the first duration's 10px color band, then inspect the distinct
-    // task/status marks at the left of each real 36px row beneath it.
-    const bands = [];
-    for (let y = 150; y < 500; y++) {
-      let count = 0;
-      for (let x = 100; x < 330; x++) {
+    const result = {};
+    for (const [name, color] of Object.entries({ rose: [234, 133, 173], amber: [218, 185, 126] })) {
+      const points = [];
+      for (let y = 40; y < bitmap.height - 35; y++) for (let x = 5; x < bitmap.width - 5; x++) {
         const offset = (y * bitmap.width + x) * 4;
-        if ([234, 133, 173].every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 3)) count++;
+        if (color.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 3)) points.push([x, y]);
       }
-      if (count > 30) {
-        let band = bands.at(-1);
-        if (!band || y > band.bottom + 1) { band = { top: y, bottom: y, count: 0 }; bands.push(band); }
-        band.bottom = y; band.count += count;
+      const groups = [];
+      for (const [x, y] of points) {
+        let group = groups.find(g => x >= g.left - 1 && x <= g.right + 1 && y >= g.top - 1 && y <= g.bottom + 1);
+        if (!group) { group = { left: x, right: x, top: y, bottom: y, count: 0 }; groups.push(group); }
+        group.left = Math.min(group.left, x); group.right = Math.max(group.right, x);
+        group.top = Math.min(group.top, y); group.bottom = Math.max(group.bottom, y); group.count++;
       }
+      result[name] = groups.filter(g => g.count >= 3 && g.right - g.left <= 12 && g.bottom - g.top <= 12)
+        .map(g => ({ ...g, x: (g.left + g.right) / 2, y: (g.top + g.bottom) / 2 }));
     }
-    const band = bands.filter(value => value.bottom - value.top >= 5).sort((a, b) => b.count - a.count)[0];
-    if (!band) { bitmap.close(); return 0; }
-    const firstMarkY = (band.top + band.bottom) / 2 - 8;
-    let visible = 0;
-    for (let row = 0; row < 7; row++) {
-      let marked = false;
-      for (let y = Math.floor(firstMarkY + row * 36 - 4); y <= Math.ceil(firstMarkY + row * 36 + 4); y++) for (let x = 17; x <= 28; x++) {
-        const offset = (y * bitmap.width + x) * 4;
-        const channels = [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
-        if (Math.max(...channels) > 55 && Math.max(...channels) - Math.min(...channels) > 10) marked = true;
-      }
-      if (marked) visible++;
-    }
-    bitmap.close();
-    return visible;
+    bitmap.close(); return result;
   }, png.toString("base64"));
-  assert.ok(visible >= 5, `The fixed dashboard timeline must expose at least five task rows without expanding or scrolling; found ${visible}`);
+}
+async function calendarPair(page, amberVisible = true) {
+  const until = Date.now() + 10000; let marks;
+  do {
+    marks = await calendarMarks(page);
+    const amber = marks.amber[0];
+    const rose = amber ? marks.rose.find(mark => Math.abs(mark.y - amber.y) <= 2) : marks.rose[0];
+    if (rose && Boolean(amber) === amberVisible) return { rose, amber };
+    await page.waitForTimeout(50);
+  } while (Date.now() < until);
+  assert.fail(`The calendar must show the expected visible deadline marks: ${JSON.stringify(marks)}`);
 }
 async function schedule(page, due, start, submit = true) {
   await page.keyboard.press("Control+a");
@@ -379,7 +382,7 @@ async function schedule(page, due, start, submit = true) {
   // Browser event delivery can precede WASM text consumption. Give the last
   // character its own app frame before moving focus to another field.
   await paint(page);
-  await key(page, "Tab");
+  await tab(page, 2); // Due calendar icon, then the Start field.
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.type(start, { delay: 15 });
@@ -389,7 +392,7 @@ async function schedule(page, due, start, submit = true) {
 async function exportData(page) {
   await resetFocus(page);
   await key(page, "Control+Alt+d");
-  await tab(page, 6); // Fresh/reloaded journal: Data through Export JSON.
+  await tab(page, 7); // Fresh/reloaded journal: Data, Calculator, then data actions through Export JSON.
   const downloadEvent = page.waitForEvent("download", { timeout: 5000 });
   await key(page, "Space");
   const download = await downloadEvent;
@@ -403,7 +406,7 @@ async function importData(page, imported, confirm = true) {
   await page.waitForTimeout(1600);
   if (confirm) {
     await resetFocus(page);
-    await tab(page, 2); // Data, then the real pending-import confirmation.
+    await tab(page, 3); // Data, Calculator, then the real pending-import confirmation.
     await key(page, "Space");
   }
 }
@@ -608,7 +611,8 @@ try {
   assert.equal(await raw(current.page), originalRaw, "Viewing a timeline must not migrate legacy deadlines, add dates or change the featured task");
   await capture(current.page, "timeline-desktop");
   await key(current.page, "Control+m");
-  await assertCompactRows(current.page, await capture(current.page, "timeline-dashboard"));
+  await capture(current.page, "timeline-dashboard");
+  await assertDashboardRows(current.page);
   await key(current.page, "Control+m");
 
   progress("navigate week and month windows with the keyboard");
@@ -656,7 +660,7 @@ try {
   await capture(current.page, "timeline-edit");
   await key(current.page, "Enter");
   const edited = structuredClone(fixture);
-  edited.tasks[0].start = "2026-10-27T00:00:00Z";
+  edited.tasks[0].start = "2026-10-27T12:34:56Z";
   edited.deadlines[0].at = "2026-11-02T18:00:00Z";
   await expectState(current.page, edited, "Date-only editing must preserve the existing due time and reuse the same records");
   await key(current.page, "Escape");
@@ -674,7 +678,7 @@ try {
   await current.page.keyboard.type("2026-10-28", { delay: 15 });
   await key(current.page, "Enter");
   const withStart = structuredClone(fixture);
-  withStart.tasks[0].start = "2026-10-28T00:00:00Z";
+  withStart.tasks[0].start = "2026-10-28T12:34:56Z";
   await expectState(current.page, withStart, "Changing only Start must preserve the due instant, color, completion, links and featured countdown");
   await boot(current.page, true);
   await expectState(current.page, withStart, "Start dates must survive a reload in the ordinary task records");
@@ -696,7 +700,7 @@ try {
   assert.ok(await bar(current.page), "The incomplete task must retain a colored duration before completion");
   const incompleteRender = await current.page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
   await tasks(current.page);
-  await tab(current.page, 6); // Data, Source, Tasks tab, +, star, checkbox.
+  await tab(current.page, 9); // Data, Calculator, Source, Tasks tab, +, Gantt/ODS, star, checkbox.
   await key(current.page, "Space");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, storageKey);
   await timeline(current.page);
@@ -734,7 +738,7 @@ try {
   await key(current.page, "Space");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   assert.equal(await raw(current.page), JSON.stringify(old), "Merely opening a legacy deadline editor must not create a linked task");
-  await tab(current.page, 4); // Start, Save, Remove date, then Cancel.
+  await tab(current.page, 6); // Due picker, Start, Start picker, Save, Remove date, Cancel.
   await key(current.page, "Space");
   assert.equal(await raw(current.page), JSON.stringify(old), "Cancelling the draft must leave legacy data intact");
 
@@ -757,6 +761,34 @@ try {
   await expectState(current.page, old, "Undo must remove only the newly created link and range");
   await current.context.close();
 
+  progress("reveal more readable dates across month boundaries as the calendar widens");
+  const continuous = {
+    ...structuredClone(fixture),
+    tasks: [
+      { id: 1, text: "Sample: October work", complete: false, deadline: 101, color: "rose" },
+      { id: 2, text: "Sample: November work", complete: false, deadline: 102, color: "amber" },
+    ],
+    deadlines: [
+      { id: 101, title: "Sample: October work", at: "2026-10-30T18:00:00Z" },
+      { id: 102, title: "Sample: November work", at: "2026-11-20T18:00:00Z" },
+    ],
+    featured: 101,
+  };
+  current = await open("calendar-continuous", continuous, false, true);
+  await current.page.setViewportSize({ width: 800, height: 1000 });
+  await resetFocus(current.page);
+  await key(current.page, "Control+Alt+t"); // Calendar.
+  await key(current.page, "Control+m");
+  await key(current.page, "Control+Alt+t"); await key(current.page, "Control+Alt+t"); // Focus the expanded date band.
+  await calendarPair(current.page, false);
+  await current.page.setViewportSize({ width: 1440, height: 1000 });
+  const wideDates = await calendarPair(current.page);
+  const distance = wideDates.amber.x - wideDates.rose.x;
+  assert.ok(Math.abs(distance - 21 * 40) <= 6, "Widening the calendar must reveal November's deadline beyond October at the same readable daily scale");
+  await expectState(current.page, continuous, "Calendar width and viewing dates across a month boundary must preserve tasks, deadline times, colors and featured countdown");
+  await capture(current.page, "timeline-calendar");
+  await current.context.close();
+
   progress("tap a real duration on a phone and preserve local dates across daylight saving time");
   const phone = structuredClone(fixture);
   for (const task of phone.tasks) if (task.start) task.start = task.start.replace("T00:00:00Z", "T04:00:00Z");
@@ -766,14 +798,14 @@ try {
   await openFirstRow(current.page, true);
   assert.deepEqual(await state(current.page), phone, "Touching the timeline must open the same task without changing the countdown");
   await schedule(current.page, "2026-11-04", "2026-11-02");
-  phone.tasks[0].start = "2026-11-02T05:00:00Z"; // Midnight EST, after the clock change.
+  phone.tasks[0].start = "2026-11-02T13:34:56Z"; // Preserve 08:34:56 local time after the EST change.
   phone.deadlines[0].at = "2026-11-04T19:00:00Z"; // Preserve the original 14:00 local due time.
   await expectState(current.page, phone, "Date-only fields must convert each selected local date using its own DST offset");
   assert.equal(await current.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "The phone timeline must stay within the existing panel width");
   await boot(current.page, true);
   await expectState(current.page, phone);
   assert.deepEqual(issues, [], "The local timeline must emit no app errors or network requests");
-  console.log("Timeline browser checks passed: persistent timeline title widths and duration-end date resizing with live previews, real touch cancellation/restart and atomic Undo; draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, and DST-correct local dates on a phone.");
+  console.log("Timeline browser checks passed: persistent timeline title widths and duration-end date resizing with live previews, real touch cancellation/restart and atomic Undo; draggable Tasks/Gantt pane widths with keyboard adjustment, reload, narrow-layout preservation and default reset; overlapping colored durations and completion, real week/month navigation, keyboard and touch row editing, date-only atomic ranges and Undo, unchanged featured countdown and linked IDs, reload, JSON import/export and invalid-range preservation, older files and nonmutating legacy inspection, width-responsive calendar dates across month boundaries, and DST-correct local dates with preserved times on a phone.");
 } catch (error) {
   originalError = error;
   console.error(`Timeline browser failed during: ${phase}`);

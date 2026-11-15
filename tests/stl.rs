@@ -499,6 +499,48 @@ fn uniform_axis_factors_preserve_the_existing_scalar_interface() {
 }
 
 #[test]
+fn uniform_scaling_preserves_finite_measurements_across_large_changes_in_size() {
+    for (source_size, factor) in [(1e-90, 1e160), (1e90, 1e-160)] {
+        let triangles = cube()
+            .into_iter()
+            .map(|triangle| triangle.map(|point| point.map(|coordinate| coordinate * source_size)))
+            .collect();
+        let mesh = Mesh::from_triangles(triangles).unwrap();
+        let measurements = mesh.measure(LengthUnit::Millimeters, factor).unwrap();
+        let size: f64 = source_size * factor;
+        for dimension in measurements.dimensions_mm {
+            close(dimension / size, 1.0);
+        }
+        close(measurements.surface_area_mm2 / (6.0 * size.powi(2)), 1.0);
+        close(measurements.volume_mm3.unwrap() / size.powi(3), 1.0);
+    }
+}
+
+#[test]
+fn axis_scaling_keeps_volume_when_large_and_small_factors_cancel() {
+    for (source_size, factors) in [(1e10, [1e280, 1e-280, 1.0]), (1e-10, [1e-280, 1e280, 1.0])] {
+        let triangles = cube()
+            .into_iter()
+            .map(|triangle| triangle.map(|point| point.map(|coordinate| coordinate * source_size)))
+            .collect();
+        let mesh = Mesh::from_triangles(triangles).unwrap();
+        let measurements = mesh.measure_axes(LengthUnit::Millimeters, factors).unwrap();
+        close(measurements.volume_mm3.unwrap() / source_size.powi(3), 1.0);
+        let swapped = mesh
+            .measure_axes(
+                LengthUnit::Millimeters,
+                [factors[1], factors[0], factors[2]],
+            )
+            .unwrap();
+        close(swapped.volume_mm3.unwrap() / source_size.powi(3), 1.0);
+        close(
+            measurements.surface_area_mm2 / swapped.surface_area_mm2,
+            1.0,
+        );
+    }
+}
+
+#[test]
 fn independent_axis_factors_reject_invalid_or_unrepresentable_geometry() {
     let mesh = Mesh::from_triangles(cube()).unwrap();
     for axis in 0..3 {

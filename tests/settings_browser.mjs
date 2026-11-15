@@ -266,6 +266,21 @@ async function backupFiles(page) {
     return files.sort((a, b) => a.name.localeCompare(b.name));
   });
 }
+async function advanceBackupClock(page, milliseconds) {
+  const snapshot = () => page.evaluate(() => ({ date: Date.now(), performance: performance.now(), frames: { ...window.jigTestFrames } }));
+  const before = await snapshot();
+  await page.clock.fastForward(milliseconds);
+  const { width, height } = page.viewportSize();
+  // fastForward fires timers at most once. Let eframe process fresh input and
+  // regular animation frames after the jump before inspecting committed files.
+  await page.mouse.move(width - 12, height - 6); await page.mouse.move(width - 13, height - 6);
+  await page.clock.runFor(100); await paint(page);
+  const after = await snapshot();
+  console.log(`Backup clock advance: ${JSON.stringify({ milliseconds, before, after })}`);
+  assert.ok(after.performance - before.performance >= milliseconds, "The monotonic browser clock must advance by the requested duration");
+  assert.ok(after.frames.input > before.frames.input, "The clock probe must deliver fresh canvas input");
+  assert.ok(after.frames.painted >= after.frames.input, "The app must process and paint the fresh input after the clock jump");
+}
 async function waitFiles(page, count) {
   try {
     // waitForFunction tests a returned Promise's truthiness before it resolves.
@@ -401,12 +416,12 @@ try {
   assert.notEqual(second[0].name, second[1].name); assert.ok(second.every(file => /^jig-backup-.*\.json$/.test(file.name) && JSON.stringify(file.data) === JSON.stringify(first[0].data)));
   await focusSetting(current, 8); await key(current.page, "Space"); await waitSettings(current.page, { auto_backup: true });
   await calculate(current, "6 * 7", 2); const calculated = await state(current.page);
-  await current.page.clock.fastForward(240000); assert.equal((await backupFiles(current.page)).length, 2, "Automatic backup must not run before five minutes");
-  await current.page.clock.fastForward(70000); const automatic = await waitFiles(current.page, 3);
+  await advanceBackupClock(current.page, 240000); assert.equal((await backupFiles(current.page)).length, 2, "Automatic backup must not run before five minutes");
+  await advanceBackupClock(current.page, 70000); const automatic = await waitFiles(current.page, 3);
   const savedCalculation = automatic.find(file => file.data.history?.at(-1)?.expression === "6 * 7");
   assert.ok(savedCalculation, `Automatic backup must contain the saved calculation: ${JSON.stringify({ files: automatic, calculated, current: await state(current.page), settings: await settings(current.page), status: await backupStatus(current.page) })}`);
   assert.deepEqual(savedCalculation.data, calculated, `Automatic backup ${savedCalculation.name} must preserve every saved document field`);
-  await current.page.clock.fastForward(310000); assert.equal((await backupFiles(current.page)).length, 3, "No saved changes means no repeated automatic backups");
+  await advanceBackupClock(current.page, 310000); assert.equal((await backupFiles(current.page)).length, 3, "No saved changes means no repeated automatic backups");
   await boot(current, true);
   const restored = await backupStatus(current.page); assert.equal(restored.folder, "jig-settings-browser"); assert.equal(restored.permission, "granted");
   assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-picker"))), 1, "Reload must restore the handle without opening another chooser");
@@ -416,7 +431,7 @@ try {
   await closeSettings(current); await resetFocus(current.page); await key(current.page, "Control+Alt+2"); await key(current.page, "Control+Alt+d");
   await tab(current.page, 8); await key(current.page, "Space"); await key(current.page, "Control+Alt+d");
   assert.deepEqual(await state(current.page), calculated, "Sample mode must leave committed personal data intact");
-  await current.page.clock.fastForward(310000); assert.equal((await backupFiles(current.page)).length, 3, "Temporary samples must never be written to the folder");
+  await advanceBackupClock(current.page, 310000); assert.equal((await backupFiles(current.page)).length, 3, "Temporary samples must never be written to the folder");
   await openSettings(current); await tab(current.page, 9);
   // With automatic backups already on, the next enabled control after it is
   // Restore. Both sample backup-writing buttons must be skipped by Tab.

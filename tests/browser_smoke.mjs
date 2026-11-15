@@ -527,6 +527,7 @@ try {
   await expectClipChange(weather.page, todayWeather, clip, "Touching the adjacent day must update the same weather strip");
   assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture); await capture(weather.page, "calendar-weather-selected");
   await weather.page.setViewportSize({ width: 390, height: 844 }); await weather.page.waitForTimeout(300);
+  await selectedDay(weather.page); // Shrinking keeps the previously visible selection on screen.
   assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true); await capture(weather.page, "calendar-mobile");
   await release(weather.context, "weather-calendar");
 

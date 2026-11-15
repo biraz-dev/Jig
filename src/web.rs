@@ -1474,7 +1474,8 @@ impl BrowserApp {
             None
         };
         let lists = self.state.task_lists.clone();
-        ui.horizontal(|ui| {
+        let mut reveal_tabs = false;
+        let strip = ui.horizontal(|ui| {
             let controls = if lists.len() > 1 { 148.0 } else { 76.0 };
             let tabs_width = (ui.available_width() - controls).max(24.0);
             ui.allocate_ui_with_layout(
@@ -1509,6 +1510,10 @@ impl BrowserApp {
                                         ui.add_sized([width, 30.0], button)
                                     }).inner;
                                     self.task_list_tab_ids.push((response.id, list.id));
+                                    if response.gained_focus() {
+                                        response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+                                        reveal_tabs = true;
+                                    }
                                     let pointer_tab_click = pointer_clicked
                                         && response.clicked_by(egui::PointerButton::Primary)
                                         && response.interact_pointer_pos().is_some_and(|position| response.rect.contains(position));
@@ -1578,6 +1583,13 @@ impl BrowserApp {
                     .on_hover_text("Tap tabs to combine lists · Shift-click also works");
             }
         });
+        if reveal_tabs {
+            // The inner horizontal area consumes both scroll targets. Reveal
+            // the strip vertically only after that area has finished.
+            strip
+                .response
+                .scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+        }
         if let Some(id) = self.task_list_rename {
             ui.horizontal_wrapped(|ui| {
                 ui.label("List name");
@@ -2380,13 +2392,13 @@ impl BrowserApp {
         let width = ui.available_width();
         let wide = width >= 720.0;
         ui.horizontal(|ui| {
+            if ui.selectable_label(self.data_open, "Data").clicked() {
+                self.data_open = !self.data_open;
+            }
             if wide {
                 self.workspace_buttons(ui);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.selectable_label(self.data_open, "Data").clicked() {
-                    self.data_open = !self.data_open;
-                }
                 if ui
                     .add_enabled(!self.redo_history.is_empty(), egui::Button::new("Redo"))
                     .on_hover_text("Redo the last undone change · Ctrl-Shift-Z")
@@ -4316,6 +4328,10 @@ impl eframe::App for BrowserApp {
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num2)) {
             self.show_tasks(ctx);
         }
+        // Specific shortcuts must run first: egui's Ctrl matching also accepts Alt.
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
+            self.open_local();
+        }
         if self.sheet_workspace || self.tasks_workspace {
             for (key, action) in [
                 (egui::Key::S, SheetAction::SaveOds),
@@ -4341,9 +4357,6 @@ impl eframe::App for BrowserApp {
             && self.dirty
         {
             self.save_current();
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
-            self.open_local();
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
             self.open_calculator(ctx);

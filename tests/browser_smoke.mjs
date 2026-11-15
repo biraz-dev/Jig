@@ -441,13 +441,13 @@ try {
   await personal.page.keyboard.press("Control+Alt+d");
   await paint(personal.page);
   await personal.page.screenshot({ path: resolve(results, "hybrid-conversion-desktop.png") });
-  const fractionalLength = 1.5 * 0.0254 / 0.01;
+  const fractionalLength = 3.81; // 1.5 inches, using the exact 2.54 cm per inch.
   await calculate(personal.page, "1 1/2 in cm");
   await expectCalculation(personal.page, "1 1/2 in cm", fractionalLength, 3, "cm");
   await calculate(personal.page, "1 / 3");
   await expectCalculation(personal.page, "1 / 3", 1 / 3, 4);
   // ans uses the unrounded number even when only two decimals are displayed.
-  const preciseMillimeters = (1 / 3) * 0.0254 / 0.001;
+  const preciseMillimeters = (1 / 3) * 25.4;
   await calculate(personal.page, "ans in mm");
   await expectCalculation(personal.page, "ans in mm", preciseMillimeters, 5, "mm");
   assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Hiding calendar entries must not delete saved notes");

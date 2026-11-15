@@ -1,5 +1,5 @@
 //! A small board of plain-text notes. The application owns every saved record.
-use crate::web_theme::{ACCENT, BG, MUTED, RULE, SURFACE, TEXT};
+use crate::web_theme;
 use eframe::egui::{self, RichText, Sense, Stroke, TextEdit, Ui};
 use jig::model::{note_text, Note, State, MAX_NOTES, MAX_NOTE_BYTES};
 use serde::{Deserialize, Serialize};
@@ -268,6 +268,7 @@ impl NotesPanel {
     /// The parent supplies scrolling, so the same board can appear in Notes
     /// and below the Tasks workspace without creating another set of records.
     pub fn ui(&mut self, ui: &mut Ui, state: &State, active_list: u64) -> Vec<NoteAction> {
+        let colors = web_theme::colors(ui.ctx());
         self.focused = false;
         self.keyboard_ids.clear();
         let reveal = self.reveal.take();
@@ -326,11 +327,11 @@ impl NotesPanel {
             ui.label(
                 RichText::new(format!("{}/{}", state.notes.len(), MAX_NOTES))
                     .small()
-                    .color(MUTED),
+                    .color(colors.muted),
             );
         });
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).small().color(crate::web_theme::ERROR));
+            ui.label(RichText::new(error).small().color(colors.error));
         }
         let mut cards = Vec::new();
         // Override Grid's centered layout per cell so frames share the row's top edge.
@@ -401,7 +402,7 @@ impl NotesPanel {
                     ui.painter().rect_stroke(
                         rect,
                         3.0,
-                        Stroke::new(1.5_f32, ACCENT),
+                        Stroke::new(1.5_f32, colors.accent),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -439,6 +440,7 @@ impl NotesPanel {
         order: &[(u64, bool)],
         actions: &mut Vec<NoteAction>,
     ) -> egui::Rect {
+        let colors = web_theme::colors(ui.ctx());
         let editing = self
             .draft
             .as_ref()
@@ -450,8 +452,8 @@ impl NotesPanel {
             CARD_HEIGHT
         };
         let response = egui::Frame::default()
-            .fill(if note.pinned { egui::Color32::from_rgb(48, 42, 36) } else { SURFACE })
-            .stroke(Stroke::new(1.0_f32, if editing { ACCENT } else { RULE.gamma_multiply(0.6) }))
+            .fill(if note.pinned { colors.pinned } else { colors.surface })
+            .stroke(Stroke::new(1.0_f32, if editing { colors.accent } else { colors.rule.gamma_multiply(0.6) }))
             .inner_margin(egui::Margin::same(6))
             .show(ui, |ui| {
                 ui.allocate_ui_with_layout(
@@ -468,10 +470,10 @@ impl NotesPanel {
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), Sense::hover());
                     let grip = ui.interact(rect, grip_id, if self.has_draft() { Sense::hover() } else { Sense::click_and_drag() })
                         .on_hover_cursor(if self.has_draft() { egui::CursorIcon::Default } else if self.drag.as_ref().is_some_and(|drag| drag.id == note.id) { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
-                    let grip_color = if grip.has_focus() || grip.hovered() { ACCENT } else { MUTED };
+                    let grip_color = if grip.has_focus() || grip.hovered() { colors.accent } else { colors.muted };
                     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "↕", egui::FontId::monospace(14.0), grip_color);
                     if grip.has_focus() {
-                        ui.painter().rect_stroke(rect.shrink(1.0), 1.0, Stroke::new(1.0_f32, ACCENT), egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(rect.shrink(1.0), 1.0, Stroke::new(1.0_f32, colors.accent), egui::StrokeKind::Inside);
                     }
                     grip.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !self.has_draft(), "Reorder note"));
                     self.focused |= grip.has_focus();
@@ -540,8 +542,8 @@ impl NotesPanel {
                             preview.push('…');
                         }
                         let painter = ui.painter().with_clip_rect(body_rect);
-                        let galley = painter.layout(preview, egui::FontId::monospace(12.0), TEXT, body_rect.width());
-                        painter.galley(body_rect.min, galley, TEXT);
+                        let galley = painter.layout(preview, egui::FontId::monospace(12.0), colors.text, body_rect.width());
+                        painter.galley(body_rect.min, galley, colors.text);
                     }
                     // Keep even a very long note inside a fixed card. Opening
                     // the editor exposes all text without enlarging its preview.
@@ -550,7 +552,7 @@ impl NotesPanel {
                     self.focused |= body.has_focus();
                     if body.gained_focus() { body.scroll_to_me(None); }
                     if body.has_focus() {
-                        ui.painter().rect_stroke(body_rect, 1.0, Stroke::new(1.0_f32, ACCENT), egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(body_rect, 1.0, Stroke::new(1.0_f32, colors.accent), egui::StrokeKind::Inside);
                     }
                     if body.clicked() { self.begin_edit(Some(note.id), &note.text); ui.ctx().request_repaint(); }
                     body.on_hover_text("Click to edit · Drag the arrow grip to reorder or move to Tasks");
@@ -568,9 +570,10 @@ impl NotesPanel {
     }
 
     fn editor_card(&mut self, ui: &mut Ui, width: f32, actions: &mut Vec<NoteAction>) {
+        let colors = web_theme::colors(ui.ctx());
         egui::Frame::default()
-            .fill(BG)
-            .stroke(Stroke::new(1.0_f32, ACCENT))
+            .fill(colors.bg)
+            .stroke(Stroke::new(1.0_f32, colors.accent))
             .inner_margin(egui::Margin::same(6))
             .show(ui, |ui| {
                 ui.allocate_ui_with_layout(

@@ -75,7 +75,7 @@ impl BrowserApp {
 
     pub(super) fn settings_button(&mut self, ui: &mut Ui) {
         if ui
-            .selectable_label(self.settings_open, "Settings")
+            .add(egui::Button::new("Settings").selected(self.settings_open))
             .on_hover_text(format!(
                 "Preferences and shortcuts · {}",
                 self.shortcut_label(AppAction::Settings)
@@ -119,6 +119,7 @@ impl BrowserApp {
             Ok(Some(text)) => match AppSettings::from_json(&text) {
                 Ok(settings) => {
                     self.pending_settings = Some(settings);
+                    self.info_page = None;
                     self.settings_open = true;
                     self.settings_panel.open();
                     self.status = "Settings file read locally. Review before applying.".into();

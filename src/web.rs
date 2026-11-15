@@ -1,5 +1,9 @@
 //! egui adapter for the same local utility model used by the CLI and terminal.
-use crate::web_theme::{self, ACCENT, BG, ERROR, MUTED, RULE, SUCCESS, TEXT};
+use crate::web_theme;
+use jig::app_settings::{Action as AppAction, AppSettings};
+
+#[path = "web_settings.rs"]
+mod settings;
 use crate::{
     browser_storage,
     chart_ui::{ChartAction, ChartPanel},
@@ -21,7 +25,6 @@ use jig::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const UNDO_STEPS: usize = 20;
 const UNDO_BYTES: usize = 64 * 1024 * 1024;
 const TASK_SPLIT_WIDTH: f32 = 12.0;
 const DRAFT_BACKUP_BYTES: usize = 128 * 1024;
@@ -118,6 +121,7 @@ enum Confirm {
 enum DeferredView {
     Sheet,
     Calculator,
+    Settings,
     Calendar,
     Tasks,
     Notes,
@@ -149,6 +153,11 @@ struct TaskDropRow {
 pub struct BrowserApp {
     ctx: egui::Context,
     state: State,
+    settings: AppSettings,
+    settings_panel: crate::settings_ui::SettingsPanel,
+    settings_open: bool,
+    pending_settings: Option<AppSettings>,
+    auto_backup_due: Option<f64>,
     weather: WeatherPanel,
     calendar_panel: crate::calendar_ui::CalendarPanel,
     stl: StlPanel,
@@ -229,46 +238,13 @@ pub struct BrowserApp {
 
 impl BrowserApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.visuals = egui::Visuals::dark();
-        style.visuals.panel_fill = BG;
-        style.visuals.window_fill = BG;
-        style.visuals.override_text_color = Some(TEXT);
-        style.visuals.extreme_bg_color = BG;
-        style.visuals.faint_bg_color = web_theme::SURFACE;
-        style.visuals.code_bg_color = web_theme::SURFACE;
-        style.visuals.hyperlink_color = ACCENT;
-        style.visuals.error_fg_color = ERROR;
-        style.visuals.selection.bg_fill = web_theme::SELECTED;
-        style.visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
-        for (widget, fill) in [
-            (
-                &mut style.visuals.widgets.noninteractive,
-                web_theme::SURFACE,
-            ),
-            (&mut style.visuals.widgets.inactive, web_theme::SURFACE),
-            (&mut style.visuals.widgets.hovered, web_theme::HOVER),
-            (&mut style.visuals.widgets.active, web_theme::ACTIVE),
-            (&mut style.visuals.widgets.open, web_theme::ACTIVE),
-        ] {
-            widget.bg_fill = fill;
-            widget.weak_bg_fill = fill;
-            widget.bg_stroke = Stroke::new(1.0_f32, RULE);
-            widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
-        }
-        style.spacing.item_spacing = egui::vec2(8.0, 7.0);
-        style.interaction.selectable_labels = false;
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, FontId::monospace(14.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, FontId::monospace(13.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Monospace, FontId::monospace(14.0));
-        cc.egui_ctx.set_style(style);
+        let loaded_settings = crate::settings_storage::load()
+            .and_then(|text| text.map(|text| AppSettings::from_json(&text)).transpose());
+        let settings_error = loaded_settings.as_ref().err().cloned();
+        let settings = loaded_settings.ok().flatten().unwrap_or_default();
+        web_theme::apply(&cc.egui_ctx, settings.theme);
+        let settings_error = settings_error
+            .or_else(|| crate::settings_storage::configure_shortcuts(&settings).err());
         let mut fonts = egui::FontDefinitions::default();
         for (name, bytes) in [
             ("jig-mono", jig::sheet_fonts::MONO),
@@ -286,6 +262,7 @@ impl BrowserApp {
         // Observe the current saved file even in explicit sample mode, so a
         // later confirmed replacement uses the same stale-tab save guard.
         let loaded = browser_storage::load();
+        let has_saved_personal = matches!(&loaded, Ok(Some(_)));
         let (mut state, demo, status, storage_error) = if browser_storage::sample_requested() {
             (
                 jig::sample::state(Utc::now()),
@@ -332,6 +309,11 @@ impl BrowserApp {
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
             state,
+            settings,
+            settings_panel: crate::settings_ui::SettingsPanel::new(),
+            settings_open: false,
+            pending_settings: None,
+            auto_backup_due: None,
             weather,
             calendar_panel: crate::calendar_ui::CalendarPanel::new(today),
             stl: StlPanel::new(cc),
@@ -411,6 +393,14 @@ impl BrowserApp {
         };
         app.sanitize_task_lists();
         app.restore_working_drafts();
+        if app.settings.auto_backup && has_saved_personal && !app.demo && !app.storage_error {
+            app.auto_backup_due = Some(cc.egui_ctx.input(|input| input.time) + 300.0);
+        }
+        if let Some(error) = settings_error {
+            app.status.push_str(&format!(
+                " Settings could not be loaded; defaults are in use: {error}"
+            ));
+        }
         app
     }
 
@@ -701,6 +691,9 @@ impl BrowserApp {
                     self.storage_error = false;
                     self.status =
                         "Saved in this browser. Export JSON for a portable backup.".into();
+                    if self.settings.auto_backup && self.auto_backup_due.is_none() {
+                        self.auto_backup_due = Some(self.ctx.input(|input| input.time) + 300.0);
+                    }
                 }
                 Err(error) => {
                     self.status = format!(
@@ -719,7 +712,7 @@ impl BrowserApp {
     }
 
     fn trim_history(&mut self) {
-        while self.undo_history.len() + self.redo_history.len() > UNDO_STEPS
+        while self.undo_history.len() + self.redo_history.len() > self.settings.undo_levels
             || self.history_bytes() > UNDO_BYTES
         {
             if self.undo_history.is_empty() && self.redo_history.is_empty() {
@@ -767,6 +760,10 @@ impl BrowserApp {
     }
 
     fn reset_undo(&mut self) {
+        self.settings_panel.cancel_capture();
+        crate::settings_storage::set_capture(false);
+        crate::settings_storage::cancel_pending();
+        self.auto_backup_due = None;
         self.clear_working_drafts();
         self.cancel_document_import();
         self.charts.reset();
@@ -1172,6 +1169,7 @@ impl BrowserApp {
         ctx.memory_mut(|memory| memory.close_popup());
         self.sheet_workspace = false;
         self.tasks_workspace = false;
+        self.close_settings();
         self.notes_workspace = true;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
@@ -1193,6 +1191,7 @@ impl BrowserApp {
             return self.show_tasks(ctx);
         }
         if self.sheet_workspace {
+            self.close_settings();
             return true;
         }
         if self.pending_note_input || self.pending_task_input.is_some() {
@@ -1205,6 +1204,7 @@ impl BrowserApp {
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
         ctx.memory_mut(|memory| memory.close_popup());
+        self.close_settings();
         self.sheet_workspace = true;
         self.tasks_workspace = false;
         self.notes_workspace = false;
@@ -1277,6 +1277,7 @@ impl BrowserApp {
         ctx.memory_mut(|memory| memory.close_popup());
         self.timeline.cancel_gesture();
         self.sheet_workspace = false;
+        self.close_settings();
         self.tasks_workspace = true;
         self.notes_workspace = false;
         self.focus = 1;
@@ -1299,10 +1300,13 @@ impl BrowserApp {
         if ui
             .add(
                 egui::Button::new("Sheet")
-                    .selected(self.sheet_workspace)
+                    .selected(self.sheet_workspace && !self.settings_open)
                     .sense(sense),
             )
-            .on_hover_text("Spreadsheet workspace · Ctrl-Alt-W switches between Sheet and Tasks")
+            .on_hover_text(format!(
+                "Spreadsheet workspace · {} switches Sheet/Tasks",
+                self.shortcut_label(AppAction::ToggleWorkspace)
+            ))
             .clicked()
         {
             self.set_workspace(true, ui.ctx());
@@ -1310,10 +1314,13 @@ impl BrowserApp {
         if ui
             .add(
                 egui::Button::new("Tasks")
-                    .selected(self.tasks_workspace)
+                    .selected(self.tasks_workspace && !self.settings_open)
                     .sense(sense),
             )
-            .on_hover_text("Your existing tasks and Gantt timeline · Ctrl-Alt-2")
+            .on_hover_text(format!(
+                "Your existing tasks and Gantt timeline · {}",
+                self.shortcut_label(AppAction::Tasks)
+            ))
             .clicked()
         {
             self.show_tasks(ui.ctx());
@@ -1321,10 +1328,13 @@ impl BrowserApp {
         if ui
             .add(
                 egui::Button::new("Notes")
-                    .selected(self.notes_workspace)
+                    .selected(self.notes_workspace && !self.settings_open)
                     .sense(sense),
             )
-            .on_hover_text("Plain text notes · Ctrl-Alt-N")
+            .on_hover_text(format!(
+                "Plain text notes · {}",
+                self.shortcut_label(AppAction::Notes)
+            ))
             .clicked()
         {
             self.show_notes(ui.ctx());
@@ -1458,6 +1468,7 @@ impl BrowserApp {
     }
 
     fn task_list_tabs(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         self.sanitize_task_lists();
         self.task_list_tab_ids.clear();
         let (pointer_clicked, click_time) = ui.input(|input| {
@@ -1477,7 +1488,10 @@ impl BrowserApp {
         let mut reveal_tabs = false;
         let strip = ui.horizontal(|ui| {
             let controls = if lists.len() > 1 { 148.0 } else { 76.0 };
-            let tabs_width = (ui.available_width() - controls).max(24.0);
+            let natural_width = lists.iter().map(|list| {
+                (list.name.chars().count() as f32 * 9.0 + 18.0).clamp(64.0, 160.0)
+            }).sum::<f32>() + ui.spacing().item_spacing.x * lists.len().saturating_sub(1) as f32;
+            let tabs_width = natural_width.min((ui.available_width() - controls).max(24.0));
             ui.allocate_ui_with_layout(
                 egui::vec2(tabs_width, 32.0),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -1499,10 +1513,10 @@ impl BrowserApp {
                                     .truncate()
                                     .selected(selected);
                                     if selected && self.selected_task_lists.len() > 1 {
-                                        button = button.fill(web_theme::task_list_fill(index));
+                                        button = button.fill(web_theme::task_list_fill_for(ui.ctx(), index));
                                     }
                                     if active {
-                                        button = button.stroke(Stroke::new(1.0_f32, ACCENT));
+                                        button = button.stroke(Stroke::new(1.0_f32, palette.accent));
                                     }
                                     let width = (list.name.chars().count() as f32 * 9.0 + 18.0)
                                         .clamp(64.0, 160.0);
@@ -1541,8 +1555,9 @@ impl BrowserApp {
                                         self.begin_task_list_rename(list.id, ui.ctx());
                                     }
                                     response.on_hover_text(format!(
-                                        "{} · Click to show · Shift-click to combine · Double-click or F2 to rename{}",
+                                        "{} · Click to show · Shift-click to combine · Double-click or {} to rename{}",
                                         list.name,
+                                        self.shortcut_label(AppAction::RenameTaskList),
                                         if active { " · New tasks go here" } else { "" }
                                     ));
                                 }
@@ -1667,6 +1682,7 @@ impl BrowserApp {
     }
 
     fn tasks_main(&mut self, ui: &mut Ui, height: f32) {
+        let palette = web_theme::colors(ui.ctx());
         // Apply queued note text before allowing an upper control to move focus.
         ui.scope(|ui| {
             if self.pending_note_input {
@@ -1674,6 +1690,7 @@ impl BrowserApp {
             }
             let top = ui.cursor().top();
             self.task_list_tabs(ui);
+            ui.add_space(3.0);
             if let Some(deadline) = self.state.deadlines.iter().find(|deadline| {
                 Some(deadline.id) == self.state.featured
                     && self.state.is_deadline_active(deadline.id)
@@ -1681,7 +1698,7 @@ impl BrowserApp {
                 let seconds = (deadline.at - Utc::now()).num_seconds();
                 let n = seconds.unsigned_abs();
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(&deadline.title).strong().color(TEXT));
+                    ui.label(RichText::new(&deadline.title).strong().color(palette.text));
                     ui.label(
                         RichText::new(format!(
                             "{}{:02}d {:02}h {:02}m {:02}s",
@@ -1693,7 +1710,11 @@ impl BrowserApp {
                         ))
                         .monospace()
                         .size(18.0)
-                        .color(if seconds < 0 { ERROR } else { ACCENT }),
+                        .color(if seconds < 0 {
+                            palette.error
+                        } else {
+                            palette.accent
+                        }),
                     );
                 });
             }
@@ -1803,6 +1824,7 @@ impl BrowserApp {
         tasks: f32,
         tasks_left: bool,
     ) {
+        let palette = web_theme::colors(ui.ctx());
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(TASK_SPLIT_WIDTH, height), egui::Sense::hover());
         let response = ui
@@ -1903,7 +1925,7 @@ impl BrowserApp {
             )
         });
         let active = response.hovered() || response.dragged() || response.has_focus();
-        let color = if active { ACCENT } else { RULE };
+        let color = if active { palette.accent } else { palette.rule };
         let center = rect.center();
         let line_x = center
             .x
@@ -1911,7 +1933,7 @@ impl BrowserApp {
         ui.painter()
             .vline(line_x, rect.y_range(), Stroke::new(1.0_f32, color));
         let grip = egui::Rect::from_center_size(center, egui::vec2(TASK_SPLIT_WIDTH, 22.0));
-        ui.painter().rect_filled(grip, 2.0, web_theme::SURFACE);
+        ui.painter().rect_filled(grip, 2.0, palette.surface);
         for sign in [-1.0, 1.0] {
             ui.painter().add(egui::Shape::line(
                 vec![
@@ -1919,14 +1941,21 @@ impl BrowserApp {
                     center + egui::vec2(sign * 5.0, 0.0),
                     center + egui::vec2(sign * 2.0, 3.0),
                 ],
-                Stroke::new(1.2_f32, if active { ACCENT } else { MUTED }),
+                Stroke::new(
+                    1.2_f32,
+                    if active {
+                        palette.accent
+                    } else {
+                        palette.muted
+                    },
+                ),
             ));
         }
         if response.has_focus() {
             ui.painter().rect_stroke(
                 grip,
                 2.0,
-                Stroke::new(1.0_f32, ACCENT),
+                Stroke::new(1.0_f32, palette.accent),
                 egui::StrokeKind::Inside,
             );
         }
@@ -2191,6 +2220,7 @@ impl BrowserApp {
     }
 
     fn document_import_panel(&mut self, ui: &mut Ui) -> bool {
+        let palette = web_theme::colors(ui.ctx());
         if self.pdf_target.is_none() {
             return false;
         }
@@ -2221,7 +2251,7 @@ impl BrowserApp {
             return self.ocr_running || browser_storage::remaining_pdf() > 0;
         }
         for error in &self.pdf_errors {
-            ui.colored_label(ERROR, format!("File skipped: {error}"));
+            ui.colored_label(palette.error, format!("File skipped: {error}"));
         }
         let action = self.pdf_preview.as_mut().and_then(|preview| preview.ui(ui));
         match action {
@@ -2389,63 +2419,35 @@ impl BrowserApp {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         let width = ui.available_width();
-        let wide = width >= 720.0;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.set_min_height(28.0);
             if ui.selectable_label(self.data_open, "Data").clicked() {
+                self.settings_panel.cancel_capture();
+                crate::settings_storage::set_capture(false);
                 self.data_open = !self.data_open;
             }
-            if wide {
-                self.workspace_buttons(ui);
+            self.workspace_buttons(ui);
+            self.calculator_button(ui);
+            if width >= 360.0 {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.settings_button(ui);
+                    if self.demo && width >= 600.0 {
+                        ui.label(RichText::new("sample").small().color(palette.accent));
+                    }
+                    if width >= 600.0 {
+                        ui.label(
+                            RichText::new(Local::now().format("%a %d %b %Y").to_string())
+                                .size(13.0)
+                                .color(palette.muted),
+                        );
+                    }
+                });
+            } else {
+                self.settings_button(ui);
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(!self.redo_history.is_empty(), egui::Button::new("Redo"))
-                    .on_hover_text("Redo the last undone change · Ctrl-Shift-Z")
-                    .clicked()
-                    && self.flush_sheet_edit()
-                {
-                    self.redo_last(ui.ctx());
-                }
-                if ui
-                    .add_enabled(
-                        !self.undo_history.is_empty()
-                            || self.stl.has_pending_undo()
-                            || (self.sheet_workspace && self.sheet.is_editing())
-                            || self.notes.has_draft(),
-                        egui::Button::new("Undo"),
-                    )
-                    .on_hover_text("Undo the most recent change · Ctrl-Z")
-                    .clicked()
-                    && self.flush_sheet_edit()
-                {
-                    self.undo_last(ui.ctx());
-                }
-                self.calculator_button(ui);
-                if width >= 1000.0 {
-                    ui.label(RichText::new("• local").color(SUCCESS).small());
-                    ui.label(
-                        RichText::new(if self.demo {
-                            "sample data"
-                        } else {
-                            "your data"
-                        })
-                        .color(if self.demo { ACCENT } else { MUTED })
-                        .small(),
-                    );
-                }
-                if width >= 600.0 {
-                    ui.label(
-                        RichText::new(Local::now().format("%a %d %b %Y").to_string())
-                            .size(13.0)
-                            .color(MUTED),
-                    );
-                }
-            });
         });
-        if !wide {
-            ui.horizontal_wrapped(|ui| self.workspace_buttons(ui));
-        }
         if self.data_open {
             ui.separator();
             ui.horizontal_wrapped(|ui| {
@@ -2491,7 +2493,7 @@ impl BrowserApp {
         }
         if let Some(confirm) = self.confirm {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(match confirm { Confirm::Empty => "Replace this browser's saved data with an empty document? Export first if needed.", Confirm::Clear => "Delete this browser's saved Jig data? Export a backup first if needed." }).color(ERROR));
+                ui.label(RichText::new(match confirm { Confirm::Empty => "Replace this browser's saved data with an empty document? Export first if needed.", Confirm::Clear => "Delete this browser's saved Jig data? Export a backup first if needed." }).color(palette.error));
                 if ui.button("Confirm").clicked() {
                     self.confirm = None;
                     match confirm {
@@ -2512,7 +2514,7 @@ impl BrowserApp {
             });
             let summary = format!("Import {sheets} sheets / {cells} cells, {} tasks, {} notes, {} deadlines and {} calculations? This replaces the browser's saved Jig data.", import.tasks.len(), import.notes.len(), import.deadlines.len(), import.history.len());
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(summary).color(ACCENT));
+                ui.label(RichText::new(summary).color(palette.accent));
                 if ui.button("Confirm import").clicked() && self.flush_notes_edit() {
                     if let Some(import) = self.pending_import.take() {
                         self.replace_personal(import);
@@ -2526,9 +2528,14 @@ impl BrowserApp {
     }
 
     fn tool(&mut self, ui: &mut Ui, index: usize, height: f32) {
+        let palette = web_theme::colors(ui.ctx());
         let selected = self.focus == index;
         let frame = egui::Frame::default()
-            .fill(if selected { web_theme::SURFACE } else { BG })
+            .fill(if selected {
+                palette.surface
+            } else {
+                palette.bg
+            })
             .inner_margin(egui::Margin::same(9))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -2586,7 +2593,11 @@ impl BrowserApp {
             self.focus = index;
             ui.ctx().request_repaint();
         }
-        let color = if self.focus == index { ACCENT } else { RULE };
+        let color = if self.focus == index {
+            palette.accent
+        } else {
+            palette.rule
+        };
         if selected != (self.focus == index) {
             ui.ctx().request_repaint();
         }
@@ -2612,6 +2623,7 @@ impl BrowserApp {
         if !self.tasks_workspace && !self.show_tasks(ctx) {
             return;
         }
+        self.close_settings();
         ctx.memory_mut(|memory| {
             memory.close_popup();
             if let Some(id) = memory.focused() {
@@ -2636,6 +2648,7 @@ impl BrowserApp {
     }
 
     fn calculator_button(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         let popup = egui::Id::new("calculator-popup");
         let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 28.0), egui::Sense::click());
         response.widget_info(|| {
@@ -2653,17 +2666,18 @@ impl BrowserApp {
         ui.painter().rect_stroke(
             icon,
             1.0,
-            Stroke::new(1.0_f32, TEXT),
+            Stroke::new(1.0_f32, palette.text),
             egui::StrokeKind::Inside,
         );
         ui.painter().hline(
             (icon.left() + 3.0)..=(icon.right() - 3.0),
             icon.top() + 5.0,
-            Stroke::new(1.0_f32, TEXT),
+            Stroke::new(1.0_f32, palette.text),
         );
         for y in [icon.top() + 10.0, icon.top() + 14.0] {
             for x in [icon.left() + 4.0, icon.right() - 4.0] {
-                ui.painter().circle_filled(egui::pos2(x, y), 1.0, TEXT);
+                ui.painter()
+                    .circle_filled(egui::pos2(x, y), 1.0, palette.text);
             }
         }
         if response.clicked() {
@@ -2673,7 +2687,10 @@ impl BrowserApp {
                 self.open_calculator(ui.ctx());
             }
         }
-        let response = response.on_hover_text("Calculator and unit conversion · Ctrl-Alt-4");
+        let response = response.on_hover_text(format!(
+            "Calculator and unit conversion · {}",
+            self.shortcut_label(AppAction::Calculator)
+        ));
         egui::popup::popup_below_widget(
             ui,
             popup,
@@ -2698,6 +2715,7 @@ impl BrowserApp {
     }
 
     fn calculator_input(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         ui.horizontal(|ui| {
             let id = egui::Id::new("calculator-input");
             if self.focus_calculator {
@@ -2738,7 +2756,7 @@ impl BrowserApp {
                         last.formatted(self.state.preferences.decimals)
                     ))
                     .font(FontId::monospace(28.0))
-                    .color(TEXT),
+                    .color(palette.text),
                 );
                 if ui
                     .small_button("Copy")
@@ -2967,6 +2985,7 @@ impl BrowserApp {
     }
 
     fn task_drop_zone(&mut self, ui: &mut Ui, rect: egui::Rect, rows: &[TaskDropRow]) {
+        let palette = web_theme::colors(ui.ctx());
         if rect.width() < 3.0 || rect.height() < 3.0 {
             return;
         }
@@ -3043,7 +3062,7 @@ impl BrowserApp {
             .unwrap_or(rect.top() + 8.0)
             .clamp(rect.top() + 1.0, rect.bottom() - 1.0);
         let painter = ui.painter().with_clip_rect(rect);
-        painter.hline(rect.x_range(), y, Stroke::new(2.0_f32, ACCENT));
+        painter.hline(rect.x_range(), y, Stroke::new(2.0_f32, palette.accent));
         if note.is_some() {
             let name = self
                 .state
@@ -3052,7 +3071,7 @@ impl BrowserApp {
             painter.rect_stroke(
                 rect,
                 0.0,
-                Stroke::new(1.0_f32, ACCENT),
+                Stroke::new(1.0_f32, palette.accent),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -3060,7 +3079,7 @@ impl BrowserApp {
                 egui::Align2::LEFT_TOP,
                 format!("Add to {name}"),
                 FontId::monospace(11.0),
-                ACCENT,
+                palette.accent,
             );
         }
         ui.ctx().request_repaint();
@@ -3132,6 +3151,7 @@ impl BrowserApp {
     }
 
     fn tasks(&mut self, ui: &mut Ui) -> Vec<TaskDropRow> {
+        let palette = web_theme::colors(ui.ctx());
         let mut targets = Vec::new();
         let mut rows: Vec<_> = self
             .state
@@ -3194,7 +3214,7 @@ impl BrowserApp {
                 .position(|list| list.id == row.list_id)
                 .unwrap_or(0);
             let fill = if combined {
-                web_theme::task_list_fill(list_index)
+                web_theme::task_list_fill_for(ui.ctx(), list_index)
             } else {
                 Color32::TRANSPARENT
             };
@@ -3215,7 +3235,7 @@ impl BrowserApp {
                                         ui.painter().circle_filled(
                                             rect.center() + egui::vec2(x, y),
                                             1.0,
-                                            MUTED,
+                                            palette.muted,
                                         );
                                     }
                                 }
@@ -3229,8 +3249,13 @@ impl BrowserApp {
                                 .add_enabled(
                                     !row.complete,
                                     egui::Button::new(
-                                        RichText::new(if featured { "★" } else { "☆" })
-                                            .color(if featured { ACCENT } else { MUTED }),
+                                        RichText::new(if featured { "★" } else { "☆" }).color(
+                                            if featured {
+                                                palette.accent
+                                            } else {
+                                                palette.muted
+                                            },
+                                        ),
                                     )
                                     .small(),
                                 )
@@ -3299,9 +3324,9 @@ impl BrowserApp {
                                 }
                             }
                             let text = RichText::new(&row.title).color(if row.complete {
-                                MUTED
+                                palette.muted
                             } else {
-                                TEXT
+                                palette.text
                             });
                             ui.label(if row.complete {
                                 text.strikethrough()
@@ -3310,7 +3335,9 @@ impl BrowserApp {
                             });
                             if combined {
                                 if let Some(list) = self.state.task_list(row.list_id) {
-                                    ui.label(RichText::new(&list.name).small().color(MUTED));
+                                    ui.label(
+                                        RichText::new(&list.name).small().color(palette.muted),
+                                    );
                                 }
                             }
                             let date = row
@@ -3496,7 +3523,7 @@ impl BrowserApp {
                     .any(|task| task.id == id && task.details.is_some())
             })
         {
-            ui.label(RichText::new("Details").small().color(MUTED));
+            ui.label(RichText::new("Details").small().color(palette.muted));
             let id = egui::Id::new("task-details-input");
             ui.add(
                 TextEdit::multiline(&mut self.task_details)
@@ -3732,6 +3759,7 @@ impl BrowserApp {
     }
 
     fn task_date_editor(&mut self, ui: &mut Ui, id: u64) {
+        let palette = web_theme::colors(ui.ctx());
         ui.indent(("task-date-editor", id), |ui| {
             if self.focus_task_date {
                 // Opening an editor with Enter/Space must not also submit its
@@ -3743,7 +3771,7 @@ impl BrowserApp {
             }
             let owner = if self.task_date_timeline { 2 } else { 1 };
             let field = egui::Id::new(("task-date-input", id));
-            ui.label(RichText::new("Due").color(MUTED).size(11.0));
+            ui.label(RichText::new("Due").color(palette.muted).size(11.0));
             if self.focus_task_date {
                 ui.memory_mut(|memory| memory.request_focus(field));
             }
@@ -3793,7 +3821,11 @@ impl BrowserApp {
             }
             let mut enter = response.has_focus()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            ui.label(RichText::new("Start · optional").color(MUTED).size(11.0));
+            ui.label(
+                RichText::new("Start · optional")
+                    .color(palette.muted)
+                    .size(11.0),
+            );
             let start_field = egui::Id::new(("task-start-input", id));
             let existing_start = self
                 .state
@@ -3880,17 +3912,18 @@ impl BrowserApp {
                 }
             });
             if let Some(error) = &self.task_date_error {
-                ui.label(RichText::new(error).color(ERROR).size(11.0));
+                ui.label(RichText::new(error).color(palette.error).size(11.0));
             }
         });
     }
 
     fn deadlines(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         let featured = self.state.deadlines.iter().find(|deadline| {
             Some(deadline.id) == self.state.featured && self.state.is_deadline_active(deadline.id)
         });
         let Some(deadline) = featured else {
-            ui.label(RichText::new("No starred deadline").color(MUTED));
+            ui.label(RichText::new("No starred deadline").color(palette.muted));
             return;
         };
         let title = deadline.title.clone();
@@ -3905,10 +3938,15 @@ impl BrowserApp {
         let wide = ui.available_width() >= 700.0;
         let title_width = (ui.available_width() * 0.34).min(400.0);
         let draw_title = |ui: &mut Ui| {
-            ui.label(RichText::new(&title).color(TEXT).strong().size(18.0));
-            ui.label(RichText::new(&date).color(MUTED));
+            ui.label(
+                RichText::new(&title)
+                    .color(palette.text)
+                    .strong()
+                    .size(18.0),
+            );
+            ui.label(RichText::new(&date).color(palette.muted));
             if seconds < 0 {
-                ui.label(RichText::new("OVERDUE").color(ERROR));
+                ui.label(RichText::new("OVERDUE").color(palette.error));
             }
         };
         let draw_countdown = |ui: &mut Ui| {
@@ -3919,12 +3957,12 @@ impl BrowserApp {
                         ui.label(
                             RichText::new(format!("{:02}", values[index]))
                                 .font(FontId::new(size, FontFamily::Monospace))
-                                .color(TEXT),
+                                .color(palette.text),
                         );
                         ui.label(
                             RichText::new(["DAYS", "HOURS", "MINUTES", "SECONDS"][index])
                                 .small()
-                                .color(ACCENT),
+                                .color(palette.accent),
                         );
                     });
                 }
@@ -4121,6 +4159,7 @@ impl BrowserApp {
     }
 
     fn calendar_days(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         let picking = self
             .calendar_task_date_target
             .filter(|_| self.task_date_edit.is_some() || self.task_date_legacy.is_some());
@@ -4132,7 +4171,7 @@ impl BrowserApp {
                         TaskDateField::Due => "Click a day to set the due date",
                     })
                     .small()
-                    .color(ACCENT),
+                    .color(palette.accent),
                 );
                 if ui.small_button("Done picking").clicked() {
                     self.calendar_task_date_target = None;
@@ -4163,6 +4202,7 @@ impl BrowserApp {
     }
 
     fn calendar_tasks(&mut self, ui: &mut Ui) {
+        let palette = web_theme::colors(ui.ctx());
         let tasks: Vec<_> = self
             .state
             .tasks_on_date(self.selected_date, &Local)
@@ -4172,19 +4212,23 @@ impl BrowserApp {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(self.selected_date.format("%a %d %b").to_string())
-                    .color(MUTED)
+                    .color(palette.muted)
                     .size(12.0),
             );
             if !tasks.is_empty() {
                 ui.label(
                     RichText::new(format!("{} due", tasks.len()))
-                        .color(MUTED)
+                        .color(palette.muted)
                         .size(12.0),
                 );
             }
         });
         if tasks.is_empty() {
-            ui.label(RichText::new("No tasks due").color(MUTED).size(12.0));
+            ui.label(
+                RichText::new("No tasks due")
+                    .color(palette.muted)
+                    .size(12.0),
+            );
             return;
         }
         egui::ScrollArea::vertical()
@@ -4200,11 +4244,15 @@ impl BrowserApp {
                             task_mark(ui, rect.center(), task.color, task.complete, 3.0);
                             ui.label(
                                 RichText::new(if task.complete { "Done" } else { "Open" })
-                                    .color(MUTED)
+                                    .color(palette.muted)
                                     .size(11.0),
                             );
                             let text = RichText::new(task.title)
-                                .color(if task.complete { MUTED } else { TEXT })
+                                .color(if task.complete {
+                                    palette.muted
+                                } else {
+                                    palette.text
+                                })
                                 .size(12.0);
                             ui.add(
                                 egui::Label::new(if task.complete {
@@ -4237,7 +4285,7 @@ impl BrowserApp {
                             ui.painter().hline(
                                 response.rect.x_range(),
                                 response.rect.bottom(),
-                                Stroke::new(0.5_f32, MUTED),
+                                Stroke::new(0.5_f32, palette.muted),
                             );
                         }
                     });
@@ -4268,6 +4316,9 @@ impl eframe::App for BrowserApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        web_theme::apply(ctx, self.settings.theme);
+        let palette = web_theme::colors(ctx);
+        self.process_settings_events();
         if self.ordered_input.has_pending() {
             ctx.request_repaint();
         }
@@ -4294,9 +4345,6 @@ impl eframe::App for BrowserApp {
         self.pending_note_input =
             self.notes.has_draft() && self.notes.owns_keyboard(ctx) && text_input;
         self.sanitize_task_lists();
-        if !ctx.style().visuals.dark_mode {
-            ctx.set_theme(egui::ThemePreference::Dark);
-        }
         ctx.request_repaint_after(Duration::from_secs(1));
         self.process_document_events();
         self.weather.update();
@@ -4317,169 +4365,142 @@ impl eframe::App for BrowserApp {
                 self.status = format!("Import rejected; existing data is unchanged: {error}")
             }
         }
-        let shortcut = egui::Modifiers {
-            ctrl: true,
-            alt: true,
-            ..Default::default()
-        };
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::W)) {
-            self.set_workspace(!self.sheet_workspace, ctx);
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num2)) {
-            self.show_tasks(ctx);
-        }
-        // Specific shortcuts must run first: egui's Ctrl matching also accepts Alt.
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
-            self.open_local();
-        }
-        if self.sheet_workspace || self.tasks_workspace {
-            for (key, action) in [
-                (egui::Key::S, SheetAction::SaveOds),
-                (egui::Key::O, SheetAction::OpenOds),
-                (
-                    egui::Key::P,
-                    SheetAction::ExportPdf(self.sheet.active_sheet()),
-                ),
-            ] {
-                if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, key))
-                    && self.flush_sheet_edit()
-                {
-                    self.apply_sheet_action(action);
+        let settings_capture = self.settings_open && self.settings_panel.owns_keyboard();
+        crate::settings_storage::set_capture(settings_capture);
+        if !self.settings_open && !settings_capture {
+            self.navigation_shortcuts(ctx);
+            if self.sheet_workspace || self.tasks_workspace {
+                for (key, action) in [
+                    (jig::app_settings::ShortcutKey::S, SheetAction::SaveOds),
+                    (jig::app_settings::ShortcutKey::O, SheetAction::OpenOds),
+                    (
+                        jig::app_settings::ShortcutKey::P,
+                        SheetAction::ExportPdf(self.sheet.active_sheet()),
+                    ),
+                ] {
+                    if Self::consume_chord(ctx, jig::app_settings::Chord::ctrl(key))
+                        && self.flush_sheet_edit()
+                    {
+                        self.apply_sheet_action(action);
+                    }
                 }
             }
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::N)) {
-            self.show_notes(ctx);
-        }
-        if self.notes_workspace
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::S))
-            && self.flush_notes_edit()
-            && self.dirty
-        {
-            self.save_current();
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
-            self.open_calculator(ctx);
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T)) {
-            self.toggle_calendar(ctx);
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::D)) {
-            self.data_open = !self.data_open;
-            ctx.request_repaint();
-        }
-        if !self.sheet_workspace
-            && !self.notes_workspace
-            && !self.notes.owns_keyboard(ctx)
-            && !ctx.memory(|memory| memory.any_popup_open())
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M))
-        {
-            self.cancel_task_note_drag(ctx);
-            self.timeline.cancel_gesture();
-            self.expanded = !self.expanded;
-            self.focus_after_resize(ctx);
-            ctx.request_repaint();
-        }
-        if !self.sheet_workspace
-            && !self.notes_workspace
-            && !self.notes.owns_keyboard(ctx)
-            && !ctx.memory(|memory| memory.any_popup_open())
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
-        {
-            self.cancel_task_note_drag(ctx);
-            let focused = ctx.memory(|memory| memory.focused());
-            if let Some((_, list)) = self
-                .task_list_tab_ids
-                .iter()
-                .find(|(id, _)| Some(*id) == focused)
+            if self.notes_workspace
+                && Self::consume_chord(
+                    ctx,
+                    jig::app_settings::Chord::ctrl(jig::app_settings::ShortcutKey::S),
+                )
+                && self.flush_notes_edit()
+                && self.dirty
             {
-                self.begin_task_list_rename(*list, ctx);
-            } else {
+                self.save_current();
+            }
+            if !self.sheet_workspace
+                && !self.notes_workspace
+                && !self.notes.owns_keyboard(ctx)
+                && !ctx.memory(|memory| memory.any_popup_open())
+                && self.consume_shortcut(ctx, AppAction::Maximize)
+            {
+                self.cancel_task_note_drag(ctx);
                 self.timeline.cancel_gesture();
                 self.expanded = !self.expanded;
                 self.focus_after_resize(ctx);
+                ctx.request_repaint();
             }
-        }
-        if self.sheet_workspace && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.confirm = None;
-        }
-        if !self.sheet_workspace
-            && !self.notes_workspace
-            && !self.notes.owns_keyboard(ctx)
-            && !ctx.memory(|memory| memory.any_popup_open())
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            let list_editor =
-                self.task_list_rename.take().is_some() || self.task_list_remove.take().is_some();
-            if !list_editor && !self.timeline.cancel_gesture() {
-                self.expanded = false;
-            }
-            self.confirm = None;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            self.task_color_edit = None;
-            self.calendar_task_date_target = None;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
-        }
-        let editing_text = ctx
-            .memory(|memory| memory.focused())
-            .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
-        if !editing_text {
-            // Match Redo first, before the less-specific Undo shortcut.
-            let redo = egui::Modifiers {
-                ctrl: true,
-                shift: true,
-                ..Default::default()
-            };
-            let no_popup = !ctx.memory(|memory| memory.any_popup_open());
-            if no_popup && ctx.input_mut(|input| input.consume_key(redo, egui::Key::Z)) {
-                self.redo_last(ctx);
-            } else if no_popup
-                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z))
+            if !self.sheet_workspace
+                && !self.notes_workspace
+                && !self.notes.owns_keyboard(ctx)
+                && !ctx.memory(|memory| memory.any_popup_open())
+                && self.consume_shortcut(ctx, AppAction::RenameTaskList)
             {
-                self.undo_last(ctx);
-            }
-            let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()))
-                || self.timeline.owns_keyboard(ctx)
-                || self.calendar_panel.owns_keyboard(ctx)
-                || ctx.memory(|memory| memory.any_popup_open())
-                || self.notes.owns_keyboard(ctx);
-            let previous = !self.sheet_workspace
-                && !self.notes_workspace
-                && !divider_focused
-                && ctx.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
-                        || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-                });
-            let next = !self.sheet_workspace
-                && !self.notes_workspace
-                && !divider_focused
-                && ctx.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
-                        || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                });
-            if previous || next {
                 self.cancel_task_note_drag(ctx);
-                let order: &[usize] = &[1, 2];
-                let current = order
+                let focused = ctx.memory(|memory| memory.focused());
+                if let Some((_, list)) = self
+                    .task_list_tab_ids
                     .iter()
-                    .position(|index| *index == self.focus)
-                    .unwrap_or(0);
-                self.focus =
-                    order[(current + if previous { order.len() - 1 } else { 1 }) % order.len()];
+                    .find(|(id, _)| Some(*id) == focused)
+                {
+                    self.begin_task_list_rename(*list, ctx);
+                } else {
+                    self.timeline.cancel_gesture();
+                    self.expanded = !self.expanded;
+                    self.focus_after_resize(ctx);
+                }
+            }
+            if self.sheet_workspace && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+                self.confirm = None;
+            }
+            if !self.sheet_workspace
+                && !self.notes_workspace
+                && !self.notes.owns_keyboard(ctx)
+                && !ctx.memory(|memory| memory.any_popup_open())
+                && ctx
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                let list_editor = self.task_list_rename.take().is_some()
+                    || self.task_list_remove.take().is_some();
+                if !list_editor && !self.timeline.cancel_gesture() {
+                    self.expanded = false;
+                }
+                self.confirm = None;
                 self.focus_calculator = false;
                 self.focus_task_date = false;
-                self.scroll_selected = true;
+                self.task_color_edit = None;
+                self.calendar_task_date_target = None;
                 ctx.memory_mut(|memory| {
                     if let Some(id) = memory.focused() {
                         memory.surrender_focus(id);
                     }
                 });
-                ctx.request_repaint();
+            }
+            let editing_text = ctx
+                .memory(|memory| memory.focused())
+                .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
+            if !editing_text {
+                let no_popup = !ctx.memory(|memory| memory.any_popup_open());
+                if no_popup && self.consume_shortcut(ctx, AppAction::Redo) {
+                    self.redo_last(ctx);
+                } else if no_popup && self.consume_shortcut(ctx, AppAction::Undo) {
+                    self.undo_last(ctx);
+                }
+                let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()))
+                    || self.timeline.owns_keyboard(ctx)
+                    || self.calendar_panel.owns_keyboard(ctx)
+                    || ctx.memory(|memory| memory.any_popup_open())
+                    || self.notes.owns_keyboard(ctx);
+                let previous = !self.sheet_workspace
+                    && !self.notes_workspace
+                    && !divider_focused
+                    && ctx.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                            || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                    });
+                let next = !self.sheet_workspace
+                    && !self.notes_workspace
+                    && !divider_focused
+                    && ctx.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                            || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                    });
+                if previous || next {
+                    self.cancel_task_note_drag(ctx);
+                    let order: &[usize] = &[1, 2];
+                    let current = order
+                        .iter()
+                        .position(|index| *index == self.focus)
+                        .unwrap_or(0);
+                    self.focus =
+                        order[(current + if previous { order.len() - 1 } else { 1 }) % order.len()];
+                    self.focus_calculator = false;
+                    self.focus_task_date = false;
+                    self.scroll_selected = true;
+                    ctx.memory_mut(|memory| {
+                        if let Some(id) = memory.focused() {
+                            memory.surrender_focus(id);
+                        }
+                    });
+                    ctx.request_repaint();
+                }
             }
         }
         // Static label selection runs after app UI and can overwrite a cell's
@@ -4495,14 +4516,16 @@ impl eframe::App for BrowserApp {
         {
             self.last_task_list_click = None;
         }
+        let settings_was_open = self.settings_open;
+        let popup_was_open = ctx.memory(|memory| memory.any_popup_open());
         egui::TopBottomPanel::top("jig-header").show(ctx, |ui| self.toolbar(ui));
         egui::TopBottomPanel::bottom("jig-status").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(&self.status).size(11.0).color(
                     if self.storage_error || self.dirty {
-                        ERROR
+                        palette.error
                     } else {
-                        MUTED
+                        palette.muted
                     },
                 ));
                 ui.hyperlink_to("Source", "https://github.com/biraz-dev/Jig");
@@ -4510,23 +4533,38 @@ impl eframe::App for BrowserApp {
                     ui.label(
                         RichText::new(format!("Draft backup: {error}"))
                             .small()
-                            .color(ERROR),
+                            .color(palette.error),
                     );
                 }
                 ui.label(
-                    RichText::new(if self.sheet_workspace {
-                        "Arrows cells | Enter edit | Ctrl+G go to | Ctrl+Alt+W tasks"
+                    RichText::new(if self.settings_open {
+                        "Preferences save in this browser · Esc return".to_owned()
+                    } else if self.sheet_workspace {
+                        format!(
+                            "Arrows cells | Enter edit | Ctrl+G go to | {} tasks",
+                            self.shortcut_label(AppAction::ToggleWorkspace)
+                        )
                     } else if self.notes_workspace {
-                        "Ctrl+Enter save note | Esc cancel | Ctrl+Alt+2 tasks"
+                        format!(
+                            "Ctrl+Enter save note | Esc cancel | {} tasks",
+                            self.shortcut_label(AppAction::Tasks)
+                        )
                     } else {
-                        "Arrows select | Ctrl+M maximize | Esc return"
+                        format!(
+                            "Arrows select | {} maximize | Esc return",
+                            self.shortcut_label(AppAction::Maximize)
+                        )
                     })
                     .size(11.0)
-                    .color(MUTED),
+                    .color(palette.muted),
                 );
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.settings_open {
+                self.settings_workspace(ui);
+                return;
+            }
             if self.sheet_workspace {
                 self.spreadsheet(ui);
                 return;
@@ -4548,6 +4586,24 @@ impl eframe::App for BrowserApp {
                     self.drag_auto_scroll(ui);
                 });
         });
+        // Let Settings consume a newly captured chord before global commands.
+        if !self.settings_panel.owns_keyboard() {
+            if self.consume_shortcut(ctx, AppAction::Settings) {
+                self.toggle_settings(ctx);
+            }
+            if settings_was_open && self.settings_open {
+                if !popup_was_open
+                    && !ctx.memory(|memory| memory.any_popup_open())
+                    && ctx.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    })
+                {
+                    self.close_settings();
+                } else {
+                    self.navigation_shortcuts(ctx);
+                }
+            }
+        }
         if self.collect_viewer_undo() {
             ctx.request_repaint();
         }
@@ -4566,6 +4622,8 @@ impl eframe::App for BrowserApp {
                 }
                 DeferredView::Calendar => self.toggle_calendar(ctx),
                 DeferredView::Calculator => {
+                    self.settings_panel.cancel_capture();
+                    crate::settings_storage::set_capture(false);
                     if self.pending_task_input.is_some() || self.pending_note_input {
                         self.open_calculator(ctx);
                     } else {
@@ -4574,6 +4632,21 @@ impl eframe::App for BrowserApp {
                         });
                         self.focus_calculator = true;
                         ctx.request_repaint();
+                    }
+                }
+                DeferredView::Settings => {
+                    if self.pending_task_input.is_some() || self.pending_note_input {
+                        self.toggle_settings(ctx);
+                    } else if self.flush_sheet_edit() {
+                        self.cancel_task_note_drag(ctx);
+                        self.timeline.cancel_gesture();
+                        ctx.memory_mut(|memory| memory.close_popup());
+                        if self.settings_open {
+                            self.close_settings();
+                        } else {
+                            self.settings_open = true;
+                            self.settings_panel.open();
+                        }
                     }
                 }
                 DeferredView::Tasks => {
@@ -4585,6 +4658,7 @@ impl eframe::App for BrowserApp {
             }
             ctx.request_repaint();
         }
+        self.run_automatic_backup(ctx);
         let task_draft = self.backup_working_drafts();
         browser_storage::set_unsaved(
             self.dirty

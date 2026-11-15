@@ -328,14 +328,6 @@ impl StlPanel {
         std::mem::take(&mut self.undo_records)
     }
 
-    pub fn has_pending_undo(&self) -> bool {
-        !self.undo_records.is_empty()
-            || self
-                .pending_gesture
-                .as_ref()
-                .is_some_and(|pending| self.differs(&pending.before))
-    }
-
     /// Finish a drag/edit before the dashboard records another applet's action
     /// or handles Undo. Restoring a snapshot itself never emits an action.
     pub fn finish_undo_gesture(&mut self) {

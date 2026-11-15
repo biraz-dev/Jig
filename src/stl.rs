@@ -257,7 +257,9 @@ impl Mesh {
         }
         let uniform = factors[0] == factors[1] && factors[1] == factors[2];
         let surface_area_mm2 = if uniform {
-            self.metrics.surface_area * factors[0].powi(2)
+            // Scale the measurement directly: an intermediate squared/cubed
+            // factor can overflow or underflow even when the result is finite.
+            self.metrics.surface_area * factors[0] * factors[0]
         } else {
             let mut area = Sum::default();
             for triangle in &self.triangles {
@@ -272,14 +274,24 @@ impl Mesh {
             area.value
         };
         let volume_mm3 = self.metrics.volume.map(|value| {
-            if uniform {
-                value * factors[0].powi(3)
-            } else {
-                value * factors[0] * factors[1] * factors[2]
+            // Apply small factors to a large volume and large factors to a
+            // small volume, avoiding intermediate overflow or underflow.
+            let mut sorted = factors;
+            sorted.sort_by(f64::total_cmp);
+            let mut remaining = sorted.into_iter();
+            let mut volume = value;
+            loop {
+                let factor = if volume >= 1.0 {
+                    remaining.next()
+                } else {
+                    remaining.next_back()
+                };
+                let Some(factor) = factor else { break };
+                volume *= factor;
             }
+            volume
         });
-        if dimensions_mm.iter().any(|value| !value.is_finite())
-            || !surface_area_mm2.is_finite()
+        if !surface_area_mm2.is_finite()
             || volume_mm3.is_some_and(|value| !value.is_finite())
             || self
                 .bounds

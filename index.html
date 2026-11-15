@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Jig: local tasks, notes, Gantt planning and an artist's workbench. Private documents, no account or backend.">
+  <meta name="description" content="Jig: local tasks, notes, planning, spreadsheets and a calculator. Private documents, no account or backend.">
   <meta name="referrer" content="no-referrer">
-  <title>Jig — You are a small Small Giant Psionicist.</title>
+  <title>Jig</title>
   <link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg">
   <link data-trunk rel="copy-file" href="web/favicon.svg">
   <link data-trunk rel="rust" data-bin="jig-web" data-cargo-no-default-features data-cargo-features="web">
@@ -26,13 +26,12 @@
 </head>
 <body>
   <main id="loading" role="status">
-    <h1>JIG <span>You are a small Small Giant Psionicist.</span></h1>
     <p>Local tasks, notes and planning</p>
     <p id="load-message">Starting Jig…</p>
     <p>Everything runs in this browser. No account, backend or telemetry.</p>
     <p><a href="https://github.com/biraz-dev/Jig">Source and build instructions</a></p>
   </main>
-  <canvas id="jig_canvas" aria-label="Jig interactive local artist workbench"></canvas>
+  <canvas id="jig_canvas" aria-label="Jig local tasks, notes and spreadsheets"></canvas>
   <input id="jig-import" type="file" accept=".json,application/json" hidden aria-label="Import Jig JSON state">
   <input id="jig-csv-import" type="file" accept=".csv,text/csv,text/plain" hidden aria-label="Import CSV at the selected cell">
   <input id="jig-ods-import" type="file" accept=".ods,application/vnd.oasis.opendocument.spreadsheet" hidden aria-label="Open an OpenDocument spreadsheet">

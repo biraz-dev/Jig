@@ -1,8 +1,10 @@
 # Browser development preview
 
 The egui/eframe browser application opens Tasks by default and remembers the
-selected workspace. The top bar switches between Tasks, Notes, Sheet and
-Workbench. Sheet retains its named tabs, formulas, formatting and charts.
+selected workspace. The top bar switches between Tasks, Notes and Sheet;
+calculator, Undo, Redo and Data controls sit on the right. The title and tagline
+no longer occupy header space. Sheet retains its named tabs, formulas,
+formatting and charts. An older saved Workbench preference opens Tasks.
 Tasks and task Gantt charts read the same records;
 they are never copied into a second task store. ODS is the portable document,
 CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
@@ -10,8 +12,7 @@ CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 
 The warm Graphite palette uses charcoal surfaces, soft warm white text and a
 blood-orange red focus color. Shared RGB constants keep browser and terminal
-chrome consistent, including the 3D viewport and loading screen. Task and chart
-category colors, explicit cell formatting and light document exports retain
+chrome consistent, including the loading screen. Task and chart category colors, explicit cell formatting and light document exports retain
 their own colors. The matching SVG favicon has an opaque charcoal interior.
 
 Sheet formatting includes left, center and right alignment, an Auto reset,
@@ -25,58 +26,26 @@ grid with solid affected edges and dashed guides. Each control keeps a named
 tooltip, focus feedback and keyboard activation; no icon font is required.
 
 Spreadsheet `CONVERT(value,"cm","in")` uses the same Rust length scales as the
-Workbench. Square and cubic units support area and volume calculations, with
-cell references and full calculation precision. See the
+calculator popover and CLI. Square and cubic units support area and volume
+calculations, with cell references and full calculation precision. See the
 [conversion examples](../README.md#conversion-formulas) for measurements and
 cost formulas. Invalid units and mixed dimensions remain visible errors.
 
-The Workbench dashboard uses the same Rust calculator, length,
-task, deadline and calendar modules as the CLI and Ratatui dashboard. It follows
-the approved dark terminal aesthetic with a compact featured countdown, one
-checklist of tasks with optional dates, a small month grid and a shared math
-strip. Applets stack and scroll on narrow screens, and one can be maximized.
-Calculator and length conversion share one input, result display and history.
-Forms and Data controls stay inline. There is no
-application backend, account or telemetry. Optional weather uses Open-Meteo;
-only the chosen location and weather query are sent, never workbench records.
+The Tasks board uses the same Rust task, deadline and calendar records as the
+CLI and Ratatui dashboard. Its checklist and Gantt share a resizable panel, with
+notes below and a compact featured countdown above. The separate Workbench tab
+is removed. A calculator icon beside Undo opens the shared arithmetic/conversion
+input, result, precision control and history without leaving the workspace.
+Click outside or press Esc to close the popover. There is no application backend,
+account or telemetry. Optional weather uses Open-Meteo; only the chosen location
+and weather query are sent, never task, note or document contents.
 
-The STL applet adds a local 3D instrument beside math on larger screens and below
-it on smaller screens. **Ctrl-Alt-5** selects it and focuses Open STL; the existing highlight, arrow
-navigation and Ctrl-M maximize behavior apply. Its GPU renderer uses an offscreen
-WebGL 2 color/depth framebuffer, then composites into the applet's clipped egui
-rectangle. A corner X/Y/Z gnomon tracks orientation. Camera zoom is separate from
-physical scale, and the viewer does not animate while idle. Its depth-buffered
-texture is reused until the model, camera or viewport size changes.
-The gnomon supports axis-aligned snaps. A 45° perspective mode shares the same
-Z-up camera basis as orthographic rendering. The Human scale overlay uses a
-fixed 1752.6 mm silhouette and a common XZ baseline; it never enters the mesh or
-exported STL. Camera and comparison settings are session-only and undoable.
-The optional **Grey matcap** viewport control (Ctrl-Alt-G) samples a procedural
-grey studio sphere using view-space normals. It needs no texture download or new
-dependency. Its broad lighting stays relative to the camera, with restrained
-highlights for surface inspection. Appearance participates in the scene's Undo
-and renderer cache, while physical measurements and STL exports stay unchanged.
-
-`src/stl.rs` parses bounded binary/ASCII STL and computes bounds, area, topology
-diagnostics and conditional volume without terminal, DOM or GPU dependencies.
-`src/stl_ui.rs` handles the browser camera, renderer and measurement controls;
-`web/stl.js` reads chosen files into memory and prepares local downloads. STL
-bytes and filenames never enter browser storage, workbench JSON or a network
-request. A bad replacement file preserves the current model. The CLI's `stl`
-command uses the same geometry and scale calculations.
-Uniform and per-axis scale use the same core transformations for measurements
-and exported vertices. Nonuniform area is summed from transformed triangles;
-the viewer caches measurements across camera-only changes. Exported f32 vertex
-bounds are checked against the requested dimensions. Output units default to mm
-and are explicit because STL has no standard unit metadata.
-
-`src/clay.rs` contains the two exact published Standard #104 cone points and
-validates user test profiles. Optional `Preferences.clay` stores only profile
-selection and custom values in existing version-1 JSON. The manufacturer's
-starting stage is unspecified and remains labelled as such. The estimate applies
-uniform linear scaling; it does not model a kiln or interpolate cones. See the
-README for the source, formulas and mesh-validity limits. No dependencies were
-added for this applet.
+The browser STL interface and its entry shortcuts are hidden for now. The Rust
+geometry, scale, camera and clay-estimate modules remain, along with the native
+`jig stl` command and its tests. Existing saved clay preferences are preserved;
+this UI change does not delete or move data to another application. See the
+[CLI geometry notes](../README.md#stl-and-clay-calculations) for measurement and
+shrinkage limits.
 
 A single crate remains sufficient. Default Cargo features build the native
 `jig` binary. The `web` feature builds `jig-web`; terminal dependencies are
@@ -121,7 +90,8 @@ are temporary and never write the saved personal dataset.
 Open **Data** (or Ctrl-Alt-D) for the dataset controls. **Start empty** asks before
 creating or replacing personal data. **Open local
 data** returns to the saved personal dataset; **Sample mode** returns to a new
-temporary demo. The header always distinguishes samples from **your local data**.
+temporary demo. The wide header distinguishes samples from **your local data**;
+the status message also identifies temporary sample mode.
 Successful personal edits save to localStorage key `jig.personal.v1` in this
 browser profile and origin. Another computer, browser or profile has independent
 storage.
@@ -156,8 +126,8 @@ backup service.
 
 ## Browser controls
 
-The wide Tasks workspace and Workbench timeline have a draggable separator
-between the task list and timeline. It has a horizontal resize cursor and grip,
+The wide Tasks workspace has a draggable separator between the task list and
+timeline. It has a horizontal resize cursor and grip,
 keyboard Left/Right adjustment (Shift for larger steps), and double-click reset.
 Resizing commits one preference change at the end of the drag; it does not write
 or add Undo entries for each mouse movement. The optional task-panel percentage
@@ -165,32 +135,45 @@ is saved in the existing preferences, including JSON and Jig ODS backups. Older
 documents omit it and use the original layout. Panel minimum widths adapt to the
 available space, and the narrow stacked layout preserves the preferred split.
 
-Click an applet to highlight it. Outside text editors, the arrow keys move the
-highlight between applets. Ctrl-M maximizes or restores the selection; Esc leaves
-an editor and returns to the dashboard. Ctrl-Alt-4 focuses math input, and
-Ctrl-Alt-N opens Notes. Tab/Shift-Tab navigate controls;
-normal mouse and text editing work. Type `125 * 1.15` for arithmetic or
-`72 in mm` for a length conversion. History results can be clicked to reuse their
-full precision, including the source unit of a converted result. Task arrows
-reorder the checklist. Sort orders the selected lists by earliest due date, keeps
-undated tasks in their current order beneath dated tasks, and moves completed
-tasks to the bottom. Equal due dates retain their order. The Gantt follows the
-same saved order; one Undo restores it. Sorting is explicit, so manual ordering
-still works afterward. Tasks may have a due date; a star chooses the featured
-countdown and reveals its date in the calendar. Starring an undated task opens
-its date editor first. Completing a task clears its star and subdues its calendar mark;
-removing a task also removes its linked date. Existing standalone deadlines
-appear in the same list without a migration or save merely to display them.
+Click the task or calendar/timeline panel to highlight it. Outside text
+editors, arrows move between panels. Ctrl-M maximizes or restores the selected
+panel. Tab/Shift-Tab navigate controls; mouse and touch operate the same controls.
+Ctrl-Alt-2 opens Tasks, Ctrl-Alt-N opens Notes and Ctrl-Alt-W switches Sheet/Tasks.
+Ctrl-Alt-D opens Data controls. Popup controls own their arrows and Escape.
 
-The compact calendar contains day numbers with today and small marks on due
-dates only. Dated checklist tasks have an inline color selector with five muted,
-named choices (Rose, Amber, Sage, Blue and Lilac) plus neutral. Multiple same-day
-tasks have separate marks; a count indicates overflow. Completed marks are
-subdued and hollow. Selecting a day by pointer, touch or Tab then Enter/Space
-shows its task names and explicit Open/Done status in a compact scrolling list
-within the calendar panel, alongside the existing selected-day weather. This
-never changes the starred task or featured countdown. Date, color and completion
-changes are reflected from the shared task/deadline links immediately.
+The calculator icon, or Ctrl-Alt-4, opens a compact popover in the current
+workspace. Type `125 * 1.15` for arithmetic or `72 in mm` for a length conversion.
+History results reuse full precision, including the source unit of a converted
+result. Decimal places and Copy stay inside the popover. No separate units
+applet is needed.
+
+Task arrows and grips reorder the checklist. Sort orders the selected lists by
+earliest due date, keeps undated tasks in their current order beneath dated
+tasks, and moves completed tasks to the bottom. Equal due dates retain their
+order. The Gantt follows the same saved order; one Undo restores it. Sorting is
+explicit, so manual ordering still works afterward. Sort can also link older
+standalone deadline rows on request, reusing their existing deadline IDs.
+Tasks may have a due date; a star chooses the featured countdown and reveals its
+date in the calendar. Starring an undated task opens its date editor first.
+Completing a task clears its star and subdues its calendar mark; removing a task
+also removes its linked date. Existing standalone deadlines appear without a
+migration or save merely to display them.
+
+The calendar is a continuous date strip with month-boundary labels. Widening the
+panel reveals more dates, including dates in neighboring months. Drag the strip
+or use horizontal/Shift-wheel scrolling to pan; +/−, Ctrl-wheel or a pinch zooms
+the day width. Today returns to the current day. When the strip has keyboard
+focus, Left/Right select a day, Page Up/Down move by a visible page, Home selects
+today, and +/− zoom. Panning and zooming do not edit task dates.
+
+Dated checklist tasks have an inline color selector with five muted, named
+choices (Rose, Amber, Sage, Blue and Lilac) plus neutral. The same colors mark
+their due day only. Multiple same-day tasks have separate marks; a count indicates
+overflow. Completed marks are subdued and hollow. Click or tap a date, or select
+it with the keyboard, to show task names and explicit Open/Done status in a
+compact list within the panel. The selected lists determine the visible task
+marks and details. Date selection never changes the starred task or featured
+countdown. Date, color and completion changes follow the shared links.
 
 Weather controls and a compact forecast strip sit above Calendar/Timeline. The
 strip shows today's available forecast by default; select a calendar day by
@@ -205,15 +188,27 @@ a read-only projection, not another persisted set of task records. Legacy
 standalone deadlines remain visible without creating tasks on load or selection.
 Entry forms and markers are hidden, while existing entries
 remain intact in stored state and JSON exports. Times display in the device's
-timezone; deadline input accepts calendar dates or qualified RFC3339 times.
+timezone; date fields accept calendar dates, local date/time or qualified
+RFC3339 timestamps.
 
 The **Calendar / Timeline** selector reuses this panel; Ctrl-Alt-T switches views
-and focuses Timeline's Week control when opening it. The compact Gantt adapter
-in `src/timeline_ui.rs` draws day-based Week/Month ranges from the portable
+and focuses Timeline's Week control or the calendar date strip as appropriate.
+The compact Gantt adapter in `src/timeline_ui.rs` draws day-based Week/Month ranges from the portable
 `src/timeline.rs` projection. Existing task colors and completion status appear
 on bars, with deadline-only diamonds and explicit No date rows. Tab, Enter/Space,
 pointer and touch open an inline editor. Selection is independent of featuring.
-The checklist and timeline share the same date editor and global Undo journal.
+The checklist and timeline share the same date editor and global Undo/Redo
+journal. The calendar icon beside either date field opens a month picker with a
+local 24-hour HH:MM time. Browsing and selecting days only change the picker;
+Use date updates the draft, Save date commits the range, and Cancel leaves the
+stored schedule untouched.
+
+To choose dates on the main strip, keep the task's date editor open, switch to
+Calendar, and click or focus Start or Due. A label shows which field the next
+selected day will fill. The chosen time is retained, and Save date commits the
+whole range. Done picking or Esc leaves picking mode without discarding the
+draft. Panning and zooming only move the view; the featured countdown changes
+only when a saved edit changes its task's schedule.
 
 Inside the timeline, a draggable title/grid divider saves the optional
 `Preferences.timeline_label_percent` (10–80); absent values retain the original
@@ -233,22 +228,25 @@ setter updates the original linked records. No duplicate task, deadline or
 selection change is created. Dataset, viewport, range and row changes cancel
 stale gestures; the browser tests cover both ends, live preview, Undo and reload.
 
-`Task.start` is an optional UTC instant, omitted when absent. The browser's start
-field converts YYYY-MM-DD to local midnight; date-only due edits retain the old
-local time or use 09:00 for a new deadline. An unchanged due day preserves the
-exact stored instant, including DST ambiguity. Whole-range validation precedes
+`Task.start` is an optional UTC instant, omitted when absent. New date-only
+starts use local midnight and new date-only deadlines use 09:00. Moving an
+existing start or due day retains its local time. An unchanged displayed local
+time retains the exact stored instant, including seconds, subseconds and a
+repeated DST hour. Nonexistent local times are rejected with a visible error;
+explicit RFC3339 timestamps remain available. Whole-range validation precedes
 assignment. Legacy records are linked only on a successful explicit save, and
-passive views do not migrate state. JSON version remains 1, without added
-dependencies. Core tests cover atomic edits, timezone projection and clipping;
-the Timeline browser suite checks editing, Undo, persistence and mobile use.
+passive views do not migrate state. JSON remains version 1, without added
+dependencies. Core tests cover precise time resolution, atomic edits, viewport
+math and clipping; browser suites check editing, history, persistence and mobile
+use.
 
 The hybrid input also accepts `72in to mm`, `72in -> mm`, `72in → mm`, and mixed
 fractions such as `1 1/2 in cm`. There is one saved record per successful
 submission. Target units are stored with converted results; old history records
 remain compatible. `ans` is the last numeric answer, and `ans in mm` supplies an
 explicit source unit for a conversion. Decimal places and **Copy** are inside the
-same instrument. Selection highlighting and Ctrl-M replace open/close controls.
-The browser reserves Ctrl-M only while the Jig canvas or its text input has focus.
+same popover. Click outside or press Esc to close it. Ctrl-M remains reserved for
+the Tasks/calendar panels while the Jig canvas or its text input has focus.
 
 ## GitHub Actions and Pages
 
@@ -257,41 +255,28 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The eleven browser suites run against the same built artifact in separate jobs,
+The seven browser suites run against the same built artifact in separate jobs,
 with at most six runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
 contains `[render]` also prints allowlisted synthetic screenshots as
 bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
-locally to request named scenes; personal workbench data is never used.
+locally to request named scenes; personal application data is never used.
 
-`tests/stl_browser.mjs` runs separately from the general dashboard suite. It uses
-synthetic cube/open meshes and the real local file picker bridge, exercises
-measurement reports and downloads, and checks camera/scale controls, file error
-preservation and reload privacy. The public demo never embeds a private STL.
-It also covers small-mesh measurements and checks that the maximized STL action
-row remains clickable after keyboard navigation on a high-DPI display. Compact
-measurement labels live with the portable geometry measurements; raw report and
-export values retain their precision.
-`tests/scale_browser.mjs`, `tests/camera_browser.mjs` and
-`tests/human_browser.mjs` cover per-axis and target sizing, explicit export-unit
-roundtrips, projection/axis interactions, and the human reference's physical
-scale and shared baseline. Fixtures are generated boxes; the reference does not
-enter exports or persistent state.
+The deployment gates cover spreadsheets, local OCR, the timeline, task lists,
+notes, general browser flows and Undo/Redo. The four STL-only browser suites are
+not deployment gates while that interface is hidden. Native geometry, scale,
+camera, comparison and shrinkage tests still run in `cargo test`.
 
-The header Undo and Ctrl-Z share one chronological journal for workbench data and
-viewer actions. Workbench snapshots retain the validated `State`; STL snapshots
-share geometry through `Arc`, so camera changes do not clone triangle buffers.
-Twenty steps and a combined 64 MiB budget (serialized state sizes plus unique
-mesh allocations, including the current model) bound the history. Rotations and
-scale drags coalesce into one step; wheel bursts coalesce before undo. A viewer
-restore cancels pending file reads and uploads geometry only when the model
-changes. Persistent clay changes are ordinary state actions, preventing duplicate
-undo steps. Data restores use the normal safe-save path and update the weather
-adapter when its preference changes. Files and undo snapshots remain outside
-JSON. Dataset switches clear the journal and its baseline. Ctrl-Z stays native
-inside text editors. `tests/undo_browser.mjs` exercises cross-applet history and
-the dataset/save protections alongside the STL-specific undo checks.
+The header Undo/Ctrl-Z and Redo/Ctrl-Shift-Z share one chronological journal for
+spreadsheet, task, note, calculator and preference changes. Undo/Redo navigation
+moves snapshots between stacks; a new committed edit clears Redo and a no-op
+keeps it. Twenty combined steps and a shared 64 MiB budget bound history. Data
+restores use the normal safe-save path and update weather when its preference
+changes. Draft guards prevent history navigation from discarding unfinished
+work. Dataset switches and reload clear this session journal; it is not included
+in JSON or ODS. Text editors retain their normal local editing shortcuts.
+`tests/undo_browser.mjs` covers history branching and dataset/save protections.
 
 Deployment runs only after a push to `main`; pull requests build and test without
 publishing. To activate the public preview:
@@ -336,7 +321,7 @@ are shown beside the controls. See the README for provider terms and limits.
 
 Location and °F/°C can be changed in the inline location control. Browser settings
 use `jig.weather.settings.v1`; normalized forecasts use `jig.weather.cache.v1`.
-The chosen preference also travels in personal workbench JSON. Fresh matching
+The chosen preference also travels in personal Jig JSON. Fresh matching
 city/unit caches are reused for an hour. Failed refreshes keep matching cached
 forecasts with a stale/error label and do not retry on each dashboard repaint.
 Changing or disabling weather invalidates pending requests, so a late response
@@ -346,7 +331,7 @@ No outgoing weather request contains tasks, history or deadlines. API fetches
 omit credentials and referrer information, use a bounded timeout, and are never
 started for a plain unconfigured dashboard. A city search is a deliberate network
 action. Offline viewing can use cached forecasts; the timestamps make their age
-visible. Monthly dates beyond the provider's forecast horizon have no weather.
+visible. Dates beyond the provider's forecast horizon have no weather.
 
 Browser tests intercept the provider with synthetic data to check Fahrenheit,
 Celsius, rain probability, humidity normalization, cache reuse, stale data and

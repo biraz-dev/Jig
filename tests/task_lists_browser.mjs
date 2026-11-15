@@ -121,9 +121,11 @@ async function resetTasks(scene, escape = true) {
 }
 async function lists(scene) { return (await state(scene.page)).task_lists ?? [{ id: 1, name: "Tasks" }]; }
 function headerTargets(scene) {
+  // Data, Settings, Calculator, About, Help and the footer's Source remain
+  // keyboard targets; workspace navigation buttons are pointer-only.
   // The phone's stacked Tasks/Gantt/Notes board overflows vertically, adding
   // the ordinary dashboard scroll-area target before the list-tab controls.
-  return 4 + (scene.page.viewportSize().width < 500 ? 1 : 0);
+  return 6 + (scene.page.viewportSize().width < 500 ? 1 : 0);
 }
 async function focusList(scene, index) {
   await resetTasks(scene);
@@ -174,7 +176,7 @@ async function readFocusedControlPoint(page, limit, minHeight, fill = [77, 49, 3
     const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
     const matches = index => fill.every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
     const bottom = Math.min(limit, bitmap.height);
-    const top = 42; // The compact header ends at y31 on both test viewports.
+    const top = 42; // Skip the first header row; only the requested list control is keyboard-focused.
     for (let y = top; y < bottom; y++) for (let x = 6; x < bitmap.width - 6; x++) {
       const start = y * bitmap.width + x;
       if (seen[start] || !matches(start)) continue;
@@ -319,7 +321,7 @@ async function undo(scene, expected) {
 async function exportData(scene) {
   await resetTasks(scene);
   await key(scene.page, "Control+Alt+d");
-  await tab(scene.page, 8);
+  await tab(scene.page, 10); // Five header controls, then Start/Open/Sample/Import/Export.
   const event = scene.page.waitForEvent("download");
   await key(scene.page, "Space");
   const download = await event;
@@ -471,6 +473,56 @@ try {
   removed.task_lists.splice(1, 1); delete removed.tasks[1].list_id;
   await expectState(current.page, removed, "Removing a list must move its existing task rather than delete or duplicate it");
   await undo(current, fixture);
+
+  progress("confirm list removal with the same minus button by mouse and keyboard");
+  await selectList(current, 1);
+  await focusListControl(current, "−");
+  const removePoint = await focusedControlPoint(current.page);
+  const clickMinus = async () => {
+    await current.page.mouse.click(removePoint.x, removePoint.y); await paint(current.page);
+  };
+  await clickMinus();
+  await expectState(current.page, fixture, "The first minus click must only request confirmation");
+  await clickMinus();
+  await expectState(current.page, removed, "A second minus click must confirm removal and preserve every linked task record");
+  await undo(current, fixture);
+  await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "Repeated-minus confirmation must create only one Undo entry");
+  await selectList(current, 1);
+  await focusListControl(current, "−");
+  await key(current.page, "Space");
+  await expectState(current.page, fixture, "The first keyboard activation must not remove a list");
+  await key(current.page, "Space");
+  await expectState(current.page, removed, "A second keyboard activation must confirm the same pending removal");
+  await undo(current, fixture);
+
+  progress("disarm pending list removal after Cancel, Escape or switching tabs");
+  await selectList(current, 1);
+  await focusListControl(current, "−");
+  await key(current.page, "Space");
+  await tab(current.page, 3); // Multi, Remove, Cancel.
+  await key(current.page, "Space");
+  await clickMinus();
+  await expectState(current.page, fixture, "Minus after Cancel must start a new confirmation instead of removing the list");
+  await key(current.page, "Escape");
+  await clickMinus();
+  await expectState(current.page, fixture, "Minus after Escape must start a new confirmation instead of removing the list");
+  await key(current.page, "Escape");
+  await focusList(current, 2);
+  const showTabPoint = await focusedControlPoint(current.page);
+  await selectList(current, 1);
+  await focusListControl(current, "−");
+  await key(current.page, "Space");
+  // Use the actual tab pointer target: selectList() also presses Escape and
+  // would hide whether tab selection itself cleared the pending removal.
+  await current.page.mouse.click(showTabPoint.x, showTabPoint.y); await paint(current.page);
+  await clickMinus();
+  await expectState(current.page, fixture, "Switching tabs must discard the previous list's confirmation");
+  await clickMinus();
+  const removedShow = structuredClone(fixture);
+  removedShow.task_lists.splice(2, 1); delete removedShow.tasks[2].list_id;
+  await expectState(current.page, removedShow, "A fresh repeated-minus confirmation must remove only the newly active list");
+  await undo(current, fixture);
   await renameList(current, 2, "Exhibit");
   const renamed = structuredClone(fixture); renamed.task_lists[2].name = "Exhibit";
   await expectState(current.page, renamed);
@@ -483,7 +535,7 @@ try {
   await current.page.waitForTimeout(1200);
   await expectState(current.page, renamed, "Choosing a JSON file must wait for confirmation");
   await resetTasks(current);
-  await tab(current.page, 4); // Data, Calculator, Settings, Confirm import.
+  await tab(current.page, 6); // Data, Settings, Calculator, About, Help, Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, imported, "JSON import must retain names, list membership, dates, colors and completion");
   await boot(current, true);
@@ -557,6 +609,19 @@ try {
   await touchDrag("touchEnd"); await paint(current.page);
   await expectState(current.page, dragOrder, "The touch grip must reorder the original records without changing their lists or dates");
   await undo(current, fixture);
+
+  progress("confirm list removal with two real minus taps and retain it after refresh");
+  await focusListControl(current, "Multi");
+  await key(current.page, "Space"); // Leave the combined phone view before choosing one active list.
+  await selectList(current, 1);
+  await focusListControl(current, "−");
+  const touchMinus = await focusedControlPoint(current.page);
+  await current.page.touchscreen.tap(touchMinus.x, touchMinus.y); await paint(current.page);
+  await expectState(current.page, fixture, "The first minus tap must only show confirmation");
+  await current.page.touchscreen.tap(touchMinus.x, touchMinus.y); await paint(current.page);
+  await expectState(current.page, removed, "The second minus tap must move the same original tasks without altering deadlines or featured work");
+  await boot(current, true);
+  await expectState(current.page, removed, "Repeated-minus removal and exact task membership must survive refresh");
   await current.context.close();
 
   progress("sort visible tasks by due date, keep undated/completed order, and preserve hidden work");
@@ -607,11 +672,11 @@ try {
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-sorted-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sorting)) });
   await current.page.waitForTimeout(1200);
   await expectState(current.page, sorted, "Choosing another task order must still wait for import confirmation");
-  await resetTasks(current); await tab(current.page, 4); await key(current.page, "Space");
+  await resetTasks(current); await tab(current.page, 6); await key(current.page, "Space");
   await expectState(current.page, sorting, "Import must restore the original manual order without automatically sorting it");
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-sorted-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sortedExport)) });
   await current.page.waitForTimeout(1200);
-  await resetTasks(current); await tab(current.page, 4); await key(current.page, "Space");
+  await resetTasks(current); await tab(current.page, 6); await key(current.page, "Space");
   await expectState(current.page, sorted, "JSON import must restore the saved sorted order exactly");
   await boot(current, true); await expectState(current.page, sorted);
   await current.context.close();
@@ -689,7 +754,7 @@ try {
   await current.context.close();
 
   assert.deepEqual(issues, [], "Task-list changes must stay local and produce no app errors");
-  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, stable scoped due-date sorting via mouse/keyboard/touch with single Undo and reload/JSON round trips, without featured changes.");
+  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, stable scoped due-date sorting via mouse/keyboard/touch with single Undo and reload/JSON round trips, without featured changes.");
 } catch (error) {
   console.error(`Task-list browser checks failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "task-lists-failure").catch(() => {});

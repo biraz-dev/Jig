@@ -213,6 +213,16 @@ impl BrowserApp {
     }
 
     pub(super) fn run_automatic_backup(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.initial_backup_pending)
+            && self.settings.auto_backup
+            && !self.demo
+            && !self.dirty
+            && !self.storage_error
+        {
+            // The constructor runs before egui has its first monotonic clock.
+            self.auto_backup_due
+                .get_or_insert(ctx.input(|input| input.time) + 300.0);
+        }
         let Some(due) = self.auto_backup_due else {
             return;
         };

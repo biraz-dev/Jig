@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { chromium } from "playwright";
+import { chromium, errors } from "playwright";
 import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
@@ -258,14 +258,19 @@ async function focusSort(scene, selectedLists = [1]) {
   let inputFocused = false;
   for (let index = 0; index < 100; index++) {
     await tab(scene.page);
-    inputFocused = await scene.page.evaluate(() => document.activeElement?.tagName === "INPUT");
-    if (inputFocused) break;
+    try {
+      await scene.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 150, polling: 25 });
+      inputFocused = true;
+      break;
+    } catch (error) {
+      if (!(error instanceof errors.TimeoutError)) throw error;
+    }
   }
   assert.ok(inputFocused, "Keyboard navigation must reach Add new task before Sort");
   const data = await state(scene.page);
   const bulkDelete = Number(data.tasks.some(task => task.complete && selectedLists.includes(task.list_id ?? 1)));
   await tab(scene.page, 2 + bulkDelete); // +, optional existing delete button, Sort.
-  // Allow the ordinary keyboard-focus scroll animation to reveal the footer.
+  // Let the focused control settle before reading its visible pixels.
   await scene.page.waitForTimeout(200);
   await paint(scene.page);
   return focusedControlPoint(scene.page, scene.page.viewportSize().height - 25);

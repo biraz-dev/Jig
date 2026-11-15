@@ -10,11 +10,10 @@ use crate::{
     timeline_ui::{TimelineAction, TimelinePanel},
     weather_ui::WeatherPanel,
 };
-use chrono::{Datelike, Local, NaiveDate, TimeZone, Utc};
+use chrono::{Local, NaiveDate, Utc};
 use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
-    calendar,
     model::{State, TaskColor, MAX_TASK_LISTS},
     spreadsheet::{self, CellAddr, Workbook},
     timeline,
@@ -68,6 +67,12 @@ enum TaskEditorTarget {
     Deadline(u64),
 }
 
+#[derive(Clone, Copy)]
+enum TaskDateField {
+    Start,
+    Due,
+}
+
 fn task_split_id() -> egui::Id {
     egui::Id::new("task-timeline-divider")
 }
@@ -110,9 +115,10 @@ enum Confirm {
 }
 
 #[derive(Clone, Copy)]
-enum DeferredWorkspace {
+enum DeferredView {
     Sheet,
-    Workbench,
+    Calculator,
+    Calendar,
     Tasks,
     Notes,
 }
@@ -141,10 +147,13 @@ struct TaskDropRow {
 }
 
 pub struct BrowserApp {
+    ctx: egui::Context,
     state: State,
     weather: WeatherPanel,
+    calendar_panel: crate::calendar_ui::CalendarPanel,
     stl: StlPanel,
     undo_history: Vec<UndoEntry>,
+    redo_history: Vec<UndoEntry>,
     undo_baseline: State,
     undo_baseline_json: Vec<u8>,
     demo: bool,
@@ -186,8 +195,7 @@ pub struct BrowserApp {
     focus_task_date: bool,
     task_date_original: Option<String>,
     task_date_initial: Option<(String, String, bool)>,
-    year: i32,
-    month: u32,
+    calendar_task_date_target: Option<TaskDateField>,
     selected_date: NaiveDate,
     calendar_weather_date: Option<NaiveDate>,
     timeline_view: bool,
@@ -205,7 +213,7 @@ pub struct BrowserApp {
     pending_task_input: Option<egui::Id>,
     deferred_task_list: Option<(u64, bool)>,
     deferred_task_edit: Option<TaskEditorTarget>,
-    deferred_workspace: Option<DeferredWorkspace>,
+    deferred_view: Option<DeferredView>,
     draft_backup_payload: Option<String>,
     draft_backup_error: Option<String>,
     draft_backup_blocked: bool,
@@ -314,13 +322,21 @@ impl BrowserApp {
         state.preferences.weather = weather.config().cloned();
         let undo_baseline = state.clone();
         let undo_baseline_json = serde_json::to_vec(&state).unwrap_or_default();
-        let workspace = browser_storage::preferred_workspace();
+        let preferred = browser_storage::preferred_workspace();
+        let workspace = if matches!(preferred.as_str(), "sheet" | "notes") {
+            preferred
+        } else {
+            "tasks".into()
+        };
         browser_storage::set_workspace(&workspace);
         let mut app = Self {
+            ctx: cc.egui_ctx.clone(),
             state,
             weather,
+            calendar_panel: crate::calendar_ui::CalendarPanel::new(today),
             stl: StlPanel::new(cc),
             undo_history: Vec::new(),
+            redo_history: Vec::new(),
             undo_baseline,
             undo_baseline_json,
             demo,
@@ -330,7 +346,7 @@ impl BrowserApp {
             confirm: None,
             data_open: false,
             pending_import: None,
-            focus: if workspace == "tasks" { 1 } else { 0 },
+            focus: 1,
             expanded: false,
             focus_calculator: false,
             scroll_selected: false,
@@ -362,8 +378,7 @@ impl BrowserApp {
             focus_task_date: false,
             task_date_original: None,
             task_date_initial: None,
-            year: today.year(),
-            month: today.month(),
+            calendar_task_date_target: None,
             selected_date: today,
             calendar_weather_date: None,
             timeline_view: workspace == "tasks",
@@ -373,7 +388,7 @@ impl BrowserApp {
             sheet_workspace: workspace == "sheet",
             pending_csv_target: None,
             pending_paste_target: None,
-            tasks_workspace: workspace == "tasks",
+            tasks_workspace: workspace != "sheet" && workspace != "notes",
             notes_workspace: workspace == "notes",
             notes: NotesPanel::new(),
             pending_note_input: false,
@@ -381,7 +396,7 @@ impl BrowserApp {
             pending_task_input: None,
             deferred_task_list: None,
             deferred_task_edit: None,
-            deferred_workspace: None,
+            deferred_view: None,
             draft_backup_payload: None,
             draft_backup_error: None,
             draft_backup_blocked: false,
@@ -697,23 +712,37 @@ impl BrowserApp {
     }
 
     fn push_undo(&mut self, entry: UndoEntry) {
+        // Only a newly committed action abandons the redo branch.
+        self.redo_history.clear();
         self.undo_history.push(entry);
-        while self.undo_history.len() > UNDO_STEPS || self.undo_bytes() > UNDO_BYTES {
-            if self.undo_history.is_empty() {
+        self.trim_history();
+    }
+
+    fn trim_history(&mut self) {
+        while self.undo_history.len() + self.redo_history.len() > UNDO_STEPS
+            || self.history_bytes() > UNDO_BYTES
+        {
+            if self.undo_history.is_empty() && self.redo_history.is_empty() {
                 break;
             }
-            self.undo_history.remove(0);
+            // The bottom of either stack is its furthest reachable state.
+            // Retain the closest steps on both sides of the current state.
+            if self.undo_history.len() >= self.redo_history.len() {
+                self.undo_history.remove(0);
+            } else {
+                self.redo_history.remove(0);
+            }
         }
     }
 
-    fn undo_bytes(&self) -> usize {
+    fn history_bytes(&self) -> usize {
         let mut bytes = 0_usize;
         let mut meshes = std::collections::HashSet::new();
         if let Some((identity, size)) = self.stl.mesh_identity() {
             meshes.insert(identity);
             bytes = bytes.saturating_add(size);
         }
-        for entry in &self.undo_history {
+        for entry in self.undo_history.iter().chain(&self.redo_history) {
             match entry {
                 UndoEntry::Data { bytes: size, .. } => bytes = bytes.saturating_add(*size),
                 UndoEntry::Viewer(snapshot) => {
@@ -743,7 +772,7 @@ impl BrowserApp {
         self.charts.reset();
         self.sheet.reset();
         self.notes.reset();
-        self.deferred_workspace = None;
+        self.deferred_view = None;
         self.pending_note_input = false;
         self.pending_task_input = None;
         self.deferred_task_edit = None;
@@ -756,39 +785,71 @@ impl BrowserApp {
         self.selected_task_lists.clear();
         self.sanitize_task_lists();
         self.undo_history.clear();
+        self.redo_history.clear();
         self.stl.clear_undo();
         self.undo_baseline = self.state.clone();
         self.undo_baseline_json = serde_json::to_vec(&self.state).unwrap_or_default();
     }
 
     fn undo_last(&mut self, ctx: &egui::Context) {
+        self.step_history(ctx, false);
+    }
+
+    fn redo_last(&mut self, ctx: &egui::Context) {
+        self.step_history(ctx, true);
+    }
+
+    fn step_history(&mut self, ctx: &egui::Context, redo: bool) {
         self.cancel_task_note_drag(ctx);
+        let action = if redo { "Redo" } else { "Undo" };
         if self.notes.has_draft() {
-            self.status = "Save or cancel the note edit before using Undo.".into();
+            self.status = format!("Save or cancel the note edit before using {action}.");
             return;
         }
         if self.pending_task_input.is_some() || self.has_task_draft() || self.has_schedule_draft() {
-            self.status = "Save or clear task edits before using Undo.".into();
+            self.status = format!("Save or clear task edits before using {action}.");
             return;
         }
         self.stl.finish_undo_gesture();
         self.collect_viewer_undo();
-        let Some(entry) = self.undo_history.pop() else {
+        let entry = if redo {
+            self.redo_history.pop()
+        } else {
+            self.undo_history.pop()
+        };
+        let Some(entry) = entry else {
             return;
         };
-        match entry {
+        ctx.memory_mut(|memory| memory.close_popup());
+        let reverse = match entry {
             UndoEntry::Data { state, .. } => {
-                self.state = *state;
+                let previous = std::mem::replace(&mut self.state, *state);
+                let reverse = UndoEntry::Data {
+                    state: Box::new(previous),
+                    bytes: self.undo_baseline_json.len(),
+                };
                 if self.weather.config() != self.state.preferences.weather.as_ref() {
                     self.weather
                         .replace_config(self.state.preferences.weather.clone());
                 }
                 self.reset_editors();
-                // Reuse save guards: a stale tab or corrupt raw file stays preserved.
+                // Keep the existing corrupt-file and stale-tab save guards.
                 self.save_current();
+                reverse
             }
-            UndoEntry::Viewer(snapshot) => self.stl.restore(snapshot),
+            UndoEntry::Viewer(snapshot) => {
+                let reverse = self.stl.snapshot();
+                self.stl.restore(snapshot);
+                UndoEntry::Viewer(reverse)
+            }
+        };
+        // History navigation moves a snapshot; it is not a new edit.
+        if redo {
+            self.undo_history.push(reverse);
+        } else {
+            self.redo_history.push(reverse);
         }
+        self.trim_history();
         self.undo_baseline = self.state.clone();
         self.undo_baseline_json = serde_json::to_vec(&self.state).unwrap_or_default();
         ctx.request_repaint();
@@ -802,11 +863,12 @@ impl BrowserApp {
     }
 
     fn reset_editors(&mut self) {
+        self.ctx.memory_mut(|memory| memory.close_popup());
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
         self.sheet.restore_data();
         self.notes.reset();
-        self.deferred_workspace = None;
+        self.deferred_view = None;
         self.pending_note_input = false;
         self.pending_task_input = None;
         self.deferred_task_edit = None;
@@ -832,6 +894,7 @@ impl BrowserApp {
         self.task_date_legacy = None;
         self.task_date_original = None;
         self.task_date_initial = None;
+        self.calendar_task_date_target = None;
         self.task_date_error = None;
         self.feature_after_date = false;
         self.focus_task_date = false;
@@ -1098,13 +1161,15 @@ impl BrowserApp {
 
     fn show_notes(&mut self, ctx: &egui::Context) -> bool {
         if self.pending_note_input || self.pending_task_input.is_some() {
-            self.deferred_workspace = Some(DeferredWorkspace::Notes);
+            self.deferred_view = Some(DeferredView::Notes);
             return false;
         }
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
         self.cancel_task_note_drag(ctx);
+        self.calendar_task_date_target = None;
+        ctx.memory_mut(|memory| memory.close_popup());
         self.sheet_workspace = false;
         self.tasks_workspace = false;
         self.notes_workspace = true;
@@ -1124,27 +1189,28 @@ impl BrowserApp {
     }
 
     fn set_workspace(&mut self, sheet: bool, ctx: &egui::Context) -> bool {
-        if self.sheet_workspace == sheet && !self.tasks_workspace && !self.notes_workspace {
+        if !sheet {
+            return self.show_tasks(ctx);
+        }
+        if self.sheet_workspace {
             return true;
         }
         if self.pending_note_input || self.pending_task_input.is_some() {
-            self.deferred_workspace = Some(if sheet {
-                DeferredWorkspace::Sheet
-            } else {
-                DeferredWorkspace::Workbench
-            });
+            self.deferred_view = Some(DeferredView::Sheet);
             return false;
         }
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
         self.cancel_task_note_drag(ctx);
-        self.sheet_workspace = sheet;
+        self.calendar_task_date_target = None;
+        ctx.memory_mut(|memory| memory.close_popup());
+        self.sheet_workspace = true;
         self.tasks_workspace = false;
         self.notes_workspace = false;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
-        browser_storage::set_workspace(if sheet { "sheet" } else { "workbench" });
+        browser_storage::set_workspace("sheet");
         self.focus_calculator = false;
         self.focus_task_date = false;
         ctx.memory_mut(|memory| {
@@ -1152,9 +1218,7 @@ impl BrowserApp {
                 memory.surrender_focus(id);
             }
         });
-        if sheet {
-            self.sheet.request_focus();
-        }
+        self.sheet.request_focus();
         ctx.request_repaint();
         true
     }
@@ -1183,7 +1247,10 @@ impl BrowserApp {
         for action in actions {
             let applied = match action {
                 SheetAction::ShowTasks => self.show_tasks(ui.ctx()),
-                SheetAction::ShowWorkbench => self.set_workspace(false, ui.ctx()),
+                SheetAction::ShowCalculator => {
+                    self.open_calculator(ui.ctx());
+                    true
+                }
                 SheetAction::Undo => {
                     self.undo_last(ui.ctx());
                     true
@@ -1199,13 +1266,15 @@ impl BrowserApp {
 
     fn show_tasks(&mut self, ctx: &egui::Context) -> bool {
         if self.pending_note_input || self.pending_task_input.is_some() {
-            self.deferred_workspace = Some(DeferredWorkspace::Tasks);
+            self.deferred_view = Some(DeferredView::Tasks);
             return false;
         }
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
         self.cancel_task_note_drag(ctx);
+        self.calendar_task_date_target = None;
+        ctx.memory_mut(|memory| memory.close_popup());
         self.timeline.cancel_gesture();
         self.sheet_workspace = false;
         self.tasks_workspace = true;
@@ -1233,7 +1302,7 @@ impl BrowserApp {
                     .selected(self.sheet_workspace)
                     .sense(sense),
             )
-            .on_hover_text("Spreadsheet workspace · Ctrl-Alt-W switches to/from Workbench")
+            .on_hover_text("Spreadsheet workspace · Ctrl-Alt-W switches between Sheet and Tasks")
             .clicked()
         {
             self.set_workspace(true, ui.ctx());
@@ -1259,14 +1328,6 @@ impl BrowserApp {
             .clicked()
         {
             self.show_notes(ui.ctx());
-        }
-        if (self.sheet_workspace || self.tasks_workspace || self.notes_workspace)
-            && ui
-                .add(egui::Button::new("Workbench").sense(sense))
-                .on_hover_text("Calculator, calendar, weather and STL tools · Ctrl-Alt-W")
-                .clicked()
-        {
-            self.set_workspace(false, ui.ctx());
         }
     }
 
@@ -1601,6 +1662,29 @@ impl BrowserApp {
             }
             let top = ui.cursor().top();
             self.task_list_tabs(ui);
+            if let Some(deadline) = self.state.deadlines.iter().find(|deadline| {
+                Some(deadline.id) == self.state.featured
+                    && self.state.is_deadline_active(deadline.id)
+            }) {
+                let seconds = (deadline.at - Utc::now()).num_seconds();
+                let n = seconds.unsigned_abs();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&deadline.title).strong().color(TEXT));
+                    ui.label(
+                        RichText::new(format!(
+                            "{}{:02}d {:02}h {:02}m {:02}s",
+                            if seconds < 0 { "OVERDUE " } else { "" },
+                            n / 86400,
+                            n / 3600 % 24,
+                            n / 60 % 60,
+                            n % 60
+                        ))
+                        .monospace()
+                        .size(18.0)
+                        .color(if seconds < 0 { ERROR } else { ACCENT }),
+                    );
+                });
+            }
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Gantt chart").clicked() {
                     let action = SheetAction::AddChart {
@@ -2237,8 +2321,8 @@ impl BrowserApp {
             && self.task_date_legacy.is_none()
         {
             self.timeline.request_focus();
-        } else if self.focus == 4 {
-            self.stl.request_open_focus();
+        } else if self.focus == 2 {
+            self.calendar_panel.request_focus();
         }
         self.scroll_selected = true;
     }
@@ -2293,21 +2377,23 @@ impl BrowserApp {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        let wide = ui.available_width() >= 1120.0;
+        let width = ui.available_width();
+        let wide = width >= 720.0;
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("JIG")
-                    .font(FontId::monospace(29.0))
-                    .color(TEXT)
-                    .strong(),
-            );
             if wide {
-                ui.label(RichText::new("You are a small Small Giant Psionicist.").color(MUTED));
                 self.workspace_buttons(ui);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.selectable_label(self.data_open, "Data").clicked() {
                     self.data_open = !self.data_open;
+                }
+                if ui
+                    .add_enabled(!self.redo_history.is_empty(), egui::Button::new("Redo"))
+                    .on_hover_text("Redo the last undone change · Ctrl-Shift-Z")
+                    .clicked()
+                    && self.flush_sheet_edit()
+                {
+                    self.redo_last(ui.ctx());
                 }
                 if ui
                     .add_enabled(
@@ -2317,41 +2403,36 @@ impl BrowserApp {
                             || self.notes.has_draft(),
                         egui::Button::new("Undo"),
                     )
-                    .on_hover_text(
-                        "Undo the most recent spreadsheet, task, note or STL change (Ctrl-Z)",
-                    )
+                    .on_hover_text("Undo the most recent change · Ctrl-Z")
                     .clicked()
                     && self.flush_sheet_edit()
                 {
                     self.undo_last(ui.ctx());
                 }
-                ui.label(RichText::new("• local").color(SUCCESS).small());
-                ui.label(
-                    RichText::new(if self.demo {
-                        "sample data"
-                    } else {
-                        "your data"
-                    })
-                    .color(if self.demo { ACCENT } else { MUTED })
-                    .small(),
-                );
-                let date_format = if wide { "%a %d %b %Y" } else { "%d %b %Y" };
-                ui.label(
-                    RichText::new(Local::now().format(date_format).to_string())
-                        .size(if wide { 14.0 } else { 11.0 })
-                        .color(MUTED),
-                );
+                self.calculator_button(ui);
+                if width >= 1000.0 {
+                    ui.label(RichText::new("• local").color(SUCCESS).small());
+                    ui.label(
+                        RichText::new(if self.demo {
+                            "sample data"
+                        } else {
+                            "your data"
+                        })
+                        .color(if self.demo { ACCENT } else { MUTED })
+                        .small(),
+                    );
+                }
+                if width >= 600.0 {
+                    ui.label(
+                        RichText::new(Local::now().format("%a %d %b %Y").to_string())
+                            .size(13.0)
+                            .color(MUTED),
+                    );
+                }
             });
         });
         if !wide {
-            ui.horizontal_wrapped(|ui| {
-                self.workspace_buttons(ui);
-                ui.label(
-                    RichText::new("You are a small Small Giant Psionicist.")
-                        .color(MUTED)
-                        .small(),
-                );
-            });
+            ui.horizontal_wrapped(|ui| self.workspace_buttons(ui));
         }
         if self.data_open {
             ui.separator();
@@ -2398,7 +2479,7 @@ impl BrowserApp {
         }
         if let Some(confirm) = self.confirm {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(match confirm { Confirm::Empty => "Replace this browser's saved data with an empty workbench? Export first if needed.", Confirm::Clear => "Delete this browser's saved Jig data? Export a backup first if needed." }).color(ERROR));
+                ui.label(RichText::new(match confirm { Confirm::Empty => "Replace this browser's saved data with an empty document? Export first if needed.", Confirm::Clear => "Delete this browser's saved Jig data? Export a backup first if needed." }).color(ERROR));
                 if ui.button("Confirm").clicked() {
                     self.confirm = None;
                     match confirm {
@@ -2455,7 +2536,7 @@ impl BrowserApp {
                         self.task_drop_zone(ui, drop_rect, &scroll.inner);
                     }
                     2 => self.calendar(ui, (height - 18.0).max(230.0)),
-                    3 => self.workbench(ui, (height - 18.0).max(120.0)),
+                    3 => self.calculator(ui, (height - 18.0).max(120.0)),
                     _ => {
                         let mut settings = self.state.preferences.clay.clone().unwrap_or_default();
                         if self.stl.ui(ui, (height - 18.0).max(180.0), &mut settings) {
@@ -2504,41 +2585,107 @@ impl BrowserApp {
         );
     }
 
-    fn workbench(&mut self, ui: &mut Ui, height: f32) {
-        let width = ui.available_width();
-        if width >= 820.0 {
-            let left = (width - 18.0) * 0.62;
-            ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(left, height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| self.workbench_input(ui),
-                );
-                ui.add_space(10.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(width - left - 18.0, height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("math-history")
-                            .max_height(height)
-                            .show(ui, |ui| self.workbench_history(ui));
-                    },
-                );
-            });
-        } else {
-            let top = ui.cursor().top();
-            self.workbench_input(ui);
-            ui.separator();
-            let used = ui.cursor().top() - top;
-            egui::ScrollArea::vertical()
-                .id_salt("math-history")
-                .max_height((height - used).max(70.0))
-                .show(ui, |ui| self.workbench_history(ui));
-        }
+    fn open_calculator(&mut self, ctx: &egui::Context) {
+        // Open after the current editors have processed this frame's input.
+        self.deferred_view = Some(DeferredView::Calculator);
+        ctx.request_repaint();
     }
 
-    fn workbench_input(&mut self, ui: &mut Ui) {
+    fn toggle_calendar(&mut self, ctx: &egui::Context) {
+        if self.pending_task_input.is_some() || self.pending_note_input {
+            self.deferred_view = Some(DeferredView::Calendar);
+            ctx.request_repaint();
+            return;
+        }
+        if !self.tasks_workspace && !self.show_tasks(ctx) {
+            return;
+        }
+        ctx.memory_mut(|memory| {
+            memory.close_popup();
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+        self.cancel_task_note_drag(ctx);
+        self.focus = 2;
+        self.focus_calculator = false;
+        self.focus_task_date = false;
+        self.scroll_selected = true;
+        self.timeline_view = !self.timeline_view;
+        self.timeline.cancel_gesture();
+        if self.timeline_view {
+            self.timeline.reveal(self.selected_date);
+            self.timeline.request_focus();
+        } else {
+            self.calendar_panel.reveal(self.selected_date);
+            self.calendar_panel.request_focus();
+        }
+        ctx.request_repaint();
+    }
+
+    fn calculator_button(&mut self, ui: &mut Ui) {
+        let popup = egui::Id::new("calculator-popup");
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 28.0), egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Calculator")
+        });
+        let visuals = ui.style().interact(&response);
+        ui.painter().rect(
+            rect,
+            2.0,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let icon = rect.shrink2(egui::vec2(7.0, 4.0));
+        ui.painter().rect_stroke(
+            icon,
+            1.0,
+            Stroke::new(1.0_f32, TEXT),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().hline(
+            (icon.left() + 3.0)..=(icon.right() - 3.0),
+            icon.top() + 5.0,
+            Stroke::new(1.0_f32, TEXT),
+        );
+        for y in [icon.top() + 10.0, icon.top() + 14.0] {
+            for x in [icon.left() + 4.0, icon.right() - 4.0] {
+                ui.painter().circle_filled(egui::pos2(x, y), 1.0, TEXT);
+            }
+        }
+        if response.clicked() {
+            if ui.memory(|memory| memory.is_popup_open(popup)) {
+                ui.memory_mut(|memory| memory.close_popup());
+            } else {
+                self.open_calculator(ui.ctx());
+            }
+        }
+        let response = response.on_hover_text("Calculator and unit conversion · Ctrl-Alt-4");
+        egui::popup::popup_below_widget(
+            ui,
+            popup,
+            &response,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_width((ui.ctx().screen_rect().width() - 28.0).clamp(220.0, 380.0));
+                self.calculator(ui, 260.0);
+            },
+        );
+    }
+
+    fn calculator(&mut self, ui: &mut Ui, height: f32) {
+        let top = ui.cursor().top();
+        self.calculator_input(ui);
+        ui.separator();
+        let used = ui.cursor().top() - top;
+        egui::ScrollArea::vertical()
+            .id_salt("math-history")
+            .max_height((height - used).max(70.0))
+            .show(ui, |ui| self.calculator_history(ui));
+    }
+
+    fn calculator_input(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let id = egui::Id::new("calculator-input");
             if self.focus_calculator {
@@ -2552,9 +2699,6 @@ impl BrowserApp {
                     .hint_text("125 * 1.15   or   72 in mm")
                     .desired_width((ui.available_width() - 65.0).max(80.0)),
             );
-            if response.has_focus() {
-                self.focus = 3;
-            }
             if self.focus_calculator {
                 response.scroll_to_me(None);
                 self.focus_calculator = !response.has_focus();
@@ -2595,16 +2739,13 @@ impl BrowserApp {
             ui.label("Decimals");
             let response =
                 ui.add(egui::DragValue::new(&mut self.state.preferences.decimals).range(0..=10));
-            if response.has_focus() {
-                self.focus = 3;
-            }
             if response.changed() {
                 self.changed();
             }
         });
     }
 
-    fn workbench_history(&mut self, ui: &mut Ui) {
+    fn calculator_history(&mut self, ui: &mut Ui) {
         let mut reused_history = false;
         for history in self.state.history.iter().rev() {
             ui.horizontal_wrapped(|ui| {
@@ -3492,6 +3633,8 @@ impl BrowserApp {
     }
 
     fn close_task_dates(&mut self) {
+        self.ctx.memory_mut(|memory| memory.close_popup());
+        self.calendar_task_date_target = None;
         self.task_date_edit = None;
         self.task_date_legacy = None;
         self.task_date_timeline = false;
@@ -3530,57 +3673,36 @@ impl BrowserApp {
     }
 
     fn save_task_dates(&mut self, id: u64) -> Result<u64, String> {
-        let input = self.task_date.trim();
-        let due = if input.len() == 10 {
-            let date = NaiveDate::parse_from_str(input, "%Y-%m-%d")
-                .map_err(|_| "Due date must be YYYY-MM-DD")?;
-            let existing = match self.task_date_legacy {
-                Some(deadline) => self.state.deadlines.iter().find(|item| item.id == deadline),
-                None => self.state.task_deadline(id),
-            };
-            if let Some(existing) =
-                existing.filter(|deadline| deadline.at.with_timezone(&Local).date_naive() == date)
-            {
-                // A date-only edit must preserve an existing countdown's exact
-                // instant, including offset changes and repeated DST hours.
-                existing.at.to_rfc3339()
-            } else {
-                let time = existing.map_or_else(
-                    || chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
-                    |deadline| deadline.at.with_timezone(&Local).time(),
-                );
-                Local
-                    .from_local_datetime(&date.and_time(time))
-                    .earliest()
-                    .ok_or("That deadline time does not exist locally; enter a timestamp with a timezone")?
-                    .with_timezone(&Utc)
-                    .to_rfc3339()
-            }
-        } else {
-            input.to_owned()
-        };
+        let existing_due = match self.task_date_legacy {
+            Some(deadline) => self.state.deadlines.iter().find(|item| item.id == deadline),
+            None => self.state.task_deadline(id),
+        }
+        .map(|deadline| deadline.at);
+        let due = jig::task_dates::resolve(
+            &self.task_date,
+            existing_due,
+            chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            &Local,
+        )?
+        .to_rfc3339();
+        let existing_start = self
+            .state
+            .tasks
+            .iter()
+            .find(|task| task.id == id)
+            .and_then(|task| task.start);
         let start = if self.task_start.trim().is_empty() {
             None
         } else {
-            let date = NaiveDate::parse_from_str(self.task_start.trim(), "%Y-%m-%d")
-                .map_err(|_| "Start date must be YYYY-MM-DD")?;
-            let existing = self
-                .state
-                .tasks
-                .iter()
-                .find(|task| task.id == id)
-                .and_then(|task| task.start)
-                .filter(|start| start.with_timezone(&Local).date_naive() == date);
-            if let Some(existing) = existing {
-                Some(existing.to_rfc3339())
-            } else {
-                let midnight = date.and_hms_opt(0, 0, 0).ok_or("Invalid start date")?;
-                let start = Local
-                    .from_local_datetime(&midnight)
-                    .earliest()
-                    .ok_or("This start date does not exist in your local timezone")?;
-                Some(start.with_timezone(&Utc).to_rfc3339())
-            }
+            Some(
+                jig::task_dates::resolve(
+                    &self.task_start,
+                    existing_start,
+                    chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    &Local,
+                )?
+                .to_rfc3339(),
+            )
         };
         // Resolve a legacy deadline only when saving. Viewing or cancelling an
         // editor must not migrate a record or consume an Undo step.
@@ -3613,16 +3735,44 @@ impl BrowserApp {
             if self.focus_task_date {
                 ui.memory_mut(|memory| memory.request_focus(field));
             }
-            let response = ui.add(
-                TextEdit::singleline(&mut self.task_date)
-                    .id(field)
-                    .return_key(None)
-                    .hint_text("YYYY-MM-DD")
-                    .desired_width(ui.available_width()),
-            ).on_hover_text("Enter a date, or an RFC3339 timestamp with a timezone. Date edits retain the existing deadline time; new deadlines use 09:00 local time.");
+            let existing_due = match self.task_date_legacy {
+                Some(deadline) => self.state.deadlines.iter().find(|item| item.id == deadline),
+                None => self.state.task_deadline(id),
+            }
+            .map(|deadline| deadline.at);
+            let response = ui
+                .horizontal(|ui| {
+                    let response = ui.add(
+                        TextEdit::singleline(&mut self.task_date)
+                            .id(field)
+                            .return_key(None)
+                            .hint_text("YYYY-MM-DD HH:MM")
+                            .desired_width((ui.available_width() - 36.0).max(100.0)),
+                    );
+                    if crate::date_picker_ui::button(
+                        ui,
+                        egui::Id::new(("task-due-picker", id)),
+                        &mut self.task_date,
+                        existing_due,
+                        chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                    ) {
+                        self.task_date_error = None;
+                        response.request_focus();
+                        ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                        });
+                    }
+                    response
+                })
+                .inner
+                .on_hover_text(concat!(
+                    "Enter a local date and time, or a timestamp with a timezone. ",
+                    "Date-only edits retain the existing time; new deadlines use 09:00 local time."
+                ));
             self.task_input_processed(field);
             if response.has_focus() {
                 self.focus = owner;
+                self.calendar_task_date_target = Some(TaskDateField::Due);
             }
             if self.focus_task_date {
                 response.scroll_to_me(None);
@@ -3633,23 +3783,47 @@ impl BrowserApp {
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             ui.label(RichText::new("Start · optional").color(MUTED).size(11.0));
             let start_field = egui::Id::new(("task-start-input", id));
-            let start = ui.add(
-                TextEdit::singleline(&mut self.task_start)
-                    .id(start_field)
-                    .return_key(None)
-                    .hint_text("YYYY-MM-DD")
-                    .desired_width(ui.available_width()),
-            );
+            let existing_start = self
+                .state
+                .tasks
+                .iter()
+                .find(|task| task.id == id)
+                .and_then(|task| task.start);
+            let start = ui
+                .horizontal(|ui| {
+                    let response = ui.add(
+                        TextEdit::singleline(&mut self.task_start)
+                            .id(start_field)
+                            .return_key(None)
+                            .hint_text("YYYY-MM-DD HH:MM")
+                            .desired_width((ui.available_width() - 36.0).max(100.0)),
+                    );
+                    if crate::date_picker_ui::button(
+                        ui,
+                        egui::Id::new(("task-start-picker", id)),
+                        &mut self.task_start,
+                        existing_start,
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ) {
+                        self.task_date_error = None;
+                        response.request_focus();
+                        ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                        });
+                    }
+                    response
+                })
+                .inner;
             self.task_input_processed(start_field);
             if start.has_focus() {
                 self.focus = owner;
+                self.calendar_task_date_target = Some(TaskDateField::Start);
                 if start.gained_focus() {
                     start.scroll_to_me(None);
                     ui.ctx().request_repaint();
                 }
-                enter |= ui.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                });
+                enter |= ui
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             }
             ui.horizontal_wrapped(|ui| {
                 if ui
@@ -3677,8 +3851,8 @@ impl BrowserApp {
                         }
                     }
                 }
-                let has_date = self.task_date_legacy.is_some()
-                    || self.state.task_deadline(id).is_some();
+                let has_date =
+                    self.task_date_legacy.is_some() || self.state.task_deadline(id).is_some();
                 if has_date && ui.small_button("Remove date").clicked() {
                     let result = match self.task_date_legacy {
                         Some(deadline) => self.state.remove_deadline(deadline),
@@ -3775,8 +3949,7 @@ impl BrowserApp {
             self.calendar_weather_date = None;
             let date = deadline.at.with_timezone(&Local).date_naive();
             self.selected_date = date;
-            self.year = date.year();
-            self.month = date.month();
+            self.calendar_panel.reveal(date);
             self.timeline.reveal(date);
         }
     }
@@ -3788,15 +3961,10 @@ impl BrowserApp {
                 .selectable_label(!self.timeline_view, "Calendar")
                 .clicked()
             {
-                if self.task_date_timeline
-                    && (self.has_schedule_draft() || self.pending_task_input.is_some())
-                {
-                    self.status = "Save or cancel the date edit before changing views.".into();
+                if self.timeline_view {
+                    self.toggle_calendar(ui.ctx());
                 } else {
-                    self.timeline_view = false;
-                    if self.task_date_timeline {
-                        self.close_task_dates();
-                    }
+                    self.calendar_panel.request_focus();
                 }
             }
             if ui
@@ -3804,9 +3972,10 @@ impl BrowserApp {
                 .clicked()
             {
                 if !self.timeline_view {
-                    self.timeline.reveal(self.selected_date);
+                    self.toggle_calendar(ui.ctx());
+                } else {
+                    self.timeline.request_focus();
                 }
-                self.timeline_view = true;
             }
         });
         let today = Local::now().date_naive();
@@ -3819,7 +3988,8 @@ impl BrowserApp {
         }
         if !self.timeline_view {
             self.timeline.cancel_gesture();
-            self.calendar_month(ui);
+            self.calendar_days(ui);
+            self.calendar_date_editor(ui);
             return;
         }
         // Give the chart the panel's remaining height as the task list grows.
@@ -3853,8 +4023,7 @@ impl BrowserApp {
                     self.task_date_timeline = true;
                     if let Some(deadline) = self.state.task_deadline(id) {
                         self.selected_date = deadline.at.with_timezone(&Local).date_naive();
-                        self.year = self.selected_date.year();
-                        self.month = self.selected_date.month();
+                        self.calendar_panel.reveal(self.selected_date);
                     }
                 }
             }
@@ -3872,8 +4041,7 @@ impl BrowserApp {
                         .format("%Y-%m-%d")
                         .to_string();
                     self.selected_date = deadline.at.with_timezone(&Local).date_naive();
-                    self.year = self.selected_date.year();
-                    self.month = self.selected_date.month();
+                    self.calendar_panel.reveal(self.selected_date);
                     self.task_start.clear();
                     self.task_date_edit = None;
                     self.task_date_legacy = Some(id);
@@ -3886,6 +4054,10 @@ impl BrowserApp {
             }
             None => {}
         }
+        self.calendar_date_editor(ui);
+    }
+
+    fn calendar_date_editor(&mut self, ui: &mut Ui) {
         if self.task_date_timeline {
             let target = self.task_date_edit.or(self.task_date_legacy);
             if let Some(id) = target {
@@ -3895,183 +4067,96 @@ impl BrowserApp {
         }
     }
 
-    fn calendar_month(&mut self, ui: &mut Ui) {
-        ui.spacing_mut().button_padding.x = 3.0;
-        ui.horizontal(|ui| {
-            if ui.button("‹").clicked() {
-                self.shift_month(-1);
-            }
-            let month = NaiveDate::from_ymd_opt(self.year, self.month, 1).map_or_else(
-                || format!("{} / {}", self.year, self.month),
-                |date| date.format("%B %Y").to_string(),
-            );
-            ui.label(RichText::new(month).color(TEXT));
-            if ui.button("›").clicked() {
-                self.shift_month(1);
-            }
-            if ui.small_button("Today").clicked() {
-                let today = Local::now().date_naive();
-                self.year = today.year();
-                self.month = today.month();
-                self.selected_date = today;
-                self.calendar_weather_date = Some(today);
-                ui.ctx().request_repaint();
-            }
-        });
-        let today = Local::now().date_naive();
-        let size = ((ui.available_width() - 18.0) / 7.0).max(20.0);
-        if let Ok(cells) = calendar::month(self.year, self.month) {
-            egui::Grid::new("month-grid")
-                .num_columns(7)
-                .spacing([3.0, 3.0])
-                .show(ui, |ui| {
-                    for day in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(size, 18.0),
-                            egui::Layout::top_down(egui::Align::Center),
-                            |ui| {
-                                ui.label(RichText::new(day).small().color(MUTED));
-                            },
-                        );
-                    }
-                    ui.end_row();
-                    let count = cells
+    fn pick_task_date(&mut self, field: TaskDateField, date: NaiveDate) -> Result<(), String> {
+        let (draft, existing, hour) = match field {
+            TaskDateField::Start => (
+                &self.task_start,
+                self.state
+                    .tasks
+                    .iter()
+                    .find(|task| Some(task.id) == self.task_date_edit)
+                    .and_then(|task| task.start),
+                0,
+            ),
+            TaskDateField::Due => (
+                &self.task_date,
+                match self.task_date_legacy {
+                    Some(id) => self
+                        .state
+                        .deadlines
                         .iter()
-                        .rposition(Option::is_some)
-                        .map_or(0, |index| (index / 7 + 1) * 7);
-                    for (index, day) in cells[..count].iter().enumerate() {
-                        if let Some(day) = day {
-                            let mut tasks = self.state.tasks_on_date(*day, &Local);
-                            tasks.sort_by_key(|task| task.complete);
-                            let color = if *day == today { ACCENT } else { TEXT };
-                            let mut button = egui::Button::new(
-                                RichText::new(day.day().to_string()).size(14.0).color(color),
-                            )
-                            .fill(BG)
-                            .stroke(Stroke::NONE);
-                            if *day == today {
-                                button = button.fill(web_theme::SELECTED);
-                            }
-                            if *day == self.selected_date {
-                                button = button.stroke(Stroke::new(1.0_f32, ACCENT));
-                            }
-                            let response = ui
-                                .push_id(("calendar-date", *day), |ui| {
-                                    ui.add_sized([size, 34.0], button)
-                                })
-                                .inner;
-                            let label = format!("{}, {} tasks due", day, tasks.len());
-                            response.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    ui.is_enabled(),
-                                    &label,
-                                )
-                            });
-                            // Show distinct colors before repeated marks on busy dates.
-                            // The list below remains the complete, named view.
-                            let marks = if tasks.len() > 5 { 4 } else { tasks.len() };
-                            let mut marked = Vec::with_capacity(marks);
-                            for (index, task) in tasks.iter().enumerate() {
-                                if !marked
-                                    .iter()
-                                    .any(|shown: &usize| tasks[*shown].color == task.color)
-                                {
-                                    marked.push(index);
-                                }
-                                if marked.len() == marks {
-                                    break;
-                                }
-                            }
-                            for index in 0..tasks.len() {
-                                if marked.len() == marks {
-                                    break;
-                                }
-                                if !marked.contains(&index) {
-                                    marked.push(index);
-                                }
-                            }
-                            let overflow = tasks.len() - marks;
-                            let width = marks as f32 * 5.0 + if overflow > 0 { 16.0 } else { 0.0 };
-                            let start = response.rect.center().x - width * 0.5 + 2.5;
-                            for (index, task) in marked
-                                .iter()
-                                .take(marks)
-                                .map(|index| &tasks[*index])
-                                .enumerate()
-                            {
-                                task_mark(
-                                    ui,
-                                    egui::pos2(
-                                        start + index as f32 * 5.0,
-                                        response.rect.bottom() - 4.0,
-                                    ),
-                                    task.color,
-                                    task.complete,
-                                    1.7,
-                                );
-                            }
-                            if overflow > 0 {
-                                ui.painter().text(
-                                    egui::pos2(
-                                        start + marks as f32 * 5.0,
-                                        response.rect.bottom() - 4.0,
-                                    ),
-                                    egui::Align2::LEFT_CENTER,
-                                    format!("+{overflow}"),
-                                    FontId::monospace(9.0),
-                                    MUTED,
-                                );
-                            }
-                            let mut tooltip = tasks
-                                .iter()
-                                .map(|task| {
-                                    format!(
-                                        "{} · {}",
-                                        if task.complete { "Done" } else { "Open" },
-                                        task.title
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            if let Some(forecast) = self.weather.day_tooltip(*day) {
-                                if !tooltip.is_empty() {
-                                    tooltip.push('\n');
-                                }
-                                tooltip.push_str(&forecast);
-                            }
-                            if response.has_focus() {
-                                self.focus = 2;
-                                ui.painter().hline(
-                                    response.rect.x_range(),
-                                    response.rect.bottom(),
-                                    Stroke::new(1.0_f32, ACCENT),
-                                );
-                            }
-                            let clicked = response.clicked();
-                            if !tooltip.is_empty() {
-                                response.on_hover_text(tooltip);
-                            }
-                            if clicked {
-                                self.selected_date = *day;
-                                self.calendar_weather_date = Some(*day);
-                                ui.ctx().request_repaint();
-                            }
-                        } else {
-                            ui.allocate_space(egui::vec2(size, 34.0));
-                        }
-                        if index % 7 == 6 {
-                            ui.end_row();
-                        }
-                    }
-                });
+                        .find(|deadline| deadline.id == id),
+                    None => self
+                        .task_date_edit
+                        .and_then(|id| self.state.task_deadline(id)),
+                }
+                .map(|deadline| deadline.at),
+                9,
+            ),
+        };
+        let default_time = chrono::NaiveTime::from_hms_opt(hour, 0, 0).unwrap();
+        let current = jig::task_dates::resolve(draft, existing, default_time, &Local)
+            .ok()
+            .or(existing);
+        let chosen = jig::task_dates::resolve(&date.to_string(), current, default_time, &Local)?
+            .to_rfc3339();
+        match field {
+            TaskDateField::Start => self.task_start = chosen,
+            TaskDateField::Due => self.task_date = chosen,
         }
-        ui.add_space(6.0);
+        self.task_date_error = None;
+        Ok(())
+    }
+
+    fn calendar_days(&mut self, ui: &mut Ui) {
+        let picking = self
+            .calendar_task_date_target
+            .filter(|_| self.task_date_edit.is_some() || self.task_date_legacy.is_some());
+        if let Some(field) = picking {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(match field {
+                        TaskDateField::Start => "Click a day to set the start date",
+                        TaskDateField::Due => "Click a day to set the due date",
+                    })
+                    .small()
+                    .color(ACCENT),
+                );
+                if ui.small_button("Done picking").clicked() {
+                    self.calendar_task_date_target = None;
+                }
+            });
+        }
+        if let Some(date) = self.calendar_panel.ui(
+            ui,
+            &self.state,
+            Local::now().date_naive(),
+            self.selected_date,
+            &self.selected_task_lists,
+        ) {
+            self.selected_date = date;
+            self.calendar_weather_date = Some(date);
+            if let Some(field) = picking {
+                if let Err(error) = self.pick_task_date(field, date) {
+                    self.status = error.clone();
+                    self.task_date_error = Some(error);
+                }
+            }
+            ui.ctx().request_repaint();
+        }
+        if self.calendar_panel.focused {
+            self.focus = 2;
+        }
         self.calendar_tasks(ui);
     }
 
     fn calendar_tasks(&mut self, ui: &mut Ui) {
-        let tasks = self.state.tasks_on_date(self.selected_date, &Local);
+        let tasks: Vec<_> = self
+            .state
+            .tasks_on_date(self.selected_date, &Local)
+            .into_iter()
+            .filter(|task| self.selected_task_lists.contains(&task.list_id))
+            .collect();
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(self.selected_date.format("%a %d %b").to_string())
@@ -4147,17 +4232,6 @@ impl BrowserApp {
                 }
             });
     }
-
-    fn shift_month(&mut self, delta: i32) {
-        match calendar::shift(self.year, self.month, delta) {
-            Ok((year, month)) => {
-                self.year = year;
-                self.month = month;
-                self.calendar_weather_date = None;
-            }
-            Err(error) => self.status = error,
-        }
-    }
 }
 
 impl eframe::App for BrowserApp {
@@ -4170,6 +4244,8 @@ impl eframe::App for BrowserApp {
                 || schedule.is_some_and(|target| {
                     id == egui::Id::new(("task-date-input", target))
                         || id == egui::Id::new(("task-start-input", target))
+                        || id == egui::Id::new(("task-due-picker", target)).with("time")
+                        || id == egui::Id::new(("task-start-picker", target)).with("time")
                 })
         });
         self.ordered_input.process(ctx, input, protect);
@@ -4213,16 +4289,6 @@ impl eframe::App for BrowserApp {
         self.process_document_events();
         self.weather.update();
         if self.stl.update() {
-            self.set_workspace(false, ctx);
-            self.focus = 4;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            self.scroll_selected = true;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
             ctx.request_repaint();
         }
         if self.collect_viewer_undo() {
@@ -4245,7 +4311,7 @@ impl eframe::App for BrowserApp {
             ..Default::default()
         };
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::W)) {
-            self.set_workspace(!(self.sheet_workspace || self.tasks_workspace), ctx);
+            self.set_workspace(!self.sheet_workspace, ctx);
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num2)) {
             self.show_tasks(ctx);
@@ -4279,99 +4345,11 @@ impl eframe::App for BrowserApp {
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::O)) {
             self.open_local();
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4))
-            && self.set_workspace(false, ctx)
-        {
-            self.focus = 3;
-            self.focus_calculator = true;
-            ctx.request_repaint();
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num4)) {
+            self.open_calculator(ctx);
         }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::Num5))
-            && self.set_workspace(false, ctx)
-        {
-            self.focus = 4;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            self.scroll_selected = true;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
-            self.stl.request_open_focus();
-            ctx.request_repaint();
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::S))
-            && self.set_workspace(false, ctx)
-        {
-            self.focus = 4;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            // The sizing fields choose their own scroll target, including on
-            // narrow displays where the section is below the model viewport.
-            self.scroll_selected = false;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
-            self.stl.request_size_focus();
-            ctx.request_repaint();
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::H))
-            && self.set_workspace(false, ctx)
-        {
-            self.focus = 4;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            self.scroll_selected = true;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
-            self.stl.toggle_human_comparison();
-            ctx.request_repaint();
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::G))
-            && self.set_workspace(false, ctx)
-        {
-            self.focus = 4;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            self.scroll_selected = true;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
-            self.stl.toggle_grey_matcap();
-            ctx.request_repaint();
-        }
-        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T))
-            && !(self.task_date_timeline
-                && (self.has_schedule_draft() || self.pending_task_input.is_some()))
-            && self.set_workspace(false, ctx)
-        {
-            self.cancel_task_note_drag(ctx);
-            self.focus = 2;
-            self.focus_calculator = false;
-            self.focus_task_date = false;
-            self.scroll_selected = true;
-            self.timeline_view = !self.timeline_view;
-            self.timeline.cancel_gesture();
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
-            if self.timeline_view {
-                self.timeline.reveal(self.selected_date);
-                self.timeline.request_focus();
-            } else if self.task_date_timeline {
-                self.close_task_dates();
-            }
-            ctx.request_repaint();
+        if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::T)) {
+            self.toggle_calendar(ctx);
         }
         if ctx.input_mut(|input| input.consume_key(shortcut, egui::Key::D)) {
             self.data_open = !self.data_open;
@@ -4380,6 +4358,7 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && !self.notes_workspace
             && !self.notes.owns_keyboard(ctx)
+            && !ctx.memory(|memory| memory.any_popup_open())
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::M))
         {
             self.cancel_task_note_drag(ctx);
@@ -4391,6 +4370,7 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && !self.notes_workspace
             && !self.notes.owns_keyboard(ctx)
+            && !ctx.memory(|memory| memory.any_popup_open())
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
             self.cancel_task_note_drag(ctx);
@@ -4413,6 +4393,7 @@ impl eframe::App for BrowserApp {
         if !self.sheet_workspace
             && !self.notes_workspace
             && !self.notes.owns_keyboard(ctx)
+            && !ctx.memory(|memory| memory.any_popup_open())
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             let list_editor =
@@ -4424,6 +4405,7 @@ impl eframe::App for BrowserApp {
             self.focus_calculator = false;
             self.focus_task_date = false;
             self.task_color_edit = None;
+            self.calendar_task_date_target = None;
             ctx.memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
                     memory.surrender_focus(id);
@@ -4434,11 +4416,24 @@ impl eframe::App for BrowserApp {
             .memory(|memory| memory.focused())
             .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
         if !editing_text {
-            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
+            // Match Redo first, before the less-specific Undo shortcut.
+            let redo = egui::Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Default::default()
+            };
+            let no_popup = !ctx.memory(|memory| memory.any_popup_open());
+            if no_popup && ctx.input_mut(|input| input.consume_key(redo, egui::Key::Z)) {
+                self.redo_last(ctx);
+            } else if no_popup
+                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z))
+            {
                 self.undo_last(ctx);
             }
             let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()))
                 || self.timeline.owns_keyboard(ctx)
+                || self.calendar_panel.owns_keyboard(ctx)
+                || ctx.memory(|memory| memory.any_popup_open())
                 || self.notes.owns_keyboard(ctx);
             let previous = !self.sheet_workspace
                 && !self.notes_workspace
@@ -4456,11 +4451,7 @@ impl eframe::App for BrowserApp {
                 });
             if previous || next {
                 self.cancel_task_note_drag(ctx);
-                let order: &[usize] = if self.tasks_workspace {
-                    &[1, 2]
-                } else {
-                    &[0, 2, 1, 3, 4]
-                };
+                let order: &[usize] = &[1, 2];
                 let current = order
                     .iter()
                     .position(|index| *index == self.focus)
@@ -4511,7 +4502,7 @@ impl eframe::App for BrowserApp {
                 }
                 ui.label(
                     RichText::new(if self.sheet_workspace {
-                        "Arrows cells | Enter edit | Ctrl+G go to | Ctrl+Alt+W tools"
+                        "Arrows cells | Enter edit | Ctrl+G go to | Ctrl+Alt+W tasks"
                     } else if self.notes_workspace {
                         "Ctrl+Enter save note | Esc cancel | Ctrl+Alt+2 tasks"
                     } else {
@@ -4540,88 +4531,7 @@ impl eframe::App for BrowserApp {
             egui::ScrollArea::vertical()
                 .id_salt("dashboard")
                 .show(ui, |ui| {
-                    let top = ui.cursor().top();
-                    if !self.tasks_workspace && (!self.expanded || matches!(self.focus, 1 | 2)) {
-                        self.task_list_tabs(ui);
-                        ui.add_space(4.0);
-                    }
-                    let height = (height - (ui.cursor().top() - top)).max(230.0);
-                    if self.tasks_workspace {
-                        self.tasks_main(ui, height - 8.0);
-                    } else if self.expanded {
-                        self.cancel_task_split(ui.ctx());
-                        self.tool(ui, self.focus, height - 8.0);
-                    } else if ui.available_width() >= 760.0 {
-                        let featured = self
-                            .state
-                            .featured
-                            .is_some_and(|id| self.state.is_deadline_active(id));
-                        self.tool(ui, 0, if featured { 104.0 } else { 48.0 });
-                        ui.add_space(8.0);
-                        let width = ui.available_width();
-                        let main_height = 350.0;
-                        if self.timeline_view {
-                            self.task_timeline_panels(ui, main_height, false);
-                        } else {
-                            self.cancel_task_split(ui.ctx());
-                            let calendar_width = 330.0;
-                            ui.horizontal_top(|ui| {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(calendar_width, 0.0),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| self.tool(ui, 2, 0.0),
-                                );
-                                ui.add_space(12.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(
-                                        (width - calendar_width - 20.0).max(250.0),
-                                        main_height,
-                                    ),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| self.tool(ui, 1, main_height),
-                                );
-                            });
-                        }
-                        ui.add_space(8.0);
-                        if width >= 1120.0 {
-                            let math_width = (width * 0.35).max(380.0);
-                            ui.horizontal_top(|ui| {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(math_width, 380.0),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| self.tool(ui, 3, 380.0),
-                                );
-                                ui.add_space(12.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2((width - math_width - 20.0).max(620.0), 380.0),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| self.tool(ui, 4, 380.0),
-                                );
-                            });
-                        } else {
-                            self.tool(ui, 3, 180.0);
-                            ui.add_space(8.0);
-                            self.tool(ui, 4, 380.0);
-                        }
-                    } else {
-                        self.cancel_task_split(ui.ctx());
-                        let featured = self
-                            .state
-                            .featured
-                            .is_some_and(|id| self.state.is_deadline_active(id));
-                        self.tool(ui, 0, if featured { 165.0 } else { 48.0 });
-                        ui.add_space(8.0);
-                        ui.scope(|ui| {
-                            ui.set_max_width(ui.available_width().min(330.0));
-                            self.tool(ui, 2, if self.timeline_view { 350.0 } else { 0.0 });
-                        });
-                        ui.add_space(8.0);
-                        self.tool(ui, 1, 300.0);
-                        ui.add_space(8.0);
-                        self.tool(ui, 3, 220.0);
-                        ui.add_space(8.0);
-                        self.tool(ui, 4, 520.0);
-                    }
+                    self.tasks_main(ui, height - 8.0);
                     self.drag_auto_scroll(ui);
                 });
         });
@@ -4636,18 +4546,27 @@ impl eframe::App for BrowserApp {
                 self.edit_task_target(target, ctx);
             }
         }
-        if let Some(workspace) = self.deferred_workspace.take() {
+        if let Some(workspace) = self.deferred_view.take() {
             match workspace {
-                DeferredWorkspace::Sheet => {
+                DeferredView::Sheet => {
                     self.set_workspace(true, ctx);
                 }
-                DeferredWorkspace::Workbench => {
-                    self.set_workspace(false, ctx);
+                DeferredView::Calendar => self.toggle_calendar(ctx),
+                DeferredView::Calculator => {
+                    if self.pending_task_input.is_some() || self.pending_note_input {
+                        self.open_calculator(ctx);
+                    } else {
+                        ctx.memory_mut(|memory| {
+                            memory.open_popup(egui::Id::new("calculator-popup"))
+                        });
+                        self.focus_calculator = true;
+                        ctx.request_repaint();
+                    }
                 }
-                DeferredWorkspace::Tasks => {
+                DeferredView::Tasks => {
                     self.show_tasks(ctx);
                 }
-                DeferredWorkspace::Notes => {
+                DeferredView::Notes => {
                     self.show_notes(ctx);
                 }
             }

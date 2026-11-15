@@ -1,6 +1,7 @@
 use crate::{units, weather::WeatherConfig, workbench, Result};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Calculation {
@@ -130,7 +131,7 @@ impl NoteTaskOrigin {
             return Err("Invalid archived task list ID".into());
         }
         if let Some(deadline) = &self.deadline {
-            title(&deadline.title)?;
+            validate_title(&deadline.title)?;
             if self.start.is_some_and(|start| start > deadline.at) {
                 return Err("Archived task start must be on or before its deadline".into());
             }
@@ -239,11 +240,15 @@ impl Default for State {
     }
 }
 pub fn title(text: &str) -> Result<String> {
+    validate_title(text).map(str::to_owned)
+}
+
+fn validate_title(text: &str) -> Result<&str> {
     let text = text.trim();
     if text.is_empty() || text.chars().any(char::is_control) {
         return Err("Text must be nonempty and contain no control characters".into());
     }
-    Ok(text.to_owned())
+    Ok(text)
 }
 
 fn validate_note_body(text: &str) -> Result<()> {
@@ -268,11 +273,16 @@ fn validate_note_body(text: &str) -> Result<()> {
 
 /// Validate plain note text without trimming or changing its formatting.
 pub fn note_text(text: &str) -> Result<String> {
+    validate_note_text(text)?;
+    Ok(text.to_owned())
+}
+
+fn validate_note_text(text: &str) -> Result<()> {
     validate_note_body(text)?;
     if text.trim().is_empty() {
         return Err("Note text must not be blank".into());
     }
-    Ok(text.to_owned())
+    Ok(())
 }
 
 fn first_note_line(text: &str) -> Option<&str> {
@@ -348,8 +358,8 @@ impl State {
         if self.task_lists.is_empty() || self.task_lists.len() > MAX_TASK_LISTS {
             return Err("Jig needs between one and five task lists".into());
         }
-        let mut list_ids = std::collections::HashSet::new();
-        let mut list_names = std::collections::HashSet::new();
+        let mut list_ids = HashSet::new();
+        let mut list_names = HashSet::new();
         for list in &self.task_lists {
             if list.id == 0 || !list_ids.insert(list.id) {
                 return Err("Invalid or duplicate task list IDs".into());
@@ -364,7 +374,7 @@ impl State {
         }
         let mut unpinned_seen = false;
         for note in &self.notes {
-            note_text(&note.text)?;
+            validate_note_text(&note.text)?;
             if note.pinned && unpinned_seen {
                 return Err("Pinned notes must precede unpinned notes".into());
             }
@@ -385,23 +395,8 @@ impl State {
         }) {
             return Err("Invalid calculation history".into());
         }
-        let ids: Vec<_> = self
-            .tasks
-            .iter()
-            .map(|t| t.id)
-            .chain(self.deadlines.iter().map(|d| d.id))
-            .chain(self.entries.iter().map(|e| e.id))
-            .chain(self.notes.iter().map(|note| note.id))
-            .chain(self.notes.iter().filter_map(|note| {
-                note.task_origin
-                    .as_ref()?
-                    .deadline
-                    .as_ref()
-                    .map(|deadline| deadline.id)
-            }))
-            .collect();
-        let mut unique = std::collections::HashSet::new();
-        if ids.iter().any(|id| *id == 0 || !unique.insert(*id)) {
+        let mut unique = HashSet::new();
+        if self.item_ids().any(|id| id == 0 || !unique.insert(id)) {
             return Err("Invalid or duplicate item IDs".into());
         }
         for text in self
@@ -411,9 +406,10 @@ impl State {
             .chain(self.deadlines.iter().map(|d| &d.title))
             .chain(self.entries.iter().map(|e| &e.title))
         {
-            title(text)?;
+            validate_title(text)?;
         }
-        let mut linked = std::collections::HashSet::new();
+        let deadlines: HashMap<_, _> = self.deadlines.iter().map(|item| (item.id, item)).collect();
+        let mut linked = HashSet::new();
         for task in &self.tasks {
             if let Some(details) = &task.details {
                 validate_note_body(details)?;
@@ -422,10 +418,8 @@ impl State {
                 return Err("Task list is missing".into());
             }
             if let Some(deadline) = task.deadline {
-                let item = self
-                    .deadlines
-                    .iter()
-                    .find(|item| item.id == deadline)
+                let item = deadlines
+                    .get(&deadline)
                     .ok_or("Task deadline is missing or linked to more than one task")?;
                 if !linked.insert(deadline) {
                     return Err("Task deadline is missing or linked to more than one task".into());
@@ -442,7 +436,7 @@ impl State {
         }
         Ok(())
     }
-    fn id(&self) -> Result<u64> {
+    fn item_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.tasks
             .iter()
             .map(|t| t.id)
@@ -456,6 +450,9 @@ impl State {
                     .as_ref()
                     .map(|deadline| deadline.id)
             }))
+    }
+    fn id(&self) -> Result<u64> {
+        self.item_ids()
             .max()
             .unwrap_or(0)
             .checked_add(1)
@@ -835,7 +832,7 @@ impl State {
     /// Hidden lists are untouched when the visible checklist is cleared.
     pub fn remove_completed_tasks_in_lists(&mut self, list_ids: &[u64]) -> usize {
         let before = self.tasks.len();
-        let removed: Vec<_> = self
+        let removed: HashSet<_> = self
             .tasks
             .iter()
             .filter(|task| task.complete && list_ids.contains(&task.list_id))

@@ -131,14 +131,24 @@ async function tapSettings(scene) {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
     for (const color of [[77, 49, 39], [226, 192, 173]]) {
-      let left = bitmap.width, right = -1, top = bitmap.height, bottom = -1, count = 0;
-      for (let y = 0; y < bitmap.height; y++) for (let x = 0; x < bitmap.width; x++) {
-        const index = (y * bitmap.width + x) * 4;
-        if (!color.every((value, axis) => Math.abs(pixels[index + axis] - value) <= 3)) continue;
-        left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y); count++;
-      }
-      if (count > 200 && right - left >= 45 && right - left <= 100 && bottom - top >= 16) {
-        bitmap.close(); return { x: (left + right) / 2, y: (top + bottom) / 2 };
+      const seen = new Uint8Array(bitmap.width * bitmap.height);
+      const matches = index => color.every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
+      for (let start = 0; start < seen.length; start++) {
+        if (seen[start] || !matches(start)) continue;
+        let left = bitmap.width, right = -1, top = bitmap.height, bottom = -1, count = 0;
+        const stack = [start]; seen[start] = 1;
+        while (stack.length) {
+          const index = stack.pop(), x = index % bitmap.width, y = Math.floor(index / bitmap.width);
+          left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y); count++;
+          for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+            if (nx < 0 || nx >= bitmap.width || ny < 0 || ny >= bitmap.height) continue;
+            const next = ny * bitmap.width + nx;
+            if (!seen[next] && matches(next)) { seen[next] = 1; stack.push(next); }
+          }
+        }
+        if (count > 200 && right - left >= 45 && right - left <= 100 && bottom - top >= 16) {
+          bitmap.close(); return { x: (left + right) / 2, y: (top + bottom) / 2 };
+        }
       }
     }
     bitmap.close(); return null;

@@ -251,21 +251,23 @@ async function focusRowControl(scene, offset) {
   await tab(scene.page, headerTargets(scene) + strip + 2 + offset); // Gantt chart, Save .ods.
 }
 async function focusSort(scene, selectedLists = [1]) {
+  await resetTasks(scene);
+  // Add new task is the first editable field in these closed Tasks scenes.
+  // Anchor to its real DOM focus so overflowing scroll areas can contribute
+  // ordinary keyboard targets without changing any calculated row counts.
+  let inputFocused = false;
+  for (let index = 0; index < 100; index++) {
+    await tab(scene.page);
+    inputFocused = await scene.page.evaluate(() => document.activeElement?.tagName === "INPUT");
+    if (inputFocused) break;
+  }
+  assert.ok(inputFocused, "Keyboard navigation must reach Add new task before Sort");
   const data = await state(scene.page);
-  const visible = data.tasks.filter(task => selectedLists.includes(task.list_id ?? 1));
-  const rowTargets = visible.reduce((count, task) => {
-    const peers = data.tasks.filter(other => (other.list_id ?? 1) === (task.list_id ?? 1));
-    const index = peers.findIndex(other => other.id === task.id);
-    // Checkbox/date/edit/del, enabled star, color, and enabled reorder arrows.
-    return count + 4 + Number(!task.complete) + Number(Boolean(task.deadline))
-      + Number(index > 0) + Number(index + 1 < peers.length);
-  }, 0);
-  const defaultList = data.task_lists?.[0]?.id ?? 1;
-  const legacyTargets = selectedLists.includes(defaultList)
-    ? data.deadlines.filter(deadline => !data.tasks.some(task => task.deadline === deadline.id)).length * 6
-    : 0;
-  const bulkDelete = Number(visible.some(task => task.complete));
-  await focusRowControl(scene, rowTargets + legacyTargets + 2 + bulkDelete + 1); // Input, +, optional delete, Sort.
+  const bulkDelete = Number(data.tasks.some(task => task.complete && selectedLists.includes(task.list_id ?? 1)));
+  await tab(scene.page, 2 + bulkDelete); // +, optional existing delete button, Sort.
+  // Allow the ordinary keyboard-focus scroll animation to reveal the footer.
+  await scene.page.waitForTimeout(200);
+  await paint(scene.page);
   return focusedControlPoint(scene.page, scene.page.viewportSize().height - 25);
 }
 async function undo(scene, expected) {

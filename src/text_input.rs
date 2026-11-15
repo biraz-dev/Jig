@@ -32,8 +32,8 @@ impl OrderedInput {
 
     /// Called before egui begins its pass. Finish earlier editor input or a
     /// cancelled touch before a later pointer press starts another interaction.
-    /// Also prime an idle mouse position before a first touch so its location
-    /// jump cannot scroll a parent panel. The original tail runs next paint.
+    /// Prime an idle pointer before a press whose location changed without a
+    /// prior paint, so that jump cannot scroll a parent panel.
     pub fn process(&mut self, ctx: &Context, input: &mut RawInput, protect_editor: bool) {
         let resuming = !self.deferred.is_empty();
         if resuming {
@@ -50,7 +50,7 @@ impl OrderedInput {
                 .then(|| input.pointer.latest_pos())
                 .flatten()
         });
-        let single_touch = input
+        let single_pointer = input
             .events
             .iter()
             .filter(|event| {
@@ -64,12 +64,12 @@ impl OrderedInput {
             })
             .take(2)
             .count()
-            == 1;
+            <= 1;
         let mut finish_before_press = false;
-        let mut touch_press_origin = None;
+        let mut press_origin = None;
         for (index, event) in input.events.iter().enumerate() {
             if let Event::PointerMoved(pos) = event {
-                if touch_press_origin.is_some_and(|origin| origin != *pos) {
+                if press_origin.is_some_and(|origin| origin != *pos) {
                     // A resumed touch must hit-test its grip before later motion
                     // can move the pointer over a different widget.
                     self.deferred = input.events.split_off(index);
@@ -85,24 +85,22 @@ impl OrderedInput {
             } = event
             {
                 let pos = *pos;
-                // eframe emits this down immediately before its Touch::Start,
-                // without a preceding move. Moving in the same pass is too late
-                // to clear egui's delta from the previous idle mouse location.
-                let touch_press = *button == PointerButton::Primary
-                    && single_touch
-                    && matches!(input.events.get(index + 1), Some(Event::Touch { phase: TouchPhase::Start, pos: touch, .. }) if *touch == pos);
-                let prime_touch =
-                    touch_press && idle_pointer.is_some_and(|previous| previous != pos);
-                if finish_before_press || prime_touch {
+                // eframe runs pointerdown logic before touchstart identifies its
+                // device. Normalize idle primary presses, including mouse/pen;
+                // moving within this same pass cannot clear egui's old delta.
+                let idle_press = *button == PointerButton::Primary && single_pointer;
+                let prime_press =
+                    idle_press && idle_pointer.is_some_and(|previous| previous != pos);
+                if finish_before_press || prime_press {
                     self.deferred = input.events.split_off(index);
-                    if prime_touch {
+                    if prime_press {
                         input.events.push(Event::PointerMoved(pos));
                     }
                     ctx.request_repaint();
                     break;
                 }
-                if resuming && touch_press && idle_pointer == Some(pos) {
-                    touch_press_origin = Some(pos);
+                if resuming && idle_press && idle_pointer == Some(pos) {
+                    press_origin = Some(pos);
                 }
                 idle_pointer = None;
             }
@@ -114,7 +112,7 @@ impl OrderedInput {
                         ..
                     }
             ) {
-                touch_press_origin = None;
+                press_origin = None;
             }
             if matches!(
                 event,

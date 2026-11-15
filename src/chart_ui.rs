@@ -1,5 +1,5 @@
 //! Inline chart gallery. Rendering and data interpretation share the core scene.
-use crate::web_theme::{ACCENT, BG, ERROR, MUTED, RULE, TEXT};
+use crate::web_theme;
 use chrono::{Local, NaiveDate};
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
@@ -22,6 +22,7 @@ pub struct ChartPanel {
     error: Option<String>,
     scenes: BTreeMap<u64, (f64, Result<ChartScene, String>)>,
     scenes_day: Option<NaiveDate>,
+    scenes_dark: Option<bool>,
 }
 
 impl ChartPanel {
@@ -46,32 +47,35 @@ impl ChartPanel {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, state: &State) -> Vec<ChartAction> {
+        let colors = web_theme::colors(ui.ctx());
         let today = Local::now().date_naive();
-        if self.scenes_day != Some(today) {
+        let dark = ui.visuals().dark_mode;
+        if self.scenes_day != Some(today) || self.scenes_dark != Some(dark) {
             self.invalidate();
             self.scenes_day = Some(today);
+            self.scenes_dark = Some(dark);
         }
         let mut actions = Vec::new();
         ui.horizontal_wrapped(|ui| {
             if ui.button("Back to cells").clicked() {
                 actions.push(ChartAction::BackToGrid);
             }
-            ui.label(RichText::new("Charts").color(ACCENT));
+            ui.label(RichText::new("Charts").color(colors.accent));
         });
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).color(ERROR).size(12.0));
+            ui.label(RichText::new(error).color(colors.error).size(12.0));
         }
         let Some(book) = &state.workbook else {
             ui.label(
                 RichText::new("Select cells and use Insert → Chart to create a chart.")
-                    .color(MUTED),
+                    .color(colors.muted),
             );
             return actions;
         };
         if book.charts.is_empty() {
             ui.label(
                 RichText::new("Select cells and use Insert → Chart to create a chart.")
-                    .color(MUTED),
+                    .color(colors.muted),
             );
             return actions;
         }
@@ -82,13 +86,15 @@ impl ChartPanel {
                 for chart in &book.charts {
                     ui.push_id(("chart-card", chart.id), |ui| {
                         egui::Frame::default()
-                            .fill(BG)
-                            .stroke(Stroke::new(0.6_f32, RULE))
+                            .fill(colors.bg)
+                            .stroke(Stroke::new(0.6_f32, colors.rule))
                             .inner_margin(egui::Margin::same(9))
                             .show(ui, |ui| {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.label(
-                                        RichText::new(chart.kind.label()).color(ACCENT).size(12.0),
+                                        RichText::new(chart.kind.label())
+                                            .color(colors.accent)
+                                            .size(12.0),
                                     );
                                     let source = match chart.source {
                                         ChartSource::Tasks => "Live tasks".into(),
@@ -105,7 +111,7 @@ impl ChartPanel {
                                             )
                                         }
                                     };
-                                    ui.label(RichText::new(source).color(MUTED).size(11.0));
+                                    ui.label(RichText::new(source).color(colors.muted).size(11.0));
                                     if ui.small_button("Rename").clicked() {
                                         self.title_edit = Some((chart.id, chart.title.clone()));
                                         self.focus_title = true;
@@ -179,17 +185,27 @@ impl ChartPanel {
                                     }
                                 }
                                 let width = f64::from(ui.available_width().clamp(280.0, 2000.0));
-                                let cached = self.scenes.entry(chart.id).or_insert_with(|| {
-                                    (width, charts::scene(state, chart, width, 280.0))
-                                });
+                                let scene = || {
+                                    if dark {
+                                        charts::scene(state, chart, width, 280.0)
+                                    } else {
+                                        charts::scene_light(state, chart, width, 280.0)
+                                    }
+                                };
+                                let cached = self
+                                    .scenes
+                                    .entry(chart.id)
+                                    .or_insert_with(|| (width, scene()));
                                 if cached.0 != width {
-                                    *cached = (width, charts::scene(state, chart, width, 280.0));
+                                    *cached = (width, scene());
                                 }
                                 match &cached.1 {
                                     Ok(scene) => paint_scene(ui, scene),
                                     Err(error) => {
-                                        ui.label(RichText::new(&chart.title).color(TEXT));
-                                        ui.label(RichText::new(error).color(ERROR).size(12.0));
+                                        ui.label(RichText::new(&chart.title).color(colors.text));
+                                        ui.label(
+                                            RichText::new(error).color(colors.error).size(12.0),
+                                        );
                                     }
                                 }
                             });

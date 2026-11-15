@@ -319,9 +319,10 @@ Task lists appear as horizontal tabs, with a maximum of five. Click a tab to sho
 one list; **Shift-click** tabs to combine them. Combined views use subtly different
 row shades while retaining each task's deadline color. **Multi** enables the same
 selection on touchscreens. **+** adds a list, double-clicking its name (or **F2**
-on a focused tab) renames it, and **−** removes the active list. The +/− controls
-sit beside the tabs. Removing
-a list moves its tasks into a remaining list; the last list cannot be removed.
+on a focused tab) renames it. Click **−** to ask to remove the active list, then
+click **−** again or **Remove** to confirm. **Cancel** or **Esc** dismisses the
+confirmation. The +/− controls sit beside the tabs. Removing a list moves its
+tasks into a remaining list; the last list cannot be removed.
 Tasks, their dates and the featured countdown are preserved.
 
 New tasks go into the active list. The task editor can move an existing task to

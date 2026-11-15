@@ -227,8 +227,17 @@ async function focusPickerTime(page) {
     // transport, so its DOM value is not the Rust field's content.
     await page.evaluate(() => navigator.clipboard.writeText("Picker copy pending"));
     await navigateKey(page, "Control+a"); await navigateKey(page, "Control+c");
-    await page.waitForFunction(async () => (await navigator.clipboard.readText()) !== "Picker copy pending", undefined, { timeout: 3000, polling: 25 });
-    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    const until = Date.now() + 3000; let copied = "Picker copy pending";
+    while (copied === "Picker copy pending" && Date.now() < until) {
+      let timer;
+      try {
+        copied = await Promise.race([page.evaluate(() => navigator.clipboard.readText()), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Picker clipboard read exceeded its deadline")), Math.max(1, until - Date.now()));
+        })]);
+      } finally { clearTimeout(timer); }
+      if (copied === "Picker copy pending") await new Promise(resolve => setTimeout(resolve, Math.min(25, Math.max(0, until - Date.now()))));
+    }
+    assert.notEqual(copied, "Picker copy pending", "Copy must expose the focused date-picker editor's actual text");
     if (/^\d{2}:\d{2}$/.test(copied)) return;
   }
   assert.fail("The date picker must expose a keyboard-editable HH:MM field");

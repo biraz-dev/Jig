@@ -1,100 +1,66 @@
-// Real Chromium checks for the built Rust/WASM preview. All datasets are synthetic.
-// Serve dist at /Jig/ before running: node tests/browser_smoke.mjs
+// Real Chromium checks for the Rust/WASM Tasks, calendar and calculator UI.
+// Every fixture is synthetic. Serve dist at /Jig/ before running this file.
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { chromium } from "playwright";
+import { chromium, errors } from "playwright";
+import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 import "./import_bridges.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
 const sampleUrl = new URL(base); sampleUrl.searchParams.set("sample", "1"); sampleUrl.hash = "";
 const key = "jig.personal.v1";
-const weatherSettingsKey = "jig.weather.settings.v1";
-const weatherCacheKey = "jig.weather.cache.v1";
+const weatherSettingsKey = "jig.weather.settings.v1", weatherCacheKey = "jig.weather.cache.v1";
 const weatherOrigins = ["https://api.open-meteo.com", "https://geocoding-api.open-meteo.com"];
 const results = resolve("playwright-results");
 await mkdir(results, { recursive: true });
-
 const fixture = {
   version: 1,
-  preferences: { decimals: 2, focus: 3 },
+  preferences: { decimals: 2, focus: 3, weather: null },
   history: [{ expression: "2 + 2", result: 4 }],
-  tasks: [{ id: 1, text: "Sample: browser persistence check", complete: false }],
-  deadlines: [{ id: 2, title: "Sample: future opening", at: "2030-01-15T18:00:00Z" }],
-  entries: [{ id: 3, title: "Sample: studio visit", date: "2030-01-15" }],
+  tasks: [{ id: 1, text: "Sample: browser persistence check", complete: false, deadline: 2, color: "rose" }],
+  deadlines: [{ id: 2, title: "Sample: browser persistence check", at: "2030-01-15T18:00:00Z" }],
+  entries: [{ id: 3, title: "Sample: hidden studio visit", date: "2030-01-15" }],
+  notes: [{ id: 4, text: "Sample: useful studio note", pinned: true }],
   featured: 2,
 };
 const fixtureRaw = JSON.stringify(fixture);
-const issues = [];
-const pages = [];
+const issues = [], pages = [];
 let phase = "launch Chromium";
-const suiteTimer = setTimeout(() => {
-  console.error(`Browser smoke exceeded 240 seconds during: ${phase}`);
-  process.exit(1);
-}, 240000);
-
-function progress(message) {
-  phase = message;
-  console.log(`Browser phase: ${message}`);
-}
-
+const suiteTimer = setTimeout(() => { console.error(`Browser smoke exceeded 300 seconds during: ${phase}`); process.exit(1); }, 300000);
+function progress(message) { phase = message; console.log(`Browser phase: ${message}`); }
 function bounded(promise, milliseconds, description) {
   let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${description} timed out after ${milliseconds}ms`)), milliseconds);
-    }),
-  ]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${description} timed out after ${milliseconds}ms`)), milliseconds); })]).finally(() => clearTimeout(timer));
 }
-
-async function release(context, label) {
-  progress(`close ${label}`);
-  await bounded(context.close(), 5000, `Closing ${label}`);
-}
-
-async function paint(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-}
-
+async function release(context, label) { progress(`close ${label}`); await bounded(context.close(), 5000, `Closing ${label}`); }
+async function paint(page) { await waitForAppPaint(page); }
+async function navigateKey(page, value) { await page.keyboard.press(value); await paint(page); }
+async function tab(page, count = 1) { for (let index = 0; index < count; index++) await navigateKey(page, "Tab"); }
 async function capture(page, name) {
-  const png = await page.screenshot({ path: resolve(results, `${name}.png`) });
-  // Optional visual-review output contains only these synthetic test scenes.
-  // Normal CI keeps PNGs in its artifact without printing their encoded bytes.
-  const allowed = new Set([
-    "consolidated-sample", "consolidated-desktop", "consolidated-medium",
-    "consolidated-mobile", "consolidated-six-weeks", "consolidated-data-open",
-    "consolidated-math-maximized", "consolidated-calendar-maximized",
-    "consolidated-checklist-maximized", "consolidated-dated-task",
-    "task-colors-desktop", "task-colors-mobile", "task-colors-six-weeks",
-    "task-colors-calendar-empty", "task-colors-calendar-selected", "task-colors-mobile-touch",
-    "task-colors-list-scroll",
-    "task-colors-date-focus", "task-colors-failure",
-    "calendar-weather-unselected", "calendar-weather-selected",
-  ]);
-  const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
-    console.log(`JIG_RENDER_BEGIN_${name}`);
-    const encoded = png.toString("base64");
+  const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
+  if (new Set((process.env.JIG_RENDER_LOGS ?? "").split(",")).has(name) && png.length <= 1024 * 1024) {
+    console.log(`JIG_RENDER_BEGIN_${name}`); const encoded = png.toString("base64");
     for (let offset = 0; offset < encoded.length; offset += 2048) console.log(encoded.slice(offset, offset + 2048));
     console.log(`JIG_RENDER_END_${name}`);
   }
+  return png;
 }
-
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"],
-});
+const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
 
 async function newPage(label, {
-  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime, hasTouch = false,
+  raw, viewport = { width: 1440, height: 1100 }, weather, weatherSettings, weatherCache, fixedTime, hasTouch = false, workspace = "tasks",
 } = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true, hasTouch, timezoneId: "Etc/UTC" });
-  // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
-  await context.addInitScript(path => {
-    if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
-  }, new URL(base).pathname);
+  // Start in Tasks once; later reloads must preserve actual workspace choices.
+  await context.addInitScript(({ path, workspace }) => {
+    if (location.pathname === path && sessionStorage.getItem("jig-workspace-seeded") !== "yes") {
+      localStorage.setItem("jig.workspace.v1", workspace);
+      sessionStorage.setItem("jig-workspace-seeded", "yes");
+    }
+  }, { path: new URL(base).pathname, workspace });
+  await installFrameFence(context);
   if (fixedTime) {
     // Keep calendar fixtures deterministic without replacing the native RAF,
     // performance clock or timers that drive egui's real rendering and inputs.
@@ -198,169 +164,136 @@ function observe(page, label, allowedExternal = []) {
 async function boot(page, reload = false, address = base) {
   const label = pages.find(item => item.page === page)?.label ?? address;
   progress(`${reload ? "reload" : "boot"} ${label}`);
+  if (reload) await page.reload({ waitUntil: "load" }); else await page.goto(address, { waitUntil: "load" });
   await page.bringToFront();
-  if (reload) await page.reload({ waitUntil: "load" });
-  else await page.goto(address, { waitUntil: "load" });
-  await page.bringToFront();
-  await page.waitForFunction(
-    () => window.jigReady === true || typeof window.jigBootError === "string",
-    undefined,
-    { timeout: 60000, polling: 100 },
-  );
+  await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000, polling: 100 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined, "Rust/WASM startup failed");
   assert.equal(await page.locator("#jig_canvas").isVisible(), true);
   assert.equal(await page.locator("#loading").isHidden(), true);
-  // WebRunner startup precedes the first painted egui frame.
   await page.waitForTimeout(500);
-  // The spreadsheet is the launch workspace; exercise the retained Workbench.
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await page.keyboard.press("Control+Alt+w");
-  await paint(page);
-  await page.waitForTimeout(250);
 }
-
-async function saved(page) {
-  return page.evaluate(key => localStorage.getItem(key), key);
-}
-
-async function navigateKey(page, key) {
-  await page.keyboard.press(key);
-  await paint(page);
-  // Browser animation frames can run before WASM has consumed its input queue.
-  // Give each discrete navigation action its own app frame, as human typing
-  // does, instead of letting several Tab events collapse into one advance.
-  await page.waitForTimeout(100);
-}
-
-async function tab(page, count = 1) {
-  for (let index = 0; index < count; index++) {
-    await navigateKey(page, "Tab");
-  }
-}
-
-async function maximizeApplet(page, applet) {
-  // Reset to the dashboard and surrender editor focus through normal shortcuts.
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+async function resetFocus(page) {
+  const { width, height } = page.viewportSize();
+  await page.locator("#jig_canvas").click({ position: { x: width - 6, y: height - 6 } });
   await navigateKey(page, "Escape");
-  await navigateKey(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await navigateKey(page, "Escape");
-  for (let index = 0; index < (applet === "calendar" ? 2 : 1); index++) {
-    await navigateKey(page, "ArrowLeft");
-  }
-  await navigateKey(page, "Control+m");
 }
-
-async function tapToday(page) {
-  // Locate the actual date button's distinctive background. This remains a
-  // touch interaction when an extra calendar control changes the grid's Y.
-  const png = await page.screenshot();
-  const point = await page.evaluate(async encoded => {
-    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const context = canvas.getContext("2d");
-    context.drawImage(bitmap, 0, 0);
-    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
-    const near = (offset, color, tolerance) => color.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= tolerance);
-    const top = 100, bottom = Math.min(500, bitmap.height), left = 20, right = bitmap.width - 20;
-    const seen = new Uint8Array(bitmap.width * bitmap.height), dates = [];
-    for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
-      const start = y * bitmap.width + x;
-      if (seen[start] || !near(start * 4, [67, 42, 34], 2)) continue;
-      const stack = [start], region = { left: x, right: x, top: y, bottom: y, count: 0 };
-      seen[start] = 1;
-      while (stack.length) {
-        const index = stack.pop(), px = index % bitmap.width, py = Math.floor(index / bitmap.width);
-        region.left = Math.min(region.left, px); region.right = Math.max(region.right, px);
-        region.top = Math.min(region.top, py); region.bottom = Math.max(region.bottom, py); region.count++;
-        for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
-          if (nx < left || nx >= right || ny < top || ny >= bottom) continue;
-          const next = ny * bitmap.width + nx;
-          if (!seen[next] && near(next * 4, [67, 42, 34], 2)) { seen[next] = 1; stack.push(next); }
-        }
-      }
-      if (region.count < 400 || region.bottom - region.top < 20 || region.bottom - region.top > 36) continue;
-      // The shared selection fill can appear elsewhere. Today's date also has
-      // an orange number; task markers keep their separate data colors.
-      let accent = 0;
-      for (let py = region.top; py <= region.bottom; py++) for (let px = region.left; px <= region.right; px++) {
-        if (near((py * bitmap.width + px) * 4, [244, 107, 74], 3)) accent++;
-      }
-      if (accent >= 4) dates.push(region);
-    }
-    bitmap.close();
-    const date = dates.sort((a, b) => b.count - a.count)[0];
-    return date ? {
-      x: (date.left + date.right) / 2,
-      y: (date.top + date.bottom) / 2,
-      top: date.top,
-      width: date.right - date.left + 1,
-    } : null;
-  }, png.toString("base64"));
-  assert.ok(point, "Today's calendar button must be visibly present before touching it");
-  await page.touchscreen.tap(point.x, point.y);
-  return point;
-}
-
-function taskColorFixture(date = "2026-10-30") {
-  const names = ["casting studies", "photograph sculptures", "glaze tests", "print labels", "pack studio tools", "clear workbench", "collect supplies", "review proofs"];
-  const colors = ["rose", "amber", "sage", "blue", "lilac", undefined, "rose", "amber"];
-  const tomorrow = new Date(`${date}T12:00:00Z`);
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  const nextDate = tomorrow.toISOString().slice(0, 10);
-  const tasks = names.map((name, index) => ({
-    id: index + 1, text: `Sample: ${name}`, complete: index >= 6, deadline: 101 + index,
-    ...(colors[index] ? { color: colors[index] } : {}),
-  }));
-  tasks.push({ id: 9, text: "Sample: exhibition opening", complete: false, deadline: 109, color: "lilac" });
-  return {
-    ...fixture,
-    tasks,
-    deadlines: tasks.map(task => ({ id: task.deadline, title: task.text, at: `${task.id === 9 ? nextDate : date}T18:00:00Z` })),
-    entries: [{ ...fixture.entries[0], id: 200 }],
-    featured: 109,
-  };
-}
-
+async function saved(page) { return page.evaluate(key => localStorage.getItem(key), key); }
 async function calculate(page, expression) {
   progress(`calculate ${expression}`);
-  await page.bringToFront();
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await page.keyboard.press("Control+Alt+4");
-  await page.waitForTimeout(300);
-  await page.keyboard.type(expression, { delay: 15 });
-  await page.keyboard.press("Enter");
+  await page.bringToFront(); await resetFocus(page); await navigateKey(page, "Control+Alt+4");
+  await typeCalculation(page, expression);
 }
-
-async function failedCalculatorReadback(page) {
-  // Inspect the ordinary editor through copy only: never type or press Enter.
-  const sentinel = "Jig failure copy pending";
-  await page.bringToFront();
-  await page.evaluate(text => navigator.clipboard.writeText(text), sentinel);
-  await page.keyboard.press("Control+Alt+4");
-  await page.waitForTimeout(300);
-  await page.keyboard.press("Control+a");
-  await page.keyboard.press("Control+c");
-  await page.waitForFunction(async sentinel => (await navigator.clipboard.readText()) !== sentinel, sentinel, { timeout: 1500, polling: 100 });
-  return page.evaluate(async () => ({
-    copied: (await navigator.clipboard.readText()).slice(0, 256),
-    domSelection: window.getSelection()?.toString().slice(0, 256) ?? "",
-    activeTag: document.activeElement?.tagName ?? null,
-  }));
+async function typeCalculation(page, expression) {
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
+  await page.keyboard.press("Control+a"); await page.keyboard.type(expression, { delay: 15 }); await navigateKey(page, "Enter");
 }
-
 async function expectCalculation(page, expression, result, length, unit) {
   await page.waitForFunction(({ key, expression, result, length, unit }) => {
-    try {
-      const state = JSON.parse(localStorage.getItem(key));
-      const last = state.history.at(-1);
-      return state.history.length === length && last.expression === expression
-        && last.result === result && last.unit === unit;
-    } catch {
-      return false;
-    }
+    try { const state = JSON.parse(localStorage.getItem(key)), last = state.history.at(-1); return state.history.length === length && last.expression === expression && last.result === result && last.unit === unit; } catch { return false; }
   }, { key, expression, result, length, unit }, { timeout: 15000 });
+}
+async function openTaskDates(page) {
+  await resetFocus(page); await navigateKey(page, "Control+Alt+2");
+  // Fresh journal: Data/Calculator/Source, Tasks/+, Gantt/Save, then row date.
+  await tab(page, 11); await navigateKey(page, "Space");
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
+}
+async function openDuePicker(page) {
+  await openTaskDates(page);
+  await tab(page); await navigateKey(page, "Space");
+}
+async function imeCursor(page, minimumY = 0) {
+  await page.waitForFunction(minimumY => {
+    const input = document.activeElement;
+    return input?.tagName === "INPUT" && Number.isFinite(parseFloat(input.style.left)) && parseFloat(input.style.top) > minimumY;
+  }, minimumY, { timeout: 5000, polling: 25 });
+  return page.evaluate(() => ({ x: parseFloat(document.activeElement.style.left), y: parseFloat(document.activeElement.style.top) }));
+}
+async function focusVisibleInput(page, point) {
+  // eframe positions its public IME transport at the visible Rust caret. Its
+  // CSS coordinates therefore identify the actual field for this real click.
+  // Offset from the one-pixel transport itself so the pointer reaches canvas.
+  await page.mouse.click(point.x + 6, point.y); await paint(page);
+  await page.waitForFunction(point => document.activeElement?.tagName === "INPUT"
+    && Math.abs(parseFloat(document.activeElement.style.top) - point.y) < 8, point, { timeout: 5000, polling: 25 });
+}
+async function focusPickerTime(page) {
+  for (let index = 0; index < 100; index++) {
+    await tab(page);
+    try {
+      await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 150, polling: 25 });
+    } catch (error) { if (error instanceof errors.TimeoutError) continue; throw error; }
+    // Observe the actual editor via normal Copy. The browser's IME input is a
+    // transport, so its DOM value is not the Rust field's content.
+    await page.evaluate(() => navigator.clipboard.writeText("Picker copy pending"));
+    await navigateKey(page, "Control+a"); await navigateKey(page, "Control+c");
+    await page.waitForFunction(async () => (await navigator.clipboard.readText()) !== "Picker copy pending", undefined, { timeout: 3000, polling: 25 });
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    if (/^\d{2}:\d{2}$/.test(copied)) return;
+  }
+  assert.fail("The date picker must expose a keyboard-editable HH:MM field");
+}
+async function exportData(page) {
+  const raw = await saved(page), event = page.waitForEvent("download");
+  await page.evaluate(text => window.jigExport(text), raw);
+  const download = await event; assert.equal(download.suggestedFilename(), "jig.json");
+  return JSON.parse(await readFile(await download.path(), "utf8"));
+}
+async function confirmImport(page) {
+  await resetFocus(page);
+  // This helper is used immediately after reload/import, with empty journals:
+  // Data, Calculator, then the pending import's real Confirm control.
+  await tab(page, 3); await navigateKey(page, "Space");
+}
+async function expectClipChange(page, before, clip, message) {
+  const until = Date.now() + 5000; let actual;
+  do {
+    actual = await page.screenshot({ clip, timeout: 3000, animations: "disabled", caret: "hide" });
+    if (!actual.equals(before)) return;
+    await page.waitForTimeout(50);
+  } while (Date.now() < until);
+  assert.notDeepEqual(actual, before, message);
+}
+async function filledRegions(page, color, top, bottom) {
+  const png = await page.screenshot({ animations: "disabled", caret: "hide" });
+  return page.evaluate(async ({ encoded, color, top, bottom }) => {
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
+    bottom = Math.min(bottom, bitmap.height);
+    const near = index => color.every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
+    for (let y = top; y < bottom; y++) for (let x = 6; x < bitmap.width - 6; x++) {
+      const start = y * bitmap.width + x;
+      if (seen[start] || !near(start)) continue;
+      const stack = [start], r = { left: x, right: x, top: y, bottom: y, count: 0 }; seen[start] = 1;
+      while (stack.length) {
+        const index = stack.pop(), px = index % bitmap.width, py = Math.floor(index / bitmap.width);
+        r.left = Math.min(r.left, px); r.right = Math.max(r.right, px); r.top = Math.min(r.top, py); r.bottom = Math.max(r.bottom, py); r.count++;
+        for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
+          if (nx < 0 || nx >= bitmap.width || ny < top || ny >= bottom) continue;
+          const next = ny * bitmap.width + nx;
+          if (!seen[next] && near(next)) { seen[next] = 1; stack.push(next); }
+        }
+      }
+      if (r.count > 100) regions.push({ ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2, width: r.right - r.left + 1, height: r.bottom - r.top + 1 });
+    }
+    bitmap.close(); return regions.sort((a, b) => b.count - a.count);
+  }, { encoded: png.toString("base64"), color, top, bottom });
+}
+async function selectedDay(page) {
+  const regions = await filledRegions(page, [67, 42, 34], 60, page.viewportSize().height - 40);
+  const region = regions.find(r => r.count > 900 && r.height >= 55 && r.height < 80 && r.width >= 18 && r.width <= 98);
+  assert.ok(region, "The continuous calendar's selected day must be visibly readable"); return region;
+}
+async function clickCalculatorIcon(page, touch = false) {
+  await resetFocus(page);
+  // Fresh datasets have disabled Undo/Redo: Data, then the Calculator icon.
+  await tab(page, 2);
+  const regions = await filledRegions(page, [77, 49, 39], 0, 90);
+  const icon = regions.find(r => r.count > 200 && r.width >= 24 && r.width <= 34 && r.height >= 22 && r.height <= 32);
+  assert.ok(icon, "The focused Calculator icon must be visible in the header");
+  if (touch) await page.touchscreen.tap(icon.x, icon.y); else await page.mouse.click(icon.x, icon.y);
+  await paint(page);
 }
 
 function mockForecast(config, at = new Date()) {
@@ -413,566 +346,208 @@ function checkWeather(cache, config, at) {
     code: raw.daily.weather_code[index],
   })));
 }
-
 try {
   const demo = await newPage("sample-desktop");
   await boot(demo.page, false, `${sampleUrl.href}#weather=Sample%20Harbor`);
-  assert.equal(await saved(demo.page), null, "The explicit sample preview must keep its data temporary");
-  await capture(demo.page, "consolidated-sample");
-  await calculate(demo.page, "1 / 3");
-  await demo.page.waitForTimeout(1200);
-  assert.equal(await saved(demo.page), null, "Editing sample data must not create personal browser state");
+  assert.equal(await saved(demo.page), null, "Explicit sample data must remain temporary");
+  await capture(demo.page, "consolidated-sample"); await clickCalculatorIcon(demo.page); await typeCalculation(demo.page, "1 / 3"); await demo.page.waitForTimeout(800);
+  assert.equal(await saved(demo.page), null, "Sample calculator edits must not create personal state");
   await release(demo.context, "sample-desktop");
 
-  const personal = await newPage("personal-desktop", { raw: fixtureRaw });
-  await boot(personal.page);
-  assert.equal(await saved(personal.page), fixtureRaw, "Opening personal state must not rewrite it");
-  await personal.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-  // Data tools remain inline and must not interfere with ordinary math focus.
-  await personal.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await personal.page.keyboard.press("Control+Alt+d");
-  await paint(personal.page);
-  assert.equal(await saved(personal.page), fixtureRaw, "Opening Data must not rewrite the saved workbench");
-  await capture(personal.page, "consolidated-data-open");
-  // Arithmetic and lengths use the same ordinary input and saved history. Old
-  // arithmetic entries have no unit field; conversions retain canonical units.
-  await calculate(personal.page, "72 in mm");
-  await expectCalculation(personal.page, "72 in mm", 1828.8, 2, "mm");
-  await personal.page.keyboard.press("Control+Alt+d");
-  await paint(personal.page);
-  await personal.page.screenshot({ path: resolve(results, "hybrid-conversion-desktop.png") });
-  const fractionalLength = 3.81; // 1.5 inches, using the exact 2.54 cm per inch.
-  await calculate(personal.page, "1 1/2 in cm");
-  await expectCalculation(personal.page, "1 1/2 in cm", fractionalLength, 3, "cm");
-  await calculate(personal.page, "1 / 3");
-  await expectCalculation(personal.page, "1 / 3", 1 / 3, 4);
-  // ans uses the unrounded number even when only two decimals are displayed.
-  const preciseMillimeters = (1 / 3) * 25.4;
-  await calculate(personal.page, "ans in mm");
-  await expectCalculation(personal.page, "ans in mm", preciseMillimeters, 5, "mm");
-  assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Hiding calendar entries must not delete saved notes");
+  const legacyWorkspace = await newPage("legacy-workspace", { raw: fixtureRaw, workspace: "workbench" });
+  await boot(legacyWorkspace.page);
+  assert.equal(await legacyWorkspace.page.evaluate(() => localStorage.getItem("jig.workspace.v1")), "tasks", "A removed Workbench preference must return to Tasks");
+  assert.equal(await saved(legacyWorkspace.page), fixtureRaw);
+  await release(legacyWorkspace.context, "legacy-workspace");
+
+  const personal = await newPage("personal-desktop", { raw: fixtureRaw }); await boot(personal.page);
+  assert.equal(await saved(personal.page), fixtureRaw, "Opening saved work must not migrate or rewrite it");
+  await resetFocus(personal.page); await navigateKey(personal.page, "Control+Alt+d");
+  assert.equal(await saved(personal.page), fixtureRaw); await capture(personal.page, "consolidated-data-open");
+  await calculate(personal.page, "72 in mm"); await expectCalculation(personal.page, "72 in mm", 1828.8, 2, "mm");
+  await navigateKey(personal.page, "Control+Alt+d");
+  await calculate(personal.page, "1 1/2 in cm"); await expectCalculation(personal.page, "1 1/2 in cm", 3.81, 3, "cm");
+  await calculate(personal.page, "1 / 3"); await expectCalculation(personal.page, "1 / 3", 1 / 3, 4);
+  const millimeters = (1 / 3) * 25.4;
+  await calculate(personal.page, "ans in mm"); await expectCalculation(personal.page, "ans in mm", millimeters, 5, "mm");
   await boot(personal.page, true);
-  assert.deepEqual(JSON.parse(await saved(personal.page)).history.at(-1), {
-    expression: "ans in mm", result: preciseMillimeters, unit: "mm",
-  }, "A conversion must keep its unit and full precision across restart");
-  assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Calendar notes must survive restart while hidden");
-  await calculate(personal.page, "ans * 3");
-  await expectCalculation(personal.page, "ans * 3", preciseMillimeters * 3, 6);
-
+  assert.deepEqual(JSON.parse(await saved(personal.page)).history.at(-1), { expression: "ans in mm", result: millimeters, unit: "mm" });
+  await calculate(personal.page, "ans * 3"); await expectCalculation(personal.page, "ans * 3", millimeters * 3, 6);
   const beforeInvalid = await saved(personal.page);
-  await calculate(personal.page, "72 in parsecs");
-  await personal.page.waitForTimeout(500);
-  assert.equal(await saved(personal.page), beforeInvalid, "An invalid conversion must not change saved history or the previous answer");
-  // The rejected expression remains editable; clear it through the same field.
-  await personal.page.keyboard.press("Control+a");
-  await personal.page.keyboard.press("Backspace");
-
-  // Ctrl+M must let the same input work in maximized and restored dashboard
-  // views, without creating extra history records while switching.
-  await personal.page.keyboard.press("Control+m");
-  await calculate(personal.page, "3 / 8");
-  await expectCalculation(personal.page, "3 / 8", 0.375, 7);
-  await capture(personal.page, "consolidated-math-maximized");
-  await personal.page.keyboard.press("Control+m");
-  await calculate(personal.page, "ans * 8");
-  await expectCalculation(personal.page, "ans * 8", 3, 8);
-  // Repeatedly rebuild the same input in maximized and dashboard layouts. Every
-  // keystroke must still reach it, without retries or duplicate calculations.
-  const repeated = [1, 2, 3, 4].map(value => ({ expression: `7 + ${value}`, result: 7 + value }));
-  for (const [index, calculation] of repeated.entries()) {
-    await personal.page.keyboard.press("Control+m");
-    await calculate(personal.page, calculation.expression);
-    await expectCalculation(personal.page, calculation.expression, calculation.result, 9 + index);
-  }
-  assert.deepEqual(JSON.parse(await saved(personal.page)).history, [
-    ...fixture.history,
-    { expression: "72 in mm", result: 1828.8, unit: "mm" },
-    { expression: "1 1/2 in cm", result: fractionalLength, unit: "cm" },
-    { expression: "1 / 3", result: 1 / 3 },
-    { expression: "ans in mm", result: preciseMillimeters, unit: "mm" },
-    { expression: "ans * 3", result: preciseMillimeters * 3 },
-    { expression: "3 / 8", result: 0.375 },
-    { expression: "ans * 8", result: 3 },
-    ...repeated,
-  ], "Repeated maximize/restore must preserve the exact calculation order and results");
-  assert.deepEqual(JSON.parse(await saved(personal.page)).entries, fixture.entries, "Combined-tool interactions must preserve hidden calendar notes");
-
-  // A plain arrow remains a caret operation while editing, rather than moving
-  // selection into another applet. Insert a digit before the final operand.
-  progress("calculate using ArrowLeft inside the input");
-  await personal.page.keyboard.press("Control+Alt+4");
-  await personal.page.waitForTimeout(300);
-  await personal.page.keyboard.type("12 + 3", { delay: 15 });
-  await personal.page.keyboard.press("ArrowLeft");
-  await personal.page.keyboard.type("4", { delay: 15 });
-  await personal.page.keyboard.press("Enter");
-  await expectCalculation(personal.page, "12 + 43", 55, 13);
-
-  // Escape exits text editing; arrows then select calendar/checklist applets.
-  // Maximizing and restoring those applets must leave every saved item intact.
-  progress("navigate and maximize selected applets");
-  const beforeNavigation = JSON.parse(await saved(personal.page));
-  await personal.page.keyboard.press("Escape");
-  await paint(personal.page);
-  await personal.page.keyboard.press("ArrowLeft");
-  await paint(personal.page);
-  await personal.page.keyboard.press("ArrowLeft");
-  await paint(personal.page);
-  await personal.page.keyboard.press("Control+m");
-  await paint(personal.page);
-  await capture(personal.page, "consolidated-calendar-maximized");
-  await personal.page.keyboard.press("Escape");
-  await paint(personal.page);
-  await personal.page.keyboard.press("ArrowRight");
-  await paint(personal.page);
-  await personal.page.keyboard.press("Control+m");
-  await paint(personal.page);
-  await capture(personal.page, "consolidated-checklist-maximized");
-  await personal.page.keyboard.press("Escape");
-  await paint(personal.page);
-  const afterNavigation = JSON.parse(await saved(personal.page));
-  for (const field of ["history", "tasks", "deadlines", "entries", "featured"]) {
-    assert.deepEqual(afterNavigation[field], beforeNavigation[field], `Applet navigation changed ${field}`);
-  }
-  await calculate(personal.page, "18 in cm");
-  await expectCalculation(personal.page, "18 in cm", 45.72, 14, "cm");
-  await personal.page.screenshot({ path: resolve(results, "personal-desktop.png") });
-
-  // Exercise the public file bridge: export is a local browser download.
-  const exportRaw = await saved(personal.page);
-  const downloadEvent = personal.page.waitForEvent("download");
-  await personal.page.evaluate(text => window.jigExport(text), exportRaw);
-  const download = await downloadEvent;
-  assert.equal(download.suggestedFilename(), "jig.json");
-  const downloadPath = await download.path();
-  assert.ok(downloadPath);
-  const exported = JSON.parse(await readFile(downloadPath, "utf8"));
-  assert.deepEqual(exported, JSON.parse(exportRaw));
-  assert.deepEqual(exported.entries, fixture.entries, "JSON export must retain hidden calendar notes");
-
-  // The actual hidden file input queues imports for the Rust UI to validate.
-  const invalidColor = structuredClone(fixture);
-  invalidColor.tasks[0].color = "neon";
+  await calculate(personal.page, "72 in parsecs"); await personal.page.waitForTimeout(400);
+  assert.equal(await saved(personal.page), beforeInvalid, "Invalid conversions must preserve history and the previous answer");
+  await calculate(personal.page, "3 / 8"); await expectCalculation(personal.page, "3 / 8", 0.375, 7);
+  const calculations = [1, 2, 3, 4].map(value => ({ expression: `7 + ${value}`, result: 7 + value }));
+  for (const [index, item] of calculations.entries()) { await calculate(personal.page, item.expression); await expectCalculation(personal.page, item.expression, item.result, 8 + index); }
+  const afterMath = JSON.parse(await saved(personal.page));
+  for (const field of ["tasks", "deadlines", "entries", "notes", "featured"]) assert.deepEqual(afterMath[field], fixture[field], `Calculator popup changed ${field}`);
+  await capture(personal.page, "calculator-popup-desktop");
+  await navigateKey(personal.page, "Control+Alt+4");
+  await personal.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
+  await navigateKey(personal.page, "Control+Alt+w");
+  await personal.page.waitForFunction(() => document.activeElement?.tagName !== "INPUT", undefined, { polling: 25 });
+  assert.equal(await personal.page.evaluate(() => localStorage.getItem("jig.workspace.v1")), "sheet");
+  await calculate(personal.page, "18 in cm"); await expectCalculation(personal.page, "18 in cm", 45.72, 12, "cm");
+  assert.equal(await personal.page.evaluate(() => localStorage.getItem("jig.workspace.v1")), "sheet", "Opening calculator must preserve the current workspace");
+  await resetFocus(personal.page); await navigateKey(personal.page, "Control+Alt+2");
+  const exported = await exportData(personal.page), exportRaw = await saved(personal.page);
+  assert.deepEqual(exported, JSON.parse(exportRaw)); assert.deepEqual(exported.entries, fixture.entries); assert.deepEqual(exported.notes, fixture.notes);
+  const invalidColor = structuredClone(fixture); invalidColor.tasks[0].color = "neon";
   for (const [name, contents] of [["broken.json", "{broken"], ["unrelated.json", "{}"], ["invalid-color.json", JSON.stringify(invalidColor)]]) {
-    await personal.page.locator("#jig-import").setInputFiles({
-      name, mimeType: "application/json", buffer: Buffer.from(contents),
-    });
-    await personal.page.waitForTimeout(1600);
-    assert.equal(await saved(personal.page), exportRaw, `Invalid import ${name} changed saved data`);
+    await personal.page.locator("#jig-import").setInputFiles({ name, mimeType: "application/json", buffer: Buffer.from(contents) });
+    await personal.page.waitForTimeout(1200); assert.equal(await saved(personal.page), exportRaw, `Invalid import ${name} changed saved work`);
   }
-
+  await boot(personal.page, true);
+  const imported = structuredClone(exported); imported.tasks[0].color = "blue";
+  await personal.page.locator("#jig-import").setInputFiles({ name: "sample-import.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
+  await personal.page.waitForTimeout(1200); assert.deepEqual(JSON.parse(await saved(personal.page)), exported, "Selecting an import must wait for confirmation");
+  await confirmImport(personal.page);
+  await personal.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "blue", key);
+  assert.deepEqual(JSON.parse(await saved(personal.page)), imported);
+  await boot(personal.page, true); assert.deepEqual(JSON.parse(await saved(personal.page)), imported, "Imported task colors and notes must survive reload");
   await release(personal.context, "personal-desktop");
 
-  const linkedFixture = {
-    ...fixture,
-    tasks: [{ ...fixture.tasks[0], text: fixture.deadlines[0].title, deadline: 2 }],
-    featured: null,
-  };
-  const linkedRaw = JSON.stringify(linkedFixture);
-  const linked = await newPage("dated-task-desktop", {
-    raw: linkedRaw, viewport: { width: 1440, height: 1000 },
-  });
-  await boot(linked.page);
-  assert.equal(await saved(linked.page), linkedRaw, "Opening a dated checklist must not migrate or rewrite the saved workbench");
-  await calculate(linked.page, "72 in mm");
-  await expectCalculation(linked.page, "72 in mm", 1828.8, 2, "mm");
-  assert.equal(JSON.parse(await saved(linked.page)).tasks[0].deadline, 2);
-  await boot(linked.page, true);
-  const linkedRestored = JSON.parse(await saved(linked.page));
-  assert.equal(linkedRestored.tasks[0].deadline, 2, "Task dates must survive other edits and restart");
-  assert.equal(linkedRestored.featured, null, "Loading a dated task must not automatically feature it");
-  assert.deepEqual(linkedRestored.entries, fixture.entries);
-  // Maximize the checklist through ordinary selection keys. With text focus
-  // surrendered, Tab visits Data, Source, the Tasks tab and +, then its star.
-  progress("feature a dated task with the keyboard star");
-  await linked.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await linked.page.keyboard.press("Control+Alt+4");
-  await paint(linked.page);
-  await linked.page.keyboard.press("Escape");
-  await paint(linked.page);
-  await linked.page.keyboard.press("ArrowLeft");
-  await paint(linked.page);
-  await linked.page.keyboard.press("Control+m");
-  await paint(linked.page);
-  for (let index = 0; index < 5; index++) {
-    await linked.page.keyboard.press("Tab");
-    await paint(linked.page);
+  progress("choose a task date and time without committing popup drafts");
+  const picker = await newPage("task-date-time-picker", { raw: fixtureRaw, fixedTime: "2026-10-30T12:00:00Z" });
+  await picker.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin }); await boot(picker.page);
+  await openDuePicker(picker.page); await capture(picker.page, "task-date-time-popup"); await navigateKey(picker.page, "ArrowRight");
+  assert.equal(await saved(picker.page), fixtureRaw, "Browsing a picker must not save or move a task deadline");
+  await navigateKey(picker.page, "Escape"); await navigateKey(picker.page, "Escape");
+  assert.equal(await saved(picker.page), fixtureRaw, "Cancelling popup browsing must preserve original data");
+  await openDuePicker(picker.page); await navigateKey(picker.page, "ArrowRight"); await focusPickerTime(picker.page);
+  await picker.page.keyboard.type("14:30", { delay: 30 }); await navigateKey(picker.page, "Enter");
+  assert.equal(await saved(picker.page), fixtureRaw, "Use date changes only the editor draft until Save date");
+  await picker.page.waitForTimeout(100); await navigateKey(picker.page, "Enter");
+  const dated = structuredClone(fixture); dated.deadlines[0].at = "2030-01-16T14:30:00Z";
+  await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-16T14:30:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), dated, "Saving date/time must preserve task identity, color, featured selection and notes");
+  await resetFocus(picker.page); await navigateKey(picker.page, "Control+z");
+  await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-15T18:00:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), fixture, "One Undo must restore the exact original deadline");
+  await navigateKey(picker.page, "Control+Shift+z");
+  await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-16T14:30:00Z", key);
+  await boot(picker.page, true); assert.deepEqual(JSON.parse(await saved(picker.page)), dated);
+  await capture(picker.page, "task-date-time-picker"); await release(picker.context, "task-date-time-picker");
+
+  progress("assign Start and Due drafts from the main Calendar and save once");
+  const calendarPick = await newPage("calendar-task-picking", { raw: fixtureRaw, fixedTime: "2030-01-15T12:00:00Z" });
+  await boot(calendarPick.page); await openTaskDates(calendarPick.page);
+  const dueField = await imeCursor(calendarPick.page);
+  await tab(calendarPick.page, 2); // Due picker icon, then Start text.
+  const startField = await imeCursor(calendarPick.page, dueField.y + 16);
+  assert.ok(startField.y > dueField.y + 16, "Start must be a distinct visible date field");
+  await navigateKey(calendarPick.page, "Control+Alt+t");
+  const startDay = await selectedDay(calendarPick.page);
+  await calendarPick.page.mouse.click(startDay.x, startDay.y); await paint(calendarPick.page);
+  assert.equal(await saved(calendarPick.page), fixtureRaw, "Selecting a Start day must only change the unsaved task draft");
+  // Disarming keeps the chosen draft while ordinary Calendar browsing resumes.
+  await navigateKey(calendarPick.page, "Escape"); const browseDay = await selectedDay(calendarPick.page);
+  await calendarPick.page.mouse.click(browseDay.x + browseDay.width + 2, browseDay.y); await paint(calendarPick.page);
+  assert.equal(await saved(calendarPick.page), fixtureRaw);
+  await focusVisibleInput(calendarPick.page, dueField);
+  const dueDay = await selectedDay(calendarPick.page); // Picking status moves this band down.
+  await calendarPick.page.mouse.click(dueDay.x + dueDay.width + 2, dueDay.y); await paint(calendarPick.page);
+  assert.equal(await saved(calendarPick.page), fixtureRaw, "Selecting a Due day must wait for the same Save date transaction");
+  await capture(calendarPick.page, "calendar-task-picking");
+  await focusVisibleInput(calendarPick.page, dueField); await navigateKey(calendarPick.page, "Enter");
+  const calendarDates = structuredClone(fixture);
+  calendarDates.tasks[0].start = "2030-01-15T00:00:00Z"; calendarDates.deadlines[0].at = "2030-01-17T18:00:00Z";
+  await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-17T18:00:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "Save must preserve the existing due time, default Start time, IDs, colors, featured deadline and notes");
+  await resetFocus(calendarPick.page); await navigateKey(calendarPick.page, "Control+z");
+  await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].start === undefined, key);
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), fixture, "One Undo must restore both original date fields together");
+  await navigateKey(calendarPick.page, "Control+Shift+z");
+  await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].start === "2030-01-15T00:00:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates);
+  await boot(calendarPick.page, true); assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates);
+  await release(calendarPick.context, "calendar-task-picking");
+
+  for (const [label, viewport, expression, result, unit] of [
+    ["personal-medium", { width: 1024, height: 768 }, "24 in cm", 60.96, "cm"],
+    ["personal-mobile", { width: 390, height: 844 }, "72 in mm", 1828.8, "mm"],
+  ]) {
+    const scene = await newPage(label, { raw: fixtureRaw, viewport, hasTouch: true }); await boot(scene.page);
+    assert.equal(await scene.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    if (label === "personal-mobile") { await clickCalculatorIcon(scene.page, true); await typeCalculation(scene.page, expression); }
+    else await calculate(scene.page, expression);
+    await expectCalculation(scene.page, expression, result, 2, unit);
+    assert.equal(await scene.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "Calculator popup must fit the viewport");
+    assert.deepEqual(JSON.parse(await saved(scene.page)).notes, fixture.notes); await capture(scene.page, label === "personal-mobile" ? "consolidated-mobile" : "consolidated-medium");
+    await release(scene.context, label);
   }
-  await linked.page.keyboard.press("Space");
-  await linked.page.waitForFunction(key => {
-    const state = JSON.parse(localStorage.getItem(key));
-    return state.featured === 2 && state.tasks[0].deadline === 2;
-  }, key);
-  const starred = JSON.parse(await saved(linked.page));
-  assert.equal(starred.tasks.length, 1, "Starring a linked task must not duplicate the checklist row");
-  assert.deepEqual(starred.history, linkedRestored.history);
-  assert.deepEqual(starred.deadlines, linkedRestored.deadlines);
-  await linked.page.keyboard.press("Escape");
-  await paint(linked.page);
-  await capture(linked.page, "consolidated-dated-task");
-  await release(linked.context, "dated-task-desktop");
-
-  // The task colors live on the existing linked task records. One busy date has
-  // all five colors, a neutral task and completed work; the separate starred task
-  // must remain featured when inspecting or editing this date.
-  const coloredFixture = taskColorFixture();
-  const coloredRaw = JSON.stringify(coloredFixture);
-  const colored = await newPage("task-colors-desktop", {
-    raw: coloredRaw, viewport: { width: 1440, height: 1000 }, fixedTime: "2026-10-30T12:00:00Z",
-  });
-  await boot(colored.page);
-  assert.equal(await saved(colored.page), coloredRaw, "Opening colored tasks must not migrate or rewrite them");
-  await capture(colored.page, "task-colors-desktop");
-
-  progress("select calendar dates using keyboard without changing the featured task");
-  await maximizeApplet(colored.page, "calendar");
-  // Data, Source, Tasks tab, +, Calendar, Timeline, Set location,
-  // previous/next/Today, October 1.
-  await tab(colored.page, 11);
-  await navigateKey(colored.page, "Space");
-  await capture(colored.page, "task-colors-calendar-empty");
-  const emptyDayRender = await colored.page.screenshot();
-  await tab(colored.page, 29);
-  await navigateKey(colored.page, "Enter");
-  assert.notDeepEqual(await colored.page.screenshot(), emptyDayRender, "Keyboard date activation must visibly update the calendar");
-  assert.equal(await saved(colored.page), coloredRaw, "Calendar date selection must not edit tasks, colors or the featured countdown");
-  await capture(colored.page, "task-colors-calendar-selected");
-  // After October 30: October 31, then the eight noninteractive due-task rows.
-  // The last completed row starts below the list's 120px viewport; keyboard
-  // focus must reveal it without needing a pointer or changing its status.
-  const beforeListScroll = await colored.page.screenshot();
-  await tab(colored.page, 9);
-  assert.notDeepEqual(await colored.page.screenshot(), beforeListScroll, "Tab navigation must visibly reveal the end of the compact task list");
-  await capture(colored.page, "task-colors-list-scroll");
-  assert.equal(await saved(colored.page), coloredRaw, "Inspecting a completed calendar row must not mutate task data");
-
-  progress("choose a task color through the inline keyboard palette");
-  await maximizeApplet(colored.page, "checklist");
-  // Data, Source, Tasks tab, +, first row's star, checkbox, then color.
-  await tab(colored.page, 7);
-  await navigateKey(colored.page, "Space");
-  // Date, edit, enabled down, del, None, Rose, Amber.
-  await tab(colored.page, 7);
-  await navigateKey(colored.page, "Space");
-  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "amber", key);
-  let coloredState = JSON.parse(await saved(colored.page));
-  assert.equal(coloredState.tasks.length, 9, "Color changes must not create checklist copies");
-  assert.equal(coloredState.deadlines.length, 9, "Color changes must reuse linked deadline records");
-  assert.equal(coloredState.featured, 109, "Color changes must not feature another task");
-
-  progress("move a colored task to another due date using its date editor");
-  // A palette choice restores focus to that row's swatch. The next control is
-  // its date button; continue from this known focus instead of rebuilding the
-  // maximized view and depending on a now-removed palette button's focus order.
-  await paint(colored.page);
-  await tab(colored.page);
-  await capture(colored.page, "task-colors-date-focus");
-  await navigateKey(colored.page, "Space");
-  await colored.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await colored.page.keyboard.press("Control+a");
-  await colored.page.keyboard.type("2026-10-31T18:00:00Z", { delay: 10 });
-  await navigateKey(colored.page, "Enter");
-  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines.find(deadline => deadline.id === 101).at === "2026-10-31T18:00:00Z", key);
-  coloredState = JSON.parse(await saved(colored.page));
-  assert.equal(coloredState.tasks[0].deadline, 101);
-  assert.equal(coloredState.tasks[0].color, "amber");
-  assert.equal(coloredState.deadlines.length, 9);
-  assert.equal(coloredState.featured, 109, "Editing a different deadline must preserve the starred task");
-  await boot(colored.page, true);
-  assert.deepEqual(JSON.parse(await saved(colored.page)), coloredState, "An edited date and its task color must survive restart together");
-
-  progress("complete a colored dated task, then reload its saved state");
-  await maximizeApplet(colored.page, "checklist");
-  await tab(colored.page, 6); // Tasks tab and + precede the first row checkbox.
-  await navigateKey(colored.page, "Space");
-  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, key);
-  coloredState = JSON.parse(await saved(colored.page));
-  assert.equal(coloredState.tasks[0].color, "amber", "Completion must retain a task's color");
-  assert.equal(coloredState.featured, 109);
-  await boot(colored.page, true);
-  assert.deepEqual(JSON.parse(await saved(colored.page)), coloredState, "Colors, changed dates and completion must survive restart");
-
-  progress("export colored task data through the actual Data control");
-  await maximizeApplet(colored.page, "checklist");
-  await navigateKey(colored.page, "Escape");
-  await navigateKey(colored.page, "Control+Alt+d");
-  // Data, Start empty, Open local, Sample mode, Import JSON, Export JSON.
-  await tab(colored.page, 6);
-  const coloredDownloadEvent = colored.page.waitForEvent("download");
-  await navigateKey(colored.page, "Space");
-  const coloredDownload = await coloredDownloadEvent;
-  assert.equal(coloredDownload.suggestedFilename(), "jig.json");
-  const coloredExport = JSON.parse(await readFile(await coloredDownload.path(), "utf8"));
-  assert.deepEqual(coloredExport, coloredState, "JSON export must include colors and completion on the original task records");
-  await navigateKey(colored.page, "Control+Alt+d");
-  await navigateKey(colored.page, "Escape");
-
-  progress("import colored JSON through the actual file control and confirmation");
-  const importedColors = structuredClone(coloredExport);
-  importedColors.tasks[0].color = "blue";
-  await colored.page.locator("#jig-import").setInputFiles({
-    name: "sample-colored-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(importedColors)),
-  });
-  await colored.page.waitForTimeout(1600);
-  assert.deepEqual(JSON.parse(await saved(colored.page)), coloredState, "Import must wait for confirmation");
-  // With Data collapsed: Data, Confirm import. The file selection only queues
-  // the import; the Rust UI must validate and explicitly accept it.
-  await tab(colored.page, 2);
-  await navigateKey(colored.page, "Space");
-  await colored.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "blue", key);
-  assert.deepEqual(JSON.parse(await saved(colored.page)), importedColors, "Valid JSON import must preserve all linked task records, colors and status");
-  await boot(colored.page, true);
-  assert.deepEqual(JSON.parse(await saved(colored.page)), importedColors);
-  await release(colored.context, "task-colors-desktop");
-
-  const coloredMobile = await newPage("task-colors-mobile", {
-    raw: coloredRaw, viewport: { width: 390, height: 844 }, hasTouch: true, fixedTime: "2026-10-30T12:00:00Z",
-  });
-  await boot(coloredMobile.page);
-  await maximizeApplet(coloredMobile.page, "calendar");
-  await tab(coloredMobile.page, 11);
-  await navigateKey(coloredMobile.page, "Space"); // October 1 is empty.
-  await paint(coloredMobile.page);
-  const beforeTouch = await coloredMobile.page.screenshot();
-  // October 30 is the frozen clock's today button. Find it in rendered pixels;
-  // no JavaScript hook selects or mutates application data.
-  await tapToday(coloredMobile.page);
-  await paint(coloredMobile.page);
-  await coloredMobile.page.waitForTimeout(100);
-  assert.notDeepEqual(await coloredMobile.page.screenshot(), beforeTouch, "Touching another date must visibly update the calendar");
-  await capture(coloredMobile.page, "task-colors-mobile-touch");
-  assert.equal(await saved(coloredMobile.page), coloredRaw, "Touch date selection must preserve the starred task and all task data");
-  await navigateKey(coloredMobile.page, "Escape");
-  assert.equal(await coloredMobile.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-  await capture(coloredMobile.page, "task-colors-mobile");
-  await release(coloredMobile.context, "task-colors-mobile");
-
-  const coloredSixWeeks = await newPage("task-colors-six-weeks", {
-    raw: JSON.stringify(taskColorFixture("2026-11-01")), viewport: { width: 1440, height: 1000 }, fixedTime: "2026-11-01T12:00:00Z",
-  });
-  await boot(coloredSixWeeks.page);
-  await capture(coloredSixWeeks.page, "task-colors-six-weeks");
-  await release(coloredSixWeeks.context, "task-colors-six-weeks");
-
-  const medium = await newPage("personal-medium", {
-    raw: fixtureRaw, viewport: { width: 1024, height: 768 },
-  });
-  await boot(medium.page);
-  assert.equal(await medium.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-  await capture(medium.page, "consolidated-medium");
-  await calculate(medium.page, "24 in cm");
-  await expectCalculation(medium.page, "24 in cm", 60.96, 2, "cm");
-  assert.deepEqual(JSON.parse(await saved(medium.page)).entries, fixture.entries);
-  await release(medium.context, "personal-medium");
 
   const malformedRaw = "{broken saved sample fixture";
-  const malformed = await newPage("malformed-preserved", { raw: malformedRaw });
-  await boot(malformed.page);
-  await calculate(malformed.page, "10 + 5");
-  await malformed.page.waitForTimeout(1200);
-  assert.equal(await saved(malformed.page), malformedRaw, "Malformed saved state must remain available for recovery");
-  await malformed.page.screenshot({ path: resolve(results, "malformed-preserved.png") });
-  await release(malformed.context, "malformed-preserved");
-
-  // A failed explicit reload in an already-personal session must not acknowledge
-  // malformed raw data and then overwrite it on the next ordinary edit.
-  const laterCorrupt = await newPage("later-corrupt-preserved", { raw: fixtureRaw });
-  await boot(laterCorrupt.page);
-  await laterCorrupt.page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key, raw: malformedRaw });
-  await laterCorrupt.page.bringToFront();
-  await laterCorrupt.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await laterCorrupt.page.keyboard.press("Control+Alt+o");
-  await laterCorrupt.page.waitForTimeout(500);
-  await calculate(laterCorrupt.page, "10 + 5");
-  await laterCorrupt.page.waitForTimeout(1200);
-  assert.equal(await saved(laterCorrupt.page), malformedRaw, "Failed reload allowed a later edit to overwrite corrupt data");
-  await release(laterCorrupt.context, "later-corrupt-preserved");
-
-  // Two tabs share one storage area; stale public bridge writes must be rejected.
-  const shared = await newPage("cross-tab-first");
-  await boot(shared.page);
-  const second = await shared.context.newPage();
-  observe(second, "cross-tab-second");
-  await boot(second);
-  assert.equal(await shared.page.evaluate(() => window.jigLoad()), null);
-  assert.equal(await second.evaluate(() => window.jigLoad()), null);
-  await shared.page.evaluate(text => window.jigSave(text), fixtureRaw);
-  const conflict = await second.evaluate(text => {
-    try { window.jigSave(text); return null; } catch (error) { return String(error); }
-  }, JSON.stringify({ ...fixture, history: [] }));
-  assert.match(conflict, /Another tab changed/);
-  assert.equal(await saved(shared.page), fixtureRaw);
-  const clearConflict = await second.evaluate(() => {
-    try { window.jigClear(); return null; } catch (error) { return String(error); }
-  });
-  assert.match(clearConflict, /Another tab changed/);
-  assert.equal(await saved(shared.page), fixtureRaw);
-
-  // Independent browser contexts must not inherit another context's data.
-  const compact = await newPage("sample-mobile", { viewport: { width: 390, height: 844 } });
-  await boot(compact.page, false, sampleUrl.href);
-  assert.equal(await saved(compact.page), null);
-  assert.equal(await saved(shared.page), fixtureRaw, "The other profile must still retain its separate dataset");
-  await release(shared.context, "cross-tab pair");
-  assert.equal(await compact.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-  await capture(compact.page, "consolidated-mobile");
-  // Reload explicit synthetic personal state so narrow-screen keyboard input
-  // is verified through a real saved result rather than only a screenshot.
-  await compact.page.evaluate(text => window.jigSave(text), fixtureRaw);
-  await boot(compact.page, false, base);
-  await calculate(compact.page, "12 * 1.5");
-  await expectCalculation(compact.page, "12 * 1.5", 18, 2);
-  await calculate(compact.page, "72 in mm");
-  await expectCalculation(compact.page, "72 in mm", 1828.8, 3, "mm");
-  assert.deepEqual(JSON.parse(await saved(compact.page)).entries, fixture.entries);
-  await compact.page.screenshot({ path: resolve(results, "calculator-units-mobile.png") });
-  await release(compact.context, "sample-mobile");
-
-  // Weather is opt-in. Existing contexts reject provider requests, even when
-  // a URL hash prefills a city; all enabled cases below intercept the provider.
-  const celsius = { name: "Sample Harbor", latitude: 51.5, longitude: -0.12, unit: "celsius" };
-  const weatherFixture = { ...fixture, preferences: { ...fixture.preferences, weather: celsius } };
-  const weatherDate = "2026-10-30T12:00:00Z"; // Friday, with Saturday's forecast alongside it.
-  const weatherMock = { config: celsius, requests: [], now: weatherDate };
-  const weather = await newPage("weather-celsius", {
-    raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: weatherMock,
-    viewport: { width: 1440, height: 1000 }, hasTouch: true, fixedTime: weatherDate,
-  });
-  await boot(weather.page);
-  const cached = await expectWeatherCache(weather.page, celsius);
-  checkWeather(cached, celsius, weatherDate);
-  assert.equal(weatherMock.requests.length, 1, "A configured location needs one forecast request");
-  assert.deepEqual(JSON.parse(await saved(weather.page)).tasks, fixture.tasks);
-  assert.deepEqual(JSON.parse(await saved(weather.page)).history, fixture.history);
-  await capture(weather.page, "consolidated-desktop");
-  await boot(weather.page, true);
-  await weather.page.waitForTimeout(1600);
-  assert.equal(weatherMock.requests.length, 1, "A fresh cached forecast should survive restart without another provider request");
-  checkWeather(await expectWeatherCache(weather.page, celsius), celsius, weatherDate);
-  progress("select a calendar day and update its compact weather header");
-  await maximizeApplet(weather.page, "calendar");
-  await capture(weather.page, "calendar-weather-unselected");
-  const todayButton = await tapToday(weather.page);
-  await paint(weather.page);
-  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Selecting a day must not edit records or the featured countdown");
-  // Oct 30 is in the fifth 34px calendar row, with 3px gaps. Crop above the
-  // first date row: a changed date outline cannot satisfy this header check.
-  const header = { x: 0, y: 0, width: 1440, height: Math.floor(todayButton.top - 4 * 37) };
-  assert.ok(header.height > 80, "The weather strip must sit above the calendar dates");
-  const todayHeader = await weather.page.screenshot({ clip: header });
-  await weather.page.touchscreen.tap(todayButton.x + todayButton.width + 3, todayButton.y);
-  await paint(weather.page);
-  await weather.page.waitForTimeout(150);
-  assert.notDeepEqual(await weather.page.screenshot({ clip: header }), todayHeader,
-    "Touching Saturday must update the forecast above the calendar, not put weather below the work area");
-  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture,
-    "Selecting another forecast must preserve task dates, colors, completion and the featured countdown");
-  await capture(weather.page, "calendar-weather-selected");
-  // Touch selects the date without requesting keyboard focus. Reanchor through
-  // normal shortcuts before traversing the calendar's known keyboard order.
-  await maximizeApplet(weather.page, "calendar");
-  // Data, Source, Tasks tab, +, Calendar, Timeline, location, °F. Header
-  // controls stay ahead of the month navigation and date buttons.
-  await tab(weather.page, 8);
-  weatherMock.config = { ...celsius, unit: "fahrenheit" };
-  await navigateKey(weather.page, "Space");
-  checkWeather(await expectWeatherCache(weather.page, weatherMock.config), weatherMock.config, weatherDate);
-  assert.equal(JSON.parse(await saved(weather.page)).preferences.weather.unit, "fahrenheit");
-  weatherMock.config = celsius;
-  await tab(weather.page);
-  await navigateKey(weather.page, "Space");
-  checkWeather(await expectWeatherCache(weather.page, celsius), celsius, weatherDate);
-  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Restoring Celsius must preserve tasks, deadlines, notes and the featured countdown");
-  await weather.page.setViewportSize({ width: 390, height: 844 });
-  await weather.page.waitForTimeout(500);
-  assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-  await weather.page.screenshot({ path: resolve(results, "weather-compact.png") });
-  await release(weather.context, "weather-celsius");
-
-  // November 2026 needs six Monday-first calendar rows. Freeze Date without
-  // freezing timers so the real Rust startup, rendering and inputs still run.
-  const november = "2026-11-01T12:00:00Z";
-  const sixWeekMock = { config: celsius, requests: [], now: november };
-  const sixWeeks = await newPage("weather-six-weeks", {
-    raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: sixWeekMock,
-    viewport: { width: 1440, height: 1000 }, fixedTime: november,
-  });
-  await boot(sixWeeks.page);
-  assert.equal(await sixWeeks.page.evaluate(() => new Date().toISOString()), november.replace("Z", ".000Z"));
-  checkWeather(await expectWeatherCache(sixWeeks.page, celsius), celsius, november);
-  assert.equal(sixWeekMock.requests.length, 1);
-  await capture(sixWeeks.page, "consolidated-six-weeks");
-  await calculate(sixWeeks.page, "72 in mm");
-  await expectCalculation(sixWeeks.page, "72 in mm", 1828.8, 2, "mm");
-  await release(sixWeeks.context, "weather-six-weeks");
-
-  // A second city/unit configuration is independent and must request Fahrenheit.
-  const fahrenheit = { name: "Sample Ridge", latitude: 35.68, longitude: 139.76, unit: "fahrenheit" };
-  const fahrenheitMock = { config: fahrenheit, requests: [] };
-  const alternate = await newPage("weather-fahrenheit", {
-    raw: JSON.stringify({ ...fixture, preferences: { ...fixture.preferences, weather: fahrenheit } }),
-    weatherSettings: fahrenheit, weather: fahrenheitMock,
-  });
-  await boot(alternate.page);
-  checkWeather(await expectWeatherCache(alternate.page, fahrenheit), fahrenheit);
-  assert.equal(fahrenheitMock.requests.length, 1);
-  await release(alternate.context, "weather-fahrenheit");
-
-  // Stale readings remain available during an outage, and failed requests must
-  // not be retried at the one-second dashboard repaint rate.
-  const staleCache = structuredClone(cached);
-  staleCache.forecast.fetched_at = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const outageMock = { config: celsius, requests: [], fail: true };
-  const outage = await newPage("weather-stale-outage", {
-    raw: JSON.stringify(weatherFixture), weatherSettings: celsius,
-    weatherCache: staleCache, weather: outageMock,
-  });
-  await boot(outage.page);
-  await outage.page.waitForFunction(key => localStorage.getItem(key) !== null, weatherCacheKey, { polling: 100 });
-  await outage.page.waitForTimeout(3500);
-  assert.equal(outageMock.requests.length, 1, "An outage must not create a request loop");
-  assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache, "An outage must preserve the last usable forecast");
-  await outage.page.screenshot({ path: resolve(results, "weather-stale.png") });
-  await release(outage.context, "weather-stale-outage");
-
-  assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: WASM startup, sample isolation, inline Data with math input, Ctrl+M maximize/restore, arrow applet navigation and caret editing, hybrid math and conversion input, fractions, unrounded ans reuse, unit-aware restart persistence, invalid conversion preservation, dated-task star and restart persistence, task color palette/date/completion edits and reload, multi-deadline keyboard/touch calendar selection without featured changes, colored JSON export/import and invalid-color rejection, hidden calendar-note preservation, local JSON export, invalid import preservation, corrupt state recovery, stale-tab rejection, independent contexts, desktop/medium/mobile layouts, six-week weather calendar, opt-in mocked weather, Fahrenheit/Celsius forecasts, cache reuse and stale offline recovery.");
-} catch (error) {
-  console.error(`Browser smoke failed during: ${phase}`);
-  // Earlier completed cases already have screenshots; avoid multiplying failure
-  // delays or evaluating a page whose main thread is stuck indefinitely.
-  for (const { page, label } of pages.slice(-3)) {
-    if (!page.isClosed()) {
-      // Preserve the failed scene before diagnostic keyboard focus changes it.
-      await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});
-      if (label === "task-colors-desktop" || label === "task-colors-mobile") {
-        await capture(page, "task-colors-failure").catch(() => {});
-      }
-      const diagnostics = await bounded(page.evaluate(key => ({
-        // These contexts contain only the explicit synthetic fixtures above.
-        saved: localStorage.getItem(key),
-        activeElement: document.activeElement ? {
-          tag: document.activeElement.tagName,
-          id: document.activeElement.id,
-          value: document.activeElement.value ?? null,
-        } : null,
-        viewport: { width: innerWidth, height: innerHeight },
-        visibility: document.visibilityState,
-        events: window.jigSmokeEvents ?? [],
-      }), key), 3000, `Diagnostics for ${label}`).catch(error => ({ unavailable: String(error) }));
-      console.error(`Failure diagnostics (${label}):`, JSON.stringify(diagnostics));
-      if (label === "personal-desktop" && phase.startsWith("calculate ")) {
-        const readback = await bounded(failedCalculatorReadback(page), 3000, "Failed calculator copy readback").catch(error => ({ unavailable: String(error) }));
-        console.error("Failed calculator editor readback:", JSON.stringify(readback));
-      }
-    }
+  for (const later of [false, true]) {
+    const scene = await newPage(later ? "later-corrupt-preserved" : "malformed-preserved", { raw: later ? fixtureRaw : malformedRaw }); await boot(scene.page);
+    if (later) { await scene.page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key, raw: malformedRaw }); await resetFocus(scene.page); await navigateKey(scene.page, "Control+Alt+o"); }
+    await calculate(scene.page, "10 + 5"); await scene.page.waitForTimeout(800);
+    assert.equal(await saved(scene.page), malformedRaw, "Corrupt saved data must remain available for recovery after ordinary edits");
+    await release(scene.context, later ? "later-corrupt-preserved" : "malformed-preserved");
   }
+
+  const shared = await newPage("cross-tab-first"); await boot(shared.page);
+  const second = await shared.context.newPage(); observe(second, "cross-tab-second"); await boot(second);
+  assert.equal(await shared.page.evaluate(() => window.jigLoad()), null); assert.equal(await second.evaluate(() => window.jigLoad()), null);
+  await shared.page.evaluate(text => window.jigSave(text), fixtureRaw);
+  const conflict = await second.evaluate(text => { try { window.jigSave(text); return null; } catch (error) { return String(error); } }, JSON.stringify({ ...fixture, history: [] }));
+  assert.match(conflict, /Another tab changed/); assert.equal(await saved(shared.page), fixtureRaw);
+  const clearConflict = await second.evaluate(() => { try { window.jigClear(); return null; } catch (error) { return String(error); } });
+  assert.match(clearConflict, /Another tab changed/); assert.equal(await saved(shared.page), fixtureRaw);
+  const independent = await newPage("independent-sample"); await boot(independent.page, false, sampleUrl.href);
+  assert.equal(await saved(independent.page), null); assert.equal(await saved(shared.page), fixtureRaw);
+  await release(shared.context, "cross-tab pair"); await release(independent.context, "independent-sample");
+
+  const celsius = { name: "Sample Harbor", latitude: 51.5, longitude: -0.12, unit: "celsius" };
+  const weatherFixture = { ...fixture, preferences: { ...fixture.preferences, weather: celsius } }, weatherDate = "2026-10-30T12:00:00Z";
+  const weatherMock = { config: celsius, requests: [], now: weatherDate };
+  const weather = await newPage("weather-calendar", { raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weather: weatherMock, viewport: { width: 1440, height: 1000 }, hasTouch: true, fixedTime: weatherDate });
+  await boot(weather.page); const cached = await expectWeatherCache(weather.page, celsius); checkWeather(cached, celsius, weatherDate);
+  assert.equal(weatherMock.requests.length, 1); await boot(weather.page, true); await weather.page.waitForTimeout(800); assert.equal(weatherMock.requests.length, 1, "Fresh forecasts must survive reload without another request");
+  await resetFocus(weather.page); await navigateKey(weather.page, "Control+Alt+t"); await navigateKey(weather.page, "Home");
+  const today = await selectedDay(weather.page); await capture(weather.page, "calendar-weather-unselected");
+  const clip = { x: 0, y: 0, width: 1440, height: Math.floor(today.top - 23) };
+  assert.ok(clip.height > 70); const todayWeather = await weather.page.screenshot({ clip });
+  await navigateKey(weather.page, "ArrowRight"); await paint(weather.page);
+  await expectClipChange(weather.page, todayWeather, clip, "Selecting tomorrow must update weather above the date strip");
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Calendar selection must preserve all task records and the featured countdown");
+  await navigateKey(weather.page, "Home"); const beforeZoom = await selectedDay(weather.page);
+  await navigateKey(weather.page, "="); const zoomed = await selectedDay(weather.page);
+  assert.ok(zoomed.width > beforeZoom.width + 5, "Keyboard zoom must enlarge calendar days");
+  await navigateKey(weather.page, "-"); const restored = await selectedDay(weather.page);
+  assert.ok(Math.abs(restored.width - beforeZoom.width) <= 2, "Zoom out must reveal more dates at the previous readable scale");
+  await weather.page.mouse.move(restored.x, restored.y); await weather.page.mouse.down();
+  await weather.page.mouse.move(restored.x + 80, restored.y, { steps: 8 }); await weather.page.mouse.up(); await paint(weather.page);
+  const panned = await selectedDay(weather.page);
+  assert.ok(panned.x - restored.x > 55, "Dragging the date strip must move the selected date across the continuous axis");
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Pan and zoom must not edit or feature tasks");
+  await weather.page.touchscreen.tap(panned.x, panned.y); await paint(weather.page); // Refocus the band after dragging.
+  await navigateKey(weather.page, "Home"); const touchToday = await selectedDay(weather.page);
+  await weather.page.touchscreen.tap(touchToday.x + touchToday.width + 2, touchToday.y); await paint(weather.page);
+  await expectClipChange(weather.page, todayWeather, clip, "Touching the adjacent day must update the same weather strip");
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture); await capture(weather.page, "calendar-weather-selected");
+  await weather.page.setViewportSize({ width: 390, height: 844 }); await weather.page.waitForTimeout(300);
+  assert.equal(await weather.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true); await capture(weather.page, "calendar-mobile");
+  await release(weather.context, "weather-calendar");
+
+  const fahrenheit = { name: "Sample Ridge", latitude: 35.68, longitude: 139.76, unit: "fahrenheit" }, fahrenheitMock = { config: fahrenheit, requests: [] };
+  const alternate = await newPage("weather-fahrenheit", { raw: JSON.stringify({ ...fixture, preferences: { ...fixture.preferences, weather: fahrenheit } }), weatherSettings: fahrenheit, weather: fahrenheitMock });
+  await boot(alternate.page); checkWeather(await expectWeatherCache(alternate.page, fahrenheit), fahrenheit); assert.equal(fahrenheitMock.requests.length, 1);
+  await release(alternate.context, "weather-fahrenheit");
+  const staleCache = structuredClone(cached); staleCache.forecast.fetched_at = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const outageMock = { config: celsius, requests: [], fail: true };
+  const outage = await newPage("weather-stale-outage", { raw: JSON.stringify(weatherFixture), weatherSettings: celsius, weatherCache: staleCache, weather: outageMock });
+  await boot(outage.page); await outage.page.waitForTimeout(3500);
+  assert.equal(outageMock.requests.length, 1, "An outage must not create a repaint-driven request loop");
+  assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache);
+  await release(outage.context, "weather-stale-outage");
+  assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
+  console.log("Browser smoke passed: 19 bridge-race scenarios, Tasks startup, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, temporary samples, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, continuous calendar keyboard/touch/pan/zoom, and mocked local weather/cache/offline recovery.");
+} catch (error) {
+  console.error(`Browser smoke failed during: ${phase}`, error);
+  for (const { page, label } of pages.slice(-2)) if (!page.isClosed()) await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});
   if (issues.length) console.error("Browser diagnostics:", issues.join("\n"));
   throw error;
 } finally {
-  clearTimeout(suiteTimer);
-  await bounded(browser.close(), 5000, "Closing Chromium").catch(error => {
-    console.error(String(error));
-    process.exit(1);
-  });
+  clearTimeout(suiteTimer); await bounded(browser.close(), 10000, "Closing Chromium").catch(error => { console.error(String(error)); process.exit(1); });
 }

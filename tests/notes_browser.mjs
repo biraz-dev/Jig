@@ -261,7 +261,7 @@ async function taskGanttButtonPoint(page, control = "gantt") {
       // The Gantt toolbar is directly beneath the task-list strip. Find its
       // actual button frame rather than counting optional scroll-area tab stops.
       const input = control !== "gantt", details = control === "details", right = input ? Math.min(Math.floor(bitmap.width * 0.46), 640) : 150;
-      for (let y = input ? 110 : 78; y < (input ? 540 : 145); y++) {
+      for (let y = input ? 110 : 60; y < (input ? 540 : 180); y++) {
         let start;
         for (let x = 5; x <= right; x++) {
           if (rule(x, y) && start === undefined) start = x;
@@ -274,7 +274,7 @@ async function taskGanttButtonPoint(page, control = "gantt") {
       }
       bitmap.close();
       for (const top of runs) for (const bottom of runs) {
-        if (bottom.y - top.y >= (details ? 35 : 12) && bottom.y - top.y <= (details ? 180 : 30) && Math.abs(top.left - bottom.left) <= 2 && Math.abs(top.right - bottom.right) <= 2)
+        if (bottom.y - top.y >= (details ? 35 : 12) && bottom.y - top.y <= (details ? 180 : input ? 30 : 22) && Math.abs(top.left - bottom.left) <= 2 && Math.abs(top.right - bottom.right) <= 2)
           return { x: (top.left + top.right) / 2, y: (top.y + bottom.y) / 2 };
       }
       return null;

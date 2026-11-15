@@ -20,6 +20,7 @@
   let observed = null;
   let pending = null;
   let importError = null;
+  let importGeneration = 0;
   let unsaved = false;
   window.jigSetUnsaved = value => { unsaved = value; };
   window.addEventListener("beforeunload", event => {
@@ -74,18 +75,34 @@
     document.body.append(anchor); anchor.click(); anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  window.jigImport = () => document.getElementById("jig-import").click();
+  function resetImport() {
+    pending = null;
+    importError = null;
+    return ++importGeneration;
+  }
+  window.jigImportCancel = resetImport;
+  window.jigImport = () => {
+    window.jigDocumentCancel?.();
+    resetImport();
+    document.getElementById("jig-import").click();
+  };
   window.jigTakeImport = () => {
     if (importError) { const message = importError; importError = null; throw new Error(message); }
     const text = pending; pending = null; return text;
   };
   window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("jig-import").addEventListener("change", async event => {
+      const token = resetImport();
       const file = event.target.files[0];
       event.target.value = "";
       if (!file) return;
       if (file.size > maximumBytes) { importError = "Import exceeds 2 MiB. Use the CLI for larger state files."; return; }
-      try { pending = await file.text(); } catch { importError = "Could not read the selected file."; }
+      try {
+        const text = await file.text();
+        if (token === importGeneration) pending = text;
+      } catch {
+        if (token === importGeneration) importError = "Could not read the selected file.";
+      }
     });
   });
   window.jigStarted = () => { document.getElementById("loading").hidden = true; window.jigReady = true; };

@@ -1,5 +1,5 @@
 //! Inline, local review of extracted documents before any workbook mutation.
-use crate::web_theme::{ACCENT, ERROR, MUTED, TEXT};
+use crate::web_theme;
 use std::collections::HashMap;
 
 use eframe::egui::{self, RichText, TextEdit, Ui};
@@ -406,12 +406,14 @@ impl PdfImportPanel {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<PdfImportAction> {
+        let colors = web_theme::colors(ui.ctx());
         let mut action = None;
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("REVIEW IMPORT").color(ACCENT));
-            ui.label(RichText::new(&self.document.name).color(TEXT));
+            ui.label(RichText::new("REVIEW IMPORT").color(colors.accent));
+            ui.label(RichText::new(&self.document.name).color(colors.text));
             ui.label(
-                RichText::new(format!("{} pages · local", self.document.pages.len())).color(MUTED),
+                RichText::new(format!("{} pages · local", self.document.pages.len()))
+                    .color(colors.muted),
             );
             if ui.button("Cancel import").clicked() {
                 action = Some(PdfImportAction::Cancel);
@@ -421,7 +423,7 @@ impl PdfImportPanel {
             RichText::new(
                 "Map columns, review flagged rows, then import. Nothing changes until Apply.",
             )
-            .color(MUTED)
+            .color(colors.muted)
             .size(11.0),
         );
         let mut rebuild = false;
@@ -462,7 +464,7 @@ impl PdfImportPanel {
                 let page = &self.document.pages[self.page];
                 ui.label(
                     RichText::new(format!("{} · {}", page.name, page.source))
-                        .color(MUTED)
+                        .color(colors.muted)
                         .size(11.0),
                 );
                 ui.checkbox(&mut self.show_original, "Original text");
@@ -536,11 +538,11 @@ impl PdfImportPanel {
             self.check();
         }
         if let Some(error) = self.parse_error.as_ref().or(self.error.as_ref()) {
-            ui.colored_label(ERROR, error);
+            ui.colored_label(colors.error, error);
         }
         if self.dirty {
             ui.colored_label(
-                ERROR,
+                colors.error,
                 "Extracted text changed. Update preview before importing.",
             );
         }
@@ -594,7 +596,7 @@ impl PdfImportPanel {
             }
             ui.label(
                 RichText::new("Duplicates remain until unchecked; signs stay as written.")
-                    .color(MUTED)
+                    .color(colors.muted)
                     .size(10.0),
             );
         });
@@ -702,9 +704,9 @@ impl PdfImportPanel {
                                             egui::Label::new(
                                                 RichText::new(label)
                                                     .color(if notes.is_empty() {
-                                                        MUTED
+                                                        colors.muted
                                                     } else {
-                                                        ERROR
+                                                        colors.error
                                                     })
                                                     .size(10.0),
                                             )

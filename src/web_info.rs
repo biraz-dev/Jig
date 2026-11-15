@@ -29,7 +29,6 @@ pub(super) fn show(
     settings: &AppSettings,
     focus_done: &mut bool,
 ) -> Option<InfoAction> {
-    ui.set_max_width(ui.available_width().min(900.0));
     let mut action = None;
     ui.horizontal_wrapped(|ui| {
         ui.heading(page.label());
@@ -47,12 +46,15 @@ pub(super) fn show(
     egui::ScrollArea::vertical()
         .id_salt(("information-page", page.label()))
         .auto_shrink([false, false])
-        .show(ui, |ui| match page {
-            InfoPage::About => about(ui),
-            InfoPage::Help => {
-                help(ui, settings);
-                if ui.button("Open Settings").clicked() {
-                    action = Some(InfoAction::Settings);
+        .show(ui, |ui| {
+            ui.set_max_width(ui.available_width().min(900.0));
+            match page {
+                InfoPage::About => about(ui),
+                InfoPage::Help => {
+                    help(ui, settings);
+                    if ui.button("Open Settings").clicked() {
+                        action = Some(InfoAction::Settings);
+                    }
                 }
             }
         });

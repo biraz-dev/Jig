@@ -55,6 +55,15 @@ impl CalendarPanel {
         self.focused = false;
         self.keyboard_ids.clear();
         let width = ui.available_width().max(1.0);
+        let selected_left = self.view.x_for(selected_date);
+        if width < self.last_width
+            && selected_left < self.last_width
+            && selected_left + self.view.day_width() > 0.0
+        {
+            // Keep a visible selection when the panel narrows, without
+            // pulling it back after the user deliberately panned elsewhere.
+            self.view.ensure_visible(selected_date, width);
+        }
         self.last_width = width;
         let mut selected = None;
         let selected_x = self.view.x_for(selected_date) + self.view.day_width() * 0.5;

@@ -14,6 +14,14 @@ mod web_theme;
 mod text_input;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../calendar_ui.rs"]
+mod calendar_ui;
+
+#[cfg(target_arch = "wasm32")]
+#[path = "../date_picker_ui.rs"]
+mod date_picker_ui;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../stl_ui.rs"]
 mod stl_ui;
 

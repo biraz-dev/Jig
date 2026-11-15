@@ -2196,16 +2196,20 @@ impl SheetPanel {
                     .color(ERROR),
                 );
                 if self.delete_focus {
-                    let id = ui.next_auto_id();
                     ui.input_mut(|input| {
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
                     });
-                    ui.memory_mut(|memory| memory.request_focus(id));
+                }
+                let delete = ui.button("Delete sheet");
+                if self.delete_focus {
+                    // The opening click is outside this new button. Request its
+                    // focus after interaction processing can surrender old focus.
+                    delete.request_focus();
                     self.delete_focus = false;
                     ui.ctx().request_repaint();
                 }
-                if ui.button("Delete sheet").clicked() {
+                if delete.clicked() {
                     actions.push(SheetAction::RemoveSheet(self.active));
                     self.confirm_delete = false;
                     self.grid_focus = true;

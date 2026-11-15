@@ -734,7 +734,7 @@ try {
   current = await open("timeline-legacy", old);
   await timeline(current.page);
   assert.equal(await raw(current.page), JSON.stringify(old), "Older records without starts must open unchanged");
-  await tab(current.page, 10); // The sixth dated row is the standalone legacy deadline.
+  await tab(current.page, 11); // The seventh checklist row is the standalone legacy deadline.
   await key(current.page, "Space");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   assert.equal(await raw(current.page), JSON.stringify(old), "Merely opening a legacy deadline editor must not create a linked task");
@@ -744,7 +744,7 @@ try {
 
   progress("give an existing undated task a range without duplicating its checklist row");
   await timeline(current.page);
-  await tab(current.page, 11); // The seventh row is the ordinary undated task.
+  await tab(current.page, 10); // The sixth checklist row is the ordinary undated task.
   await key(current.page, "Enter");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   await schedule(current.page, "2026-11-06", "2026-11-01");

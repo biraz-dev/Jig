@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { chromium, errors } from "playwright";
+import { chromium } from "playwright";
 import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
@@ -100,7 +100,7 @@ async function open(label, data = fixture, phone = false) {
   const page = await context.newPage();
   page.on("pageerror", error => issues.push(`${label}: ${error.message}`));
   page.setDefaultTimeout(15000);
-  const scene = { context, page, undo: false };
+  const scene = { context, page, undo: false, redo: false };
   await boot(scene);
   return scene;
 }
@@ -112,10 +112,12 @@ async function boot(scene, reload = false) {
   assert.equal(await scene.page.evaluate(() => window.jigBootError), undefined);
   await scene.page.waitForTimeout(500);
   scene.undo = false;
+  scene.redo = false;
   await resetTasks(scene);
 }
 async function resetTasks(scene, escape = true) {
-  await scene.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  const viewport = scene.page.viewportSize();
+  await scene.page.locator("#jig_canvas").click({ position: { x: viewport.width - 6, y: viewport.height - 6 } });
   if (escape) await key(scene.page, "Escape");
   await key(scene.page, "Control+Alt+2");
 }
@@ -123,7 +125,7 @@ async function lists(scene) { return (await state(scene.page)).task_lists ?? [{ 
 function headerTargets(scene) {
   // The phone's stacked Tasks/Gantt/Notes board overflows vertically, adding
   // the ordinary dashboard scroll-area target before the list-tab controls.
-  return (scene.undo ? 3 : 2) + (scene.page.viewportSize().width < 500 ? 1 : 0);
+  return 3 + Number(scene.undo) + Number(scene.redo) + (scene.page.viewportSize().width < 500 ? 1 : 0);
 }
 async function focusList(scene, index) {
   await resetTasks(scene);
@@ -152,7 +154,7 @@ async function renameList(scene, index, name) {
   await replaceEditor(scene.page, name);
   await key(scene.page, "Enter");
   await scene.page.waitForFunction(({ key, index, name }) => JSON.parse(localStorage.getItem(key)).task_lists?.[index]?.name === name, { key: storageKey, index, name });
-  scene.undo = true;
+  scene.undo = true; scene.redo = false;
 }
 async function focusedControlPoint(page, limit = 180) {
   // The ordinary keyboard-focused button has Jig's active graphite fill.
@@ -250,40 +252,69 @@ async function focusRowControl(scene, offset) {
   const strip = count + (count > 1 ? (count < 5 ? 3 : 2) : 1);
   await tab(scene.page, headerTargets(scene) + strip + 2 + offset); // Gantt chart, Save .ods.
 }
+async function taskInputPoint(page) {
+  const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+  return page.evaluate(async encoded => {
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
+    const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const right = bitmap.width < 500 ? bitmap.width - 20 : Math.floor(bitmap.width * 0.43);
+    const border = (x, y) => x >= 0 && x < bitmap.width && y >= 0 && y < bitmap.height
+      && [113, 102, 93].every((value, axis) => Math.abs(pixels[(y * bitmap.width + x) * 4 + axis] - value) <= 3);
+    // The Add new task field is the wide, shallow bordered rectangle in the
+    // left Tasks panel. Check all four sides, excluding separators/date buttons.
+    for (let y = 75; y < bitmap.height - 40; y++) for (let x = 10; x < right; x++) {
+      if (!border(x, y)) continue;
+      const left = x;
+      while (x < right && border(x, y)) x++;
+      if (x - left < 200) continue;
+      for (let height = 14; height <= 30 && y + height < bitmap.height - 30; height++) {
+        const middle = y + Math.floor(height / 2);
+        if (![left - 2, left - 1, left].some(edge => border(edge, middle))
+          || ![x - 1, x, x + 1].some(edge => border(edge, middle))) continue;
+        let bottom = 0;
+        for (let edge = left; edge < x; edge++) bottom += Number(border(edge, y + height));
+        if (bottom / (x - left) > 0.85) {
+          bitmap.close();
+          return { x: (left + x - 1) / 2, y: middle };
+        }
+      }
+    }
+    bitmap.close(); return null;
+  }, png.toString("base64"));
+}
 async function focusSort(scene, selectedLists = [1]) {
   await resetTasks(scene);
-  // Add new task is the first editable field in these closed Tasks scenes.
-  // Anchor to its real DOM focus so overflowing scroll areas can contribute
-  // ordinary keyboard targets without changing any calculated row counts.
-  let inputFocused = false;
-  for (let index = 0; index < 100; index++) {
-    await tab(scene.page);
-    try {
-      await scene.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 150, polling: 25 });
-      inputFocused = true;
-      break;
-    } catch (error) {
-      if (!(error instanceof errors.TimeoutError)) throw error;
-    }
+  let input;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await scene.page.mouse.move(12, 12); await paint(scene.page);
+    input = await taskInputPoint(scene.page);
+    if (input) break;
+    // Reveal an overflowing checklist through its ordinary public scroll area.
+    await scene.page.mouse.move(100, 220);
+    await scene.page.mouse.wheel(0, 800);
+    await scene.page.waitForTimeout(200); await paint(scene.page);
   }
-  assert.ok(inputFocused, "Keyboard navigation must reach Add new task before Sort");
+  assert.ok(input, "Add new task must be visibly reachable in the Tasks panel");
+  await scene.page.mouse.click(input.x, input.y); await paint(scene.page);
+  await scene.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
   const data = await state(scene.page);
   const bulkDelete = Number(data.tasks.some(task => task.complete && selectedLists.includes(task.list_id ?? 1)));
   await tab(scene.page, 2 + bulkDelete); // +, optional existing delete button, Sort.
-  // Let the focused control settle before reading its visible pixels.
-  await scene.page.waitForTimeout(200);
-  await paint(scene.page);
+  await scene.page.waitForTimeout(200); await paint(scene.page);
   return focusedControlPoint(scene.page, scene.page.viewportSize().height - 25);
 }
 async function undo(scene, expected) {
   await key(scene.page, "Escape"); await key(scene.page, "Control+z");
   await expectState(scene.page, expected, "Undo must restore list membership and linked records together");
+  scene.redo = true;
   // Callers retain an earlier mutation in their journal, except after reload.
 }
 async function exportData(scene) {
   await resetTasks(scene);
   await key(scene.page, "Control+Alt+d");
-  await tab(scene.page, scene.undo ? 7 : 6);
+  await tab(scene.page, 7 + Number(scene.undo) + Number(scene.redo));
   const event = scene.page.waitForEvent("download");
   await key(scene.page, "Space");
   const download = await event;
@@ -303,7 +334,7 @@ try {
     await key(current.page, "Space");
     await replaceEditor(current.page, name);
     await key(current.page, "Enter");
-    current.undo = true;
+    current.undo = true; current.redo = false;
     await current.page.waitForFunction(({ key, name }) => JSON.parse(localStorage.getItem(key)).task_lists?.some(list => list.name === name), { key: storageKey, name });
     if (name === "Notes") {
       const before = await raw(current.page);
@@ -361,7 +392,7 @@ try {
   await expectState(current.page, fixture, "Cancelling a task drag must not create an Undo entry");
   await beginTaskDrag();
   await expectState(current.page, fixture, "The second task drag must still wait for release");
-  await current.page.mouse.up(); await paint(current.page); current.undo = true;
+  await current.page.mouse.up(); await paint(current.page); current.undo = true; current.redo = false;
   const dragOrder = structuredClone(fixture);
   [dragOrder.tasks[1], dragOrder.tasks[2]] = [dragOrder.tasks[2], dragOrder.tasks[1]];
   await expectState(current.page, dragOrder, "Task drop must preserve hidden tasks, list IDs, exact dates, colors and the featured task");
@@ -372,11 +403,11 @@ try {
 
   progress("add new work to the last selected list in a combined view");
   await resetTasks(current);
-  // Header2, strip6, commands2, two dated rows with six controls each, input.
-  await tab(current.page, 23);
+  // Header, strip6, commands2, two dated rows with six controls each, input.
+  await tab(current.page, headerTargets(current) + 21);
   await replaceEditor(current.page, "Sample: active list check");
   await key(current.page, "Enter");
-  current.undo = true;
+  current.undo = true; current.redo = false;
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.length === 4, storageKey);
   const added = await state(current.page);
   assert.equal(added.tasks.at(-1).list_id, 3, "New work in a combined view must belong to the most recently selected list");
@@ -395,7 +426,7 @@ try {
   await tab(current.page, 2); // Show, then task text input.
   await replaceEditor(current.page, "Sample: revised casting studies");
   await key(current.page, "Enter");
-  current.undo = true;
+  current.undo = true; current.redo = false;
   const moved = structuredClone(fixture);
   moved.tasks[0].text = "Sample: revised casting studies"; moved.tasks[0].list_id = 2;
   moved.deadlines[0].title = moved.tasks[0].text;
@@ -410,13 +441,13 @@ try {
   await paint(current.page);
   await replaceEditor(current.page, "2026-10-31");
   await key(current.page, "Enter");
-  current.undo = true;
+  current.undo = true; current.redo = false;
   const changedDate = structuredClone(fixture); changedDate.deadlines[0].at = "2026-10-31T18:00:00Z";
   await expectState(current.page, changedDate, "List filtering must preserve the exact opposite schedule end and other lists' dates");
   await undo(current, fixture); current.undo = false;
   await focusRowControl(current, 2);
   await key(current.page, "Space");
-  current.undo = true;
+  current.undo = true; current.redo = false;
   const completed = structuredClone(fixture); completed.tasks[0].complete = true;
   await expectState(current.page, completed, "Completing a selected task must retain its list, color, dates and another list's featured task");
   await expectBars(current.page, []);
@@ -428,7 +459,7 @@ try {
   await key(current.page, "Space");
   await tab(current.page, 2); // Multi, then inline Remove.
   await key(current.page, "Space");
-  current.undo = true;
+  current.undo = true; current.redo = false;
   const removed = structuredClone(fixture);
   removed.task_lists.splice(1, 1); delete removed.tasks[1].list_id;
   await expectState(current.page, removed, "Removing a list must move its existing task rather than delete or duplicate it");
@@ -445,7 +476,7 @@ try {
   await current.page.waitForTimeout(1200);
   await expectState(current.page, renamed, "Choosing a JSON file must wait for confirmation");
   await resetTasks(current);
-  await tab(current.page, 2); // Data, Confirm import before the ordinary workspace.
+  await tab(current.page, 3 + Number(current.undo) + Number(current.redo)); // Data, enabled Undo/Redo, Calculator, Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, imported, "JSON import must retain names, list membership, dates, colors and completion");
   await boot(current, true);
@@ -513,7 +544,7 @@ try {
   await key(current.page, "Control+z");
   await expectState(current.page, fixture, "A cancelled touch must leave the task order and Undo unchanged");
   await beginTouchDrag(); await expectState(current.page, fixture);
-  await touchDrag("touchEnd"); await paint(current.page); current.undo = true;
+  await touchDrag("touchEnd"); await paint(current.page); current.undo = true; current.redo = false;
   await expectState(current.page, dragOrder, "The touch grip must reorder the original records without changing their lists or dates");
   await undo(current, fixture); current.undo = false;
   await current.context.close();
@@ -547,7 +578,7 @@ try {
   const sorted = ordered(sorting, [5, 2, 7, 1, 3, 6, 4, 8, 9]);
   current = await open("task-lists-sort", sorting);
   const sortPoint = await focusSort(current);
-  await current.page.mouse.click(sortPoint.x, sortPoint.y); await paint(current.page); current.undo = true;
+  await current.page.mouse.click(sortPoint.x, sortPoint.y); await paint(current.page); current.undo = true; current.redo = false;
   await expectState(current.page, sorted, "Sort must preserve exact linked metadata, equal-date order, undated/completed order and hidden task slots");
   const sortedBars = await expectBars(current.page, ["rose", "sage"]);
   assert.ok(sortedBars.sage.top < sortedBars.rose.top, "The Gantt must immediately follow the sorted checklist order");
@@ -557,7 +588,7 @@ try {
   await undo(current, sorting); current.undo = false;
   await key(current.page, "Control+z");
   await expectState(current.page, sorting, "Repeated Sort must not add a second Undo entry");
-  await focusSort(current); await key(current.page, "Space"); current.undo = true;
+  await focusSort(current); await key(current.page, "Space"); current.undo = true; current.redo = false;
   await expectState(current.page, sorted, "Sort must also work from the keyboard");
   await boot(current, true);
   await expectState(current.page, sorted, "Sorted order must survive refresh");
@@ -566,11 +597,11 @@ try {
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-sorted-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sorting)) });
   await current.page.waitForTimeout(1200);
   await expectState(current.page, sorted, "Choosing another task order must still wait for import confirmation");
-  await resetTasks(current); await tab(current.page, 2); await key(current.page, "Space");
+  await resetTasks(current); await tab(current.page, 3 + Number(current.undo) + Number(current.redo)); await key(current.page, "Space");
   await expectState(current.page, sorting, "Import must restore the original manual order without automatically sorting it");
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-sorted-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sortedExport)) });
   await current.page.waitForTimeout(1200);
-  await resetTasks(current); await tab(current.page, 2); await key(current.page, "Space");
+  await resetTasks(current); await tab(current.page, 3 + Number(current.undo) + Number(current.redo)); await key(current.page, "Space");
   await expectState(current.page, sorted, "JSON import must restore the saved sorted order exactly");
   await boot(current, true); await expectState(current.page, sorted);
   await current.context.close();
@@ -579,7 +610,7 @@ try {
   current = await open("task-lists-sort-combined", sorting);
   await selectList(current, 1, true);
   const combinedSort = ordered(sorting, [2, 5, 7, 1, 3, 6, 4, 8, 9]);
-  await focusSort(current, [1, 2]); await key(current.page, "Space"); current.undo = true;
+  await focusSort(current, [1, 2]); await key(current.page, "Space"); current.undo = true; current.redo = false;
   await expectState(current.page, combinedSort, "Combined Sort must order the selected lists together and leave the Show task untouched");
   const combinedSortBars = await expectBars(current.page, ["rose", "amber", "sage"]);
   assert.ok(combinedSortBars.amber.top < combinedSortBars.sage.top && combinedSortBars.sage.top < combinedSortBars.rose.top,
@@ -600,7 +631,7 @@ try {
   };
   current = await open("task-lists-sort-legacy", standalone);
   assert.equal(await raw(current.page), JSON.stringify(standalone), "Opening old deadline-only rows must not materialize or sort them");
-  await focusSort(current); await key(current.page, "Space"); current.undo = true;
+  await focusSort(current); await key(current.page, "Space"); current.undo = true; current.redo = false;
   const linkedLegacy = {
     ...structuredClone(standalone),
     tasks: [
@@ -629,7 +660,7 @@ try {
   const phoneSorted = ordered(phoneSort, [5, 1, 3, 8]);
   current = await open("task-lists-sort-mobile", phoneSort, true);
   const phoneSortPoint = await focusSort(current);
-  await current.page.touchscreen.tap(phoneSortPoint.x, phoneSortPoint.y); await paint(current.page); current.undo = true;
+  await current.page.touchscreen.tap(phoneSortPoint.x, phoneSortPoint.y); await paint(current.page); current.undo = true; current.redo = false;
   await expectState(current.page, phoneSorted, "A real touch on Sort must preserve every task and its exact schedule");
   await undo(current, phoneSort); current.undo = false;
   await current.context.close();
@@ -637,12 +668,12 @@ try {
   progress("delete completed work only from the selected list and undo it");
   const bulk = structuredClone(fixture); bulk.tasks[0].complete = true; bulk.tasks[1].complete = true;
   current = await open("task-lists-bulk", bulk);
-  await tab(current.page, 18); // Header2, strip6, commands2, completed row5, input/+2, bulk1.
+  await focusRowControl(current, 8); // Completed row5, input/+2, bulk1.
   await key(current.page, "Space");
   await resetTasks(current, false);
-  await tab(current.page, 18); // Confirm replaces the bulk button.
+  await tab(current.page, headerTargets(current) + 16); // Keep confirmation open; it replaces the bulk button.
   await key(current.page, "Space");
-  current.undo = true;
+  current.undo = true; current.redo = false;
   const cleared = structuredClone(bulk); cleared.tasks.shift(); cleared.deadlines.shift();
   await expectState(current.page, cleared, "Bulk deletion must retain completed work in unselected lists and all featured work");
   await undo(current, bulk);

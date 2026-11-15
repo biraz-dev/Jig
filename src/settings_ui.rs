@@ -86,7 +86,7 @@ impl SettingsPanel {
             .id_salt("application-settings")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.set_max_width(900.0);
+                ui.set_max_width(ui.available_width().min(900.0));
                 self.appearance(ui, &mut next, &mut response.actions);
                 ui.separator();
                 self.history(ui, &mut next);

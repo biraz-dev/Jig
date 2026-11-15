@@ -153,9 +153,9 @@ async function expectEditorText(page, text) {
   await page.waitForFunction(async expected => (await navigator.clipboard.readText()) === expected, text, { timeout: 10000, polling: 50 });
 }
 async function attemptSample(scene) {
-  // Data is fixed at the top right of this known 1440px desktop viewport.
+  // Data is fixed at the top left of this known desktop viewport.
   // Clicking it transfers focus without cancelling the working Task editor.
-  await scene.page.mouse.click(scene.page.viewportSize().width - 22, 18); await paint(scene.page);
+  await scene.page.mouse.click(25, 14); await paint(scene.page);
   await tab(scene.page, 4 + Number(scene.undo) + Number(scene.redo)); // History, Calculator, Start empty, Open local, Sample mode.
   await key(scene.page, "Space"); await key(scene.page, "Control+Alt+d");
 }

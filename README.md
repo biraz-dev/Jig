@@ -2,20 +2,21 @@
 
 Jig is a small, local artist's workbench in Rust. The browser starts in **Tasks**
 and remembers your workspace. **Tasks**, **Notes** and **Sheet** are the main
-views, with a calculator icon, Undo, Redo and Data controls in the header. Tasks,
+views. Data, workspace tabs and the calculator sit on the left of the header;
+the date and Settings sit on the right. Tasks,
 their Gantt timeline, notes, calculator/converter, calendar and optional weather
 use the same portable state. The browser STL interface is hidden for now; the
 native geometry tools remain available. The native CLI and Ratatui terminal
 interface share the Rust core; running `jig` still opens the terminal dashboard.
 
-No accounts, telemetry, database or backend. Files are processed on your device.
+No accounts, telemetry or backend. Files are processed on your device.
 The [browser app](https://biraz.dev/Jig/) starts with your saved data or an empty
 personal document. Clearly labelled samples are available through **Sample mode**
 or `?sample=1`. Personal documents are never published by the Pages build.
 
 ## Spreadsheet
 
-The dark grid has familiar top menus, a formula bar, a formatting toolbar and
+The grid starts in warm dark Graphite, with familiar top menus, a formula bar, a formatting toolbar and
 named sheet tabs. Click a cell and type, double-click or press **F2** to edit;
 **Enter** commits, **Esc** cancels. Drag or Shift-click to select a range.
 Use the address field to jump to `B12` or select `A1:D20`.
@@ -232,8 +233,9 @@ state and asks before replacement. Older files without spreadsheets, task colors
 or start dates still load. **Clear saved data** also requires confirmation.
 
 A normal refresh or application update keeps personal data. Press **Enter** to
-commit a spreadsheet cell before leaving. The wide header marks **your data**
-versus temporary **sample data**; status messages also identify sample mode. To
+commit a spreadsheet cell before leaving. Status messages identify temporary
+sample mode, with a quiet sample marker when the header has room. Personal/local
+badges are removed. To
 keep work already entered in sample mode, **Export JSON**, then **Import JSON** that file and confirm the import.
 Use **Start empty** only when you intend to begin with an empty dataset.
 
@@ -248,13 +250,77 @@ before closing the page. A stale tab cannot overwrite a newer save. Storage is
 specific to this profile and origin, so keep portable file backups. Opened
 PDF/image source bytes are session-only and are not embedded in saved state.
 
+## Settings and backups
+
+Open **Settings** at the top right, or use **Ctrl+,**. It opens a full main view;
+**Done** returns to the workspace. **Graphite** keeps Jig's warm dark palette,
+**Light** uses warm light surfaces, and **System** follows the browser/OS
+appearance. Document cell colors and task colors remain their own values.
+
+Settings are saved separately under `jig.settings.v1`, so changing appearance,
+shortcuts or backup options does not edit the task document. **Export settings**
+downloads `jig-settings.json`; **Import settings** validates its version-1
+format and shows a review before applying it. Invalid or conflicting settings
+leave the current settings and document intact. Task JSON and ODS remain the
+portable document formats; copy settings separately when moving computers.
+
+The twelve application shortcuts can be changed, reset or unassigned. Click a
+binding and press the combination; Esc cancels capture. Conflicting bindings,
+ordinary typing keys, and reserved browser/text commands are rejected. The
+Settings cheatsheet shows current application bindings and the fixed contextual
+keys for text, sheets, notes and calendar controls.
+
+| Application action | Default |
+| --- | --- |
+| Sheet / Tasks | Ctrl-Alt-W |
+| Tasks | Ctrl-Alt-2 |
+| Notes | Ctrl-Alt-N |
+| Calculator | Ctrl-Alt-4 |
+| Calendar / Timeline | Ctrl-Alt-T |
+| Data | Ctrl-Alt-D |
+| Settings | Ctrl+, |
+| Undo | Ctrl-Z |
+| Redo | Ctrl-Shift-Z |
+| Maximize panel | Ctrl-M |
+| Rename list / expand panel | F2 |
+| Open saved local data | Ctrl-Alt-O |
+
+Text fields keep their own editing shortcuts. The history limit is configurable
+from **0–100 combined Undo/Redo steps**, with **20** by default and a shared
+**64 MiB** cap. Release the slider or finish numeric entry to apply it. Lowering
+the limit discards the furthest steps; increasing it cannot recover discarded
+history. Zero disables application history, while text editors retain theirs.
+The application Undo/Redo journal lasts for the session and is not included in
+document backups; calculator history remains part of the saved document.
+
+Under **Files and backups**, supported Chromium browsers can **Choose folder**
+for JSON backups. Folder writes require your explicit browser permission; use
+**Reconnect folder** if access needs renewing. Only the folder handle is kept in
+browser IndexedDB as permission metadata. Tasks, notes and sheets continue to
+use the portable JSON document; settings exports do not contain folder access.
+
+**Back up now** writes successfully saved personal data to a new timestamped,
+unique filename without replacing an earlier backup. Optional **Automatic
+folder backups** queue no sooner than five minutes after enabling, opening valid
+saved personal data, or eligible saved changes, and run while Jig is open.
+Samples, stale/corrupt storage and failed
+saves do not produce automatic folder backups. Dataset resets cancel pending
+backup work. There is no automatic backup retention or cleanup.
+
+**Download backup** provides a JSON recovery copy of current personal work,
+including edits left in memory after a failed save. It is also the fallback on
+browsers without folder access. **Restore backup** opens the existing JSON
+import review and requires confirmation. The chosen folder applies to backups;
+CSV, ODS and PDF exports still use the browser's download location.
+
 ## Tasks, calendar and timeline
 
 Task lists appear as horizontal tabs, with a maximum of five. Click a tab to show
 one list; **Shift-click** tabs to combine them. Combined views use subtly different
 row shades while retaining each task's deadline color. **Multi** enables the same
 selection on touchscreens. **+** adds a list, double-clicking its name (or **F2**
-on a focused tab) renames it, and **−** removes the active list. Removing
+on a focused tab) renames it, and **−** removes the active list. The +/− controls
+sit beside the tabs. Removing
 a list moves its tasks into a remaining list; the last list cannot be removed.
 Tasks, their dates and the featured countdown are preserved.
 
@@ -287,7 +353,7 @@ Arrows outside text fields move panel selection; **Esc** leaves an editor or
 closes a popup. Narrow screens stack the panels and scroll. **Ctrl-Alt-D** opens
 Data controls.
 
-The calculator icon beside Undo, or **Ctrl-Alt-4**, opens a compact popover
+The calculator icon beside the workspace tabs, or **Ctrl-Alt-4** by default, opens a compact popover
 without leaving the current workspace. Its input accepts `125 * 1.15`,
 `72 in mm`, `72in to mm` and `1 1/2 in cm`. Decimal places and Copy stay inside;
 click a history result to reuse its full precision and conversion unit. Click
@@ -340,11 +406,13 @@ selecting a day fills that draft and retains its time. **Save date** commits the
 range. **Done picking** or Esc exits picking without discarding the draft.
 Panning and zooming do not assign dates or change the featured countdown.
 
-**Undo / Ctrl-Z** and **Redo / Ctrl-Shift-Z**, outside text fields, cover document
-changes. A new committed edit clears Redo; a no-op keeps it. The session journal
-keeps up to 20 combined steps within a shared 64 MiB budget and is cleared when
-switching datasets or reloading; it is not saved in documents. Text fields keep
-their normal local Undo/Redo shortcuts.
+**Ctrl-Z** and **Ctrl-Shift-Z**, the default Undo/Redo shortcuts outside text
+fields, cover document changes. A new committed edit clears Redo; a no-op keeps
+it. The configurable session journal shares a 64 MiB budget and is cleared when
+switching datasets or reloading; it is not saved in documents. There are no
+Undo/Redo buttons in the header. Text fields keep their normal local Undo/Redo
+shortcuts. See [Settings and backups](#settings-and-backups) for the history limit
+and current shortcut bindings.
 
 ## Notes
 

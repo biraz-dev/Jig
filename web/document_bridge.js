@@ -3,6 +3,7 @@
   "use strict";
   const limit = 10 * 1024 * 1024;
   let generation = 0;
+  let csvGeneration = 0, odsGeneration = 0, pasteGeneration = 0;
   let csv = null, csvError = null, ods = null, odsError = null;
   let files = [], next = null, fileError = null, currentName = "", currentMime = "";
   let reading = false;
@@ -41,17 +42,22 @@
     document.body.append(anchor); anchor.click(); anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  window.jigCsvImport = () => { csv = null; csvError = null; document.getElementById("jig-csv-import").click(); };
+  const resetCsv = () => { csvGeneration++; csv = null; csvError = null; };
+  const resetOds = () => { odsGeneration++; ods = null; odsError = null; };
+  const resetDocuments = () => {
+    generation++; files = []; next = null; fileError = null; reading = false;
+  };
+  window.jigCsvImport = () => { resetCsv(); document.getElementById("jig-csv-import").click(); };
   window.jigCsvTake = takeText;
-  window.jigCsvCancel = () => { generation++; csv = null; csvError = null; };
+  window.jigCsvCancel = resetCsv;
   window.jigCsvExport = (text, name) => download(text, name, "text/csv;charset=utf-8");
-  window.jigOdsImport = () => { ods = null; odsError = null; document.getElementById("jig-ods-import").click(); };
+  window.jigOdsImport = () => { resetOds(); document.getElementById("jig-ods-import").click(); };
   window.jigOdsTake = () => takeBytes("ods");
   window.jigBinaryExport = (bytes, name, type) => download(bytes, name, type);
   window.jigDocumentName = () => currentName;
   window.jigDocumentMime = () => currentMime;
   window.jigPdfImport = () => {
-    files = []; next = null; fileError = null;
+    resetDocuments();
     document.getElementById("jig-pdf-import").click();
   };
   window.jigPdfTake = () => takeBytes("pdf");
@@ -70,17 +76,18 @@
     } finally { if (token === generation) reading = false; }
   };
   window.jigDocumentCancel = () => {
-    generation++; files = []; next = null; ods = null; csv = null; reading = false;
-    fileError = null; odsError = null; csvError = null;
+    resetDocuments(); resetCsv(); resetOds(); pasteGeneration++;
     paste = null; pasteError = null;
+    window.jigImportCancel?.();
     window.jigOcrCancel?.();
   };
   window.jigClipboardRead = () => {
-    const token = generation;
+    const token = ++pasteGeneration;
+    paste = null; pasteError = null;
     navigator.clipboard.readText().then(text => {
-      if (token === generation) paste = text;
+      if (token === pasteGeneration) paste = text;
     }).catch(() => {
-      if (token === generation) pasteError = "Clipboard access was denied. Use Ctrl+V to paste cells.";
+      if (token === pasteGeneration) pasteError = "Clipboard access was denied. Use Ctrl+V to paste cells.";
     });
   };
   window.jigClipboardTake = () => {
@@ -104,22 +111,25 @@
   }, true);
   window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("jig-csv-import").addEventListener("change", async event => {
+      resetCsv();
+      const token = csvGeneration;
       const file = event.target.files[0]; event.target.value = "";
       if (!file) return;
       if (file.size > 2 * 1024 * 1024) { csvError = "CSV exceeds the 2 MiB import limit."; return; }
-      const token = generation;
-      try { const text = await file.text(); if (token === generation) csv = text; }
-      catch { if (token === generation) csvError = "Could not read the CSV file."; }
+      try { const text = await file.text(); if (token === csvGeneration) csv = text; }
+      catch { if (token === csvGeneration) csvError = "Could not read the CSV file."; }
     });
     document.getElementById("jig-ods-import").addEventListener("change", async event => {
+      resetOds();
+      const token = odsGeneration;
       const file = event.target.files[0]; event.target.value = "";
       if (!file) return;
       if (file.size > limit) { odsError = "ODS exceeds the 10 MiB import limit."; return; }
-      const token = generation;
-      try { const bytes = new Uint8Array(await file.arrayBuffer()); if (token === generation) ods = bytes; }
-      catch { if (token === generation) odsError = "Could not read the ODS document."; }
+      try { const bytes = new Uint8Array(await file.arrayBuffer()); if (token === odsGeneration) ods = bytes; }
+      catch { if (token === odsGeneration) odsError = "Could not read the ODS document."; }
     });
     document.getElementById("jig-pdf-import").addEventListener("change", event => {
+      resetDocuments();
       const chosen = Array.from(event.target.files); event.target.value = "";
       if (!chosen.length) return;
       if (chosen.length > 20 || chosen.some(file => file.size > limit)

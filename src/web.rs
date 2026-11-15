@@ -158,6 +158,7 @@ pub struct BrowserApp {
     settings_open: bool,
     pending_settings: Option<AppSettings>,
     auto_backup_due: Option<f64>,
+    initial_backup_pending: bool,
     weather: WeatherPanel,
     calendar_panel: crate::calendar_ui::CalendarPanel,
     stl: StlPanel,
@@ -306,6 +307,8 @@ impl BrowserApp {
             "tasks".into()
         };
         browser_storage::set_workspace(&workspace);
+        let initial_backup_pending =
+            settings.auto_backup && has_saved_personal && !demo && !storage_error;
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
             state,
@@ -314,6 +317,7 @@ impl BrowserApp {
             settings_open: false,
             pending_settings: None,
             auto_backup_due: None,
+            initial_backup_pending,
             weather,
             calendar_panel: crate::calendar_ui::CalendarPanel::new(today),
             stl: StlPanel::new(cc),
@@ -393,9 +397,6 @@ impl BrowserApp {
         };
         app.sanitize_task_lists();
         app.restore_working_drafts();
-        if app.settings.auto_backup && has_saved_personal && !app.demo && !app.storage_error {
-            app.auto_backup_due = Some(cc.egui_ctx.input(|input| input.time) + 300.0);
-        }
         if let Some(error) = settings_error {
             app.status.push_str(&format!(
                 " Settings could not be loaded; defaults are in use: {error}"
@@ -764,6 +765,7 @@ impl BrowserApp {
         crate::settings_storage::set_capture(false);
         crate::settings_storage::cancel_pending();
         self.auto_backup_due = None;
+        self.initial_backup_pending = false;
         self.clear_working_drafts();
         self.cancel_document_import();
         self.charts.reset();

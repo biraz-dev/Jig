@@ -535,7 +535,7 @@ try {
     assert.deepEqual(afterNavigation[field], beforeNavigation[field], `Applet navigation changed ${field}`);
   }
   await calculate(personal.page, "18 in cm");
-  await expectCalculation(personal.page, "18 in cm", 18 * 0.0254 / 0.01, 14, "cm");
+  await expectCalculation(personal.page, "18 in cm", 45.72, 14, "cm");
   await personal.page.screenshot({ path: resolve(results, "personal-desktop.png") });
 
   // Exercise the public file bridge: export is a local browser download.
@@ -761,7 +761,7 @@ try {
   assert.equal(await medium.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await capture(medium.page, "consolidated-medium");
   await calculate(medium.page, "24 in cm");
-  await expectCalculation(medium.page, "24 in cm", 24 * 0.0254 / 0.01, 2, "cm");
+  await expectCalculation(medium.page, "24 in cm", 60.96, 2, "cm");
   assert.deepEqual(JSON.parse(await saved(medium.page)).entries, fixture.entries);
   await release(medium.context, "personal-medium");
 

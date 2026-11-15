@@ -49,30 +49,26 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
             Err(e) => return Err(e.into()),
         };
-        state.validate()?;
         Ok(state)
     }
     pub fn save(&self, state: &State) -> Result<(), Box<dyn std::error::Error>> {
         state.validate()?;
         let temporary = append_suffix(&self.path, ".tmp");
-        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            serde_json::to_writer_pretty(&mut file, state)?;
-            file.write_all(b"\n")?;
-            file.sync_all()?;
-            fs::rename(&temporary, &self.path)?;
-            File::open(self.path.parent().ok_or("Missing parent")?)?.sync_all()?;
-            Ok(())
-        })();
         // Never remove an existing temporary file: it may contain recoverable data.
-        result
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        serde_json::to_writer_pretty(&mut file, state)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        fs::rename(&temporary, &self.path)?;
+        File::open(self.path.parent().ok_or("Missing parent")?)?.sync_all()?;
+        Ok(())
     }
 }
 impl Drop for Store {

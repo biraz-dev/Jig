@@ -111,7 +111,7 @@ pub enum SheetAction {
     },
     ShowCharts,
     ShowTasks,
-    ShowWorkbench,
+    ShowCalculator,
     Undo,
 }
 
@@ -993,7 +993,7 @@ impl SheetPanel {
             ui.menu_button("View", |ui| {
                 self.menu_action(ui, actions, "Tasks", SheetAction::ShowTasks);
                 self.menu_action(ui, actions, "Charts", SheetAction::ShowCharts);
-                self.menu_action(ui, actions, "Workbench", SheetAction::ShowWorkbench);
+                self.menu_action(ui, actions, "Calculator", SheetAction::ShowCalculator);
                 ui.separator();
                 ui.checkbox(&mut self.show_gridlines, "Gridlines");
             });

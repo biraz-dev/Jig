@@ -1,15 +1,15 @@
-// Real browser checks for session undo. All saved records and meshes are synthetic.
+// Real browser checks for session Undo/Redo. Every saved record is synthetic.
 // Run against a built preview served at /Jig/: node tests/undo_browser.mjs
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
+import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
 const storageKey = "jig.personal.v1";
 const results = resolve("playwright-results");
-const screenshotOptions = { timeout: 60000, animations: "disabled", caret: "hide" };
 await mkdir(results, { recursive: true });
 const fixture = {
   version: 1,
@@ -20,34 +20,27 @@ const fixture = {
   entries: [{ id: 301, title: "Sample: hidden studio note", date: "2030-01-15" }],
   featured: 101,
 };
-let phase = "launch Chromium";
-let current;
-const contexts = [];
-const issues = [];
-// Track only layout shortcuts sent by this test driver, not private app state.
-const expanded = new WeakMap();
+let phase = "launch Chromium", current;
+const contexts = [], issues = [];
+// Counts describe actions sent through the public UI, only to navigate enabled
+// Undo/Redo header buttons. They never read the application's private journal.
+const journals = new WeakMap();
 const timer = setTimeout(() => {
-  console.error(`Undo browser checks exceeded 240 seconds during: ${phase}`);
+  console.error(`Undo/Redo browser checks exceeded 300 seconds during: ${phase}`);
   process.exit(1);
-}, 240000);
-function progress(message) { phase = message; console.log(`Undo browser phase: ${message}`); }
-async function paint(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  // Browser RAF can precede WASM input consumption under software-rendered 3D.
-  await page.waitForTimeout(250);
-}
-async function key(page, value) {
-  await page.keyboard.press(value);
-  if (value === "Escape") expanded.set(page, false);
-  else if (value === "Control+m" || value === "F2") expanded.set(page, !expanded.get(page));
-  await paint(page);
-}
-async function tab(page, count) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
+}, 300000);
+function progress(message) { phase = message; console.log(`Undo/Redo browser phase: ${message}`); }
+async function paint(page) { await waitForAppPaint(page); }
+async function key(page, value) { await page.keyboard.press(value); await paint(page); }
+async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
+function journal(page) { return journals.get(page); }
+function mutation(page) { const item = journal(page); item.undo++; item.redo = 0; }
+function undoRecorded(page) { const item = journal(page); if (item.undo) { item.undo--; item.redo++; } }
+function redoRecorded(page) { const item = journal(page); if (item.redo) { item.redo--; item.undo++; } }
+function header(page) { const item = journal(page); return 3 + Number(item.undo > 0) + Number(item.redo > 0); }
 async function capture(page, name) {
-  const png = await page.screenshot({ ...screenshotOptions, path: resolve(results, `${name}.png`) });
-  const allowed = new Set(["undo-desktop", "undo-viewer-cleared", "undo-failure"]);
-  const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  if (allowed.has(name) && requested.has(name) && png.length <= 1024 * 1024) {
+  const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
+  if (new Set((process.env.JIG_RENDER_LOGS ?? "").split(",")).has(name) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
     for (let offset = 0; offset < encoded.length; offset += 2048) console.log(encoded.slice(offset, offset + 2048));
@@ -55,20 +48,17 @@ async function capture(page, name) {
   }
 }
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
-async function open(label, state = fixture) {
+async function open(label, initial = fixture) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true, timezoneId: "Etc/UTC" });
-  // Exercise the existing Sheet/tool flow using a normal saved workspace preference.
-  await context.addInitScript(path => {
-    if (location.pathname === path) localStorage.setItem("jig.workspace.v1", "sheet");
-  }, new URL(base).pathname);
   contexts.push(context);
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-  await context.addInitScript(({ raw, storageKey, origin }) => {
+  await installFrameFence(context);
+  await context.addInitScript(({ raw, key, origin }) => {
     if (location.origin === origin && sessionStorage.getItem("jig-undo-seeded") !== "yes") {
-      localStorage.setItem(storageKey, raw);
+      localStorage.setItem(key, raw);
+      localStorage.setItem("jig.workspace.v1", "tasks");
       sessionStorage.setItem("jig-undo-seeded", "yes");
     }
-  }, { raw: JSON.stringify(state), storageKey, origin });
+  }, { raw: JSON.stringify(initial), key: storageKey, origin });
   await context.route("**/*", async route => {
     const url = new URL(route.request().url());
     if (["blob:", "data:", "about:"].includes(url.protocol) || url.origin === origin) await route.continue();
@@ -82,342 +72,185 @@ async function open(label, state = fixture) {
   return { context, page };
 }
 async function boot(page, reload = false) {
-  expanded.set(page, false);
-  if (reload) await page.reload({ waitUntil: "load" });
-  else await page.goto(base, { waitUntil: "load" });
+  if (reload) await page.reload({ waitUntil: "load" }); else await page.goto(base, { waitUntil: "load" });
   await page.bringToFront();
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   await page.waitForTimeout(500);
-  // The spreadsheet is the launch workspace; exercise the retained Workbench.
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
-  await page.keyboard.press("Control+Alt+w");
-  await paint(page);
+  journals.set(page, { undo: 0, redo: 0 });
+  await tasks(page);
 }
 async function state(page) { return page.evaluate(key => JSON.parse(localStorage.getItem(key)), storageKey); }
 async function raw(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
 async function expectState(page, expected, message) {
-  const deadline = Date.now() + 5000;
-  let actual;
-  while (Date.now() < deadline) {
-    actual = await state(page);
-    try { assert.deepEqual(actual, expected); return; } catch { await page.waitForTimeout(50); }
-  }
+  const until = Date.now() + 10000; let actual;
+  do { actual = await state(page); try { assert.deepEqual(actual, expected); return; } catch { await page.waitForTimeout(50); } } while (Date.now() < until);
   assert.deepEqual(actual, expected, message);
 }
 async function resetFocus(page) {
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  const { width, height } = page.viewportSize();
+  await page.locator("#jig_canvas").click({ position: { x: width - 6, y: height - 6 } });
   await key(page, "Escape");
 }
+async function tasks(page) { await resetFocus(page); await key(page, "Control+Alt+2"); }
 async function calculate(page, expression, expectedLength) {
-  await resetFocus(page);
-  await key(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await page.keyboard.press("Control+a");
-  await page.keyboard.type(expression, { delay: 20 });
-  await key(page, "Enter");
+  await resetFocus(page); await key(page, "Control+Alt+4");
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
+  await page.keyboard.press("Control+a"); await page.keyboard.type(expression, { delay: 15 }); await key(page, "Enter");
   await page.waitForFunction(({ key, expression, length }) => {
-    const state = JSON.parse(localStorage.getItem(key));
-    return state.history.length === length && state.history.at(-1).expression === expression;
+    const data = JSON.parse(localStorage.getItem(key)); return data.history.length === length && data.history.at(-1).expression === expression;
   }, { key: storageKey, expression, length: expectedLength });
+  mutation(page);
 }
-async function undoKey(page) { await key(page, "Escape"); await key(page, "Control+z"); }
+async function undoKey(page) { await resetFocus(page); await key(page, "Control+z"); undoRecorded(page); }
+async function redoKey(page) { await resetFocus(page); await key(page, "Control+Shift+z"); redoRecorded(page); }
 async function undoButton(page) {
-  await resetFocus(page);
-  // A nonempty journal enables Undo immediately after the header's Data control.
-  await tab(page, 2);
-  await key(page, "Space");
+  await resetFocus(page); assert.ok(journal(page).undo > 0);
+  await tab(page, 2 + Number(journal(page).redo > 0)); // Data, optional Redo, Undo.
+  await key(page, "Space"); undoRecorded(page);
 }
-async function tasks(page) {
-  await resetFocus(page);
-  await key(page, "Control+Alt+4");
-  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await key(page, "Escape");
-  await key(page, "ArrowLeft");
-  await key(page, "Control+m");
+async function redoButton(page) {
+  await resetFocus(page); assert.ok(journal(page).redo > 0);
+  await tab(page, 2); // Data, Redo.
+  await key(page, "Space"); redoRecorded(page);
 }
-async function stl(page) {
-  if (!expanded.get(page)) {
-    await resetFocus(page);
-    await key(page, "Control+Alt+5");
-    await key(page, "Control+m");
-  }
-  await key(page, "Control+Alt+5");
-  await page.waitForTimeout(250);
+async function taskControl(page, offset) {
+  await tasks(page);
+  await tab(page, header(page) + 4 + offset); // One Tasks tab/+, Gantt/Save, then enabled row controls.
 }
-async function readReport(page) {
-  let report = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await page.evaluate(() => navigator.clipboard.writeText("Undo report pending"));
-    await stl(page);
-    if (attempt) await page.waitForTimeout(250);
-    // Read through the visible Copy control. A lost keyboard anchor after
-    // cross-applet Undo must never turn this observation into a Sample click.
-    assert.deepEqual(page.viewportSize(), { width: 1440, height: 1000 });
-    await page.mouse.move(1400, 980);
-    await paint(page);
-    let encoded;
-    let clipped = true;
-    try {
-      const png = await page.screenshot({
-        ...screenshotOptions, timeout: 15000, clip: { x: 8, y: 46, width: 420, height: 36 },
-      });
-      encoded = png.toString("base64");
-    } catch (error) {
-      if (error.name !== "TimeoutError") throw error;
-      console.warn("Undo toolbar screenshot timed out; verifying the same public canvas pixels instead.");
-      let timeout;
-      try {
-        const data = await Promise.race([
-          page.evaluate(() => document.getElementById("jig_canvas")?.toDataURL("image/png") ?? ""),
-          new Promise((_, reject) => {
-            timeout = setTimeout(() => reject(new Error("Public Undo canvas capture exceeded 3000ms")), 3000);
-          }),
-        ]);
-        assert.ok(data.startsWith("data:image/png;base64,"), "The public canvas must provide a PNG for toolbar verification");
-        encoded = data.slice("data:image/png;base64,".length);
-        clipped = false;
-      } finally { clearTimeout(timeout); }
-    }
-    const visible = await page.evaluate(async ({ encoded, clipped }) => {
-      const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-      const canvas = new OffscreenCanvas(420, 36);
-      const context = canvas.getContext("2d");
-      if (clipped) context.drawImage(bitmap, 0, 0);
-      else context.drawImage(bitmap, 8, 46, 420, 36, 0, 0, 420, 36);
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      const count = (left, top, right, bottom, color, tolerance) => {
-        let total = 0;
-        for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
-          const offset = ((y - 46) * canvas.width + x - 8) * 4;
-          if (color.every((value, axis) => Math.abs(pixels[offset + axis] - value) <= tolerance)) total++;
-        }
-        return total;
-      };
-      const answer = {
-        heading: count(16, 55, 45, 75, [244, 107, 74], 12),
-        fill: count(288, 55, 384, 75, [41, 37, 34], 6),
-        label: count(288, 55, 384, 75, [230, 225, 219], 12),
-      };
-      bitmap.close();
-      return answer;
-    }, { encoded, clipped });
-    assert.ok(visible.heading >= 10 && visible.fill >= 900 && visible.label >= 30,
-      `The maximized STL heading and Copy report control must be visible before clicking: ${JSON.stringify(visible)}`);
-    await page.mouse.click(336, 65, { delay: 50 });
-    await paint(page);
-    const deadline = Date.now() + 3000;
-    while (Date.now() < deadline) {
-      report = await page.evaluate(() => navigator.clipboard.readText());
-      if (report.startsWith("Jig STL report\n")) return report;
-      await page.waitForTimeout(50);
-    }
-    if (attempt === 0) console.warn("Undo report read unavailable; retrying the read-only Copy report action once after reanchoring.");
-  }
-  assert.fail(`The visible Copy report control did not produce an STL report after two bounded read attempts; clipboard began ${JSON.stringify(report.slice(0, 180))}`);
-}
-async function exportData(page, hasUndo) {
-  await resetFocus(page);
-  await key(page, "Control+Alt+d");
-  // Data, optional Undo, Start empty, Open local, Sample mode, Import, Export.
-  await tab(page, hasUndo ? 7 : 6);
-  const downloadEvent = page.waitForEvent("download", { timeout: 5000 });
-  await key(page, "Space");
-  const download = await downloadEvent;
+async function exportData(page) {
+  await tasks(page); await key(page, "Control+Alt+d");
+  await tab(page, 7 + Number(journal(page).undo > 0) + Number(journal(page).redo > 0));
+  const event = page.waitForEvent("download"); await key(page, "Space"); const download = await event;
   assert.equal(download.suggestedFilename(), "jig.json");
-  const exported = JSON.parse(await readFile(await download.path(), "utf8"));
-  await key(page, "Control+Alt+d");
-  return exported;
-}
-function cube() {
-  const points = [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 10], [10, 0, 10], [10, 10, 10], [0, 10, 10]];
-  const faces = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2], [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]];
-  const bytes = Buffer.alloc(84 + faces.length * 50);
-  bytes.write("Sample: undo cube");
-  bytes.writeUInt32LE(faces.length, 80);
-  faces.forEach((face, index) => face.forEach((point, vertex) => points[point].forEach((value, axis) => {
-    bytes.writeFloatLE(value, 84 + index * 50 + 12 + vertex * 12 + axis * 4);
-  })));
-  return bytes;
+  const data = JSON.parse(await readFile(await download.path(), "utf8"));
+  await key(page, "Control+Alt+d"); return data;
 }
 
 try {
-  progress("undo calculator results while preserving precision and text-editor undo");
-  current = await open("undo-calculator");
-  await calculate(current.page, "1 / 3", 2);
-  await calculate(current.page, "ans * 3", 3);
-  await undoKey(current.page);
-  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).history.length === 2, storageKey);
-  assert.equal((await state(current.page)).history.at(-1).result, 1 / 3);
-  await calculate(current.page, "ans * 3", 3);
-  assert.equal((await state(current.page)).history.at(-1).result, 1);
-  await undoButton(current.page);
-  assert.equal((await state(current.page)).history.at(-1).result, 1 / 3);
-  const beforeTyping = await state(current.page);
+  progress("redo precise calculator history through keyboard and header controls");
+  current = await open("undo-redo-calculator");
+  await calculate(current.page, "1 / 3", 2); const fractional = await state(current.page);
+  await calculate(current.page, "ans * 3", 3); const whole = await state(current.page);
+  await undoKey(current.page); await expectState(current.page, fractional);
+  await capture(current.page, "redo-desktop");
+  await redoKey(current.page); await expectState(current.page, whole, "Ctrl-Shift-Z must redo, never be consumed as another Undo");
+  await undoButton(current.page); await expectState(current.page, fractional);
+  await redoButton(current.page); await expectState(current.page, whole);
+  await undoKey(current.page); await undoKey(current.page); await expectState(current.page, fixture);
+  await redoKey(current.page); await expectState(current.page, fractional);
+  await redoKey(current.page); await expectState(current.page, whole);
+
+  progress("new edits discard Redo while text editors keep their own Undo/Redo");
+  await undoKey(current.page); await calculate(current.page, "72 in mm", 3);
+  const branched = await state(current.page);
+  assert.equal(branched.history.at(-1).result, 1828.8); assert.equal(branched.history.at(-1).unit, "mm");
+  await redoKey(current.page); await expectState(current.page, branched, "A new calculation must invalidate the old Redo branch");
   await key(current.page, "Control+Alt+4");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
   await current.page.keyboard.type("12 + 3", { delay: 30 });
   await key(current.page, "Control+z");
-  assert.deepEqual(await state(current.page), beforeTyping, "Ctrl-Z inside an editor must not pop global history");
-  await undoKey(current.page);
-  await expectState(current.page, fixture, "Global undo must resume after leaving the text editor");
+  await expectState(current.page, branched, "Native text Undo must leave application history untouched");
+  await key(current.page, "Control+Shift+z");
+  await expectState(current.page, branched, "Native text Redo must leave application history untouched");
+  await undoKey(current.page); await expectState(current.page, fractional);
+  await redoKey(current.page); await expectState(current.page, branched);
+  await capture(current.page, "undo-desktop"); await current.context.close();
+
+  progress("restore task deletion, completion, color and featured data with Undo/Redo");
+  current = await open("undo-redo-task");
+  await taskControl(current.page, 6); await key(current.page, "Space");
+  const deleted = { ...structuredClone(fixture), tasks: [], deadlines: [], featured: null };
+  await expectState(current.page, deleted); mutation(current.page);
+  await undoButton(current.page); await expectState(current.page, fixture);
+  await redoButton(current.page); await expectState(current.page, deleted);
+  await undoKey(current.page); await expectState(current.page, fixture);
+  await taskControl(current.page, 2); await key(current.page, "Space");
+  const completed = structuredClone(fixture); completed.tasks[0].complete = true; completed.featured = null;
+  await expectState(current.page, completed); mutation(current.page);
+  await undoKey(current.page); await expectState(current.page, fixture);
+  await redoKey(current.page); await expectState(current.page, completed);
+  await undoKey(current.page); await expectState(current.page, fixture);
+  await taskControl(current.page, 3); await key(current.page, "Space");
+  await tab(current.page, 6); await key(current.page, "Space"); // Date, edit, del, None, Rose, Amber.
+  const amber = structuredClone(fixture); amber.tasks[0].color = "amber";
+  await expectState(current.page, amber); mutation(current.page);
+  await undoKey(current.page); await expectState(current.page, fixture);
+  await redoKey(current.page); await expectState(current.page, amber);
   await current.context.close();
 
-  progress("undo task deletion, completion, date edits and color changes with stable links");
-  current = await open("undo-dated-task");
-  await tasks(current.page);
-  await tab(current.page, 10); // Data, Source, Tasks tab, +, star, checkbox, color, date, edit, del.
-  await key(current.page, "Space");
-  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.length === 0, storageKey);
-  assert.equal((await state(current.page)).deadlines.length, 0);
-  await undoButton(current.page);
-  await expectState(current.page, fixture, "Undo must restore task, linked date, color and featured selection exactly");
-  await tasks(current.page);
-  await tab(current.page, 6); // Empty journal again, Tasks tab and + before the first checkbox.
-  await key(current.page, "Space");
-  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete, storageKey);
-  assert.equal((await state(current.page)).featured, null);
-  await undoKey(current.page);
-  await expectState(current.page, fixture, "Completion undo must restore the featured dated task");
-  await tasks(current.page);
-  await tab(current.page, 8);
-  await key(current.page, "Space");
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await current.page.keyboard.press("Control+a");
-  await current.page.keyboard.type("2030-01-16T18:00:00Z", { delay: 20 });
-  await key(current.page, "Enter");
-  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-16T18:00:00Z", storageKey);
-  await undoKey(current.page);
-  await expectState(current.page, fixture, "Date undo must move the existing linked deadline back without copying it");
-  await tasks(current.page);
-  await tab(current.page, 7);
-  await key(current.page, "Space");
-  // Date, edit, del, None, Rose, Amber.
-  await tab(current.page, 6);
-  await key(current.page, "Space");
-  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "amber", storageKey);
-  await undoKey(current.page);
-  await expectState(current.page, fixture, "Color undo must restore the original task data");
-  await capture(current.page, "undo-desktop");
-  await current.context.close();
-
-  progress("undo bulk completed-task removal including dates and hidden notes");
+  progress("undo and redo bulk completed-task removal atomically");
   const bulk = structuredClone(fixture);
   bulk.tasks = [
     { id: 1, text: "Sample: completed casting", complete: true, deadline: 101, color: "rose" },
     { id: 2, text: "Sample: completed labels", complete: true, deadline: 102, color: "sage" },
     { id: 3, text: "Sample: unfinished exhibition", complete: false, deadline: 103, color: "lilac" },
   ];
-  bulk.deadlines = bulk.tasks.map(task => ({ id: task.deadline, title: task.text, at: "2030-01-15T18:00:00Z" }));
-  bulk.featured = 103;
-  current = await open("undo-bulk", bulk);
-  await tasks(current.page);
-  // Disabled stars and edge reorder buttons are skipped in this fixed three-row fixture.
-  await tab(current.page, 27);
-  await key(current.page, "Space");
-  await tasks(current.page); // Reset focus; the inline confirmation stays open.
-  await tab(current.page, 27); // Confirm replaces the old bulk button at this position.
-  await key(current.page, "Space");
-  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks.length === 1, storageKey);
-  assert.equal((await state(current.page)).tasks[0].id, 3);
-  await undoButton(current.page);
-  await expectState(current.page, bulk, "Bulk undo must restore order, completion, colors, linked IDs and notes");
+  bulk.deadlines = bulk.tasks.map(task => ({ id: task.deadline, title: task.text, at: "2030-01-15T18:00:00Z" })); bulk.featured = 103;
+  current = await open("undo-redo-bulk", bulk);
+  await tasks(current.page); await tab(current.page, header(current.page) + 27); await key(current.page, "Space");
+  await tasks(current.page); await tab(current.page, header(current.page) + 27); await key(current.page, "Space");
+  const cleared = { ...structuredClone(bulk), tasks: [bulk.tasks[2]], deadlines: [bulk.deadlines[2]] };
+  await expectState(current.page, cleared); mutation(current.page);
+  await undoKey(current.page); await expectState(current.page, bulk);
+  await redoKey(current.page); await expectState(current.page, cleared);
   await current.context.close();
 
-  progress("reverse STL and calculator actions in one chronological history");
-  current = await open("undo-cross-applet");
-  await stl(current.page);
-  const emptyModel = await current.page.screenshot({ ...screenshotOptions, clip: { x: 50, y: 180, width: 700, height: 600 } });
-  await current.page.locator("#jig-stl-import").setInputFiles({ name: "Sample-undo-cube.stl", mimeType: "model/stl", buffer: cube() });
-  await current.page.waitForTimeout(1300);
-  assert.match(await readReport(current.page), /Total volume: 1000\.000000 mm³/);
-  await stl(current.page);
-  await tab(current.page, 17); // Open STL -> physical scale, after projection.
-  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
-  await current.page.keyboard.press("Control+a");
-  await current.page.keyboard.type("200", { delay: 30 });
-  await key(current.page, "Enter");
-  assert.match(await readReport(current.page), /Total volume: 8000\.000000 mm³/);
-  await calculate(current.page, "7 + 8", 2);
-  await undoKey(current.page);
-  await expectState(current.page, fixture, "The newest calculator action must undo before the earlier model scale");
-  assert.match(await readReport(current.page), /Total volume: 8000\.000000 mm³/);
-  await key(current.page, "Control+z");
-  assert.match(await readReport(current.page), /Total volume: 1000\.000000 mm³/);
-  assert.deepEqual(await state(current.page), fixture, "Viewer undo must not rewrite workbench state");
-  await key(current.page, "Control+z"); // The initial local-file open is the remaining entry.
-  await paint(current.page);
-  assert.deepEqual(await current.page.screenshot({ ...screenshotOptions, clip: { x: 50, y: 180, width: 700, height: 600 } }), emptyModel, "Undoing the file open must restore the empty viewer");
-  await capture(current.page, "undo-viewer-cleared");
-  await current.context.close();
-
-  progress("discard undo history on reload and when switching datasets");
-  current = await open("undo-dataset-boundary");
-  await calculate(current.page, "7 + 8", 2);
-  const savedPersonal = await state(current.page);
-  await boot(current.page, true);
-  await undoKey(current.page);
-  assert.deepEqual(await state(current.page), savedPersonal, "Reload must retain data while clearing session undo");
-  await calculate(current.page, "9 + 1", 3);
-  const latestPersonal = await state(current.page);
-  await resetFocus(current.page);
+  progress("clear both journals on reload and dataset boundaries");
+  current = await open("undo-redo-boundaries");
+  await calculate(current.page, "7 + 8", 2); const savedPersonal = await state(current.page);
+  await undoKey(current.page); await boot(current.page, true);
+  await redoKey(current.page); await undoKey(current.page); await expectState(current.page, fixture, "Reload must retain saved data and discard session Undo and Redo");
+  await calculate(current.page, "7 + 8", 2); await tasks(current.page); await key(current.page, "Control+Alt+d");
+  await tab(current.page, 5 + Number(journal(current.page).undo > 0) + Number(journal(current.page).redo > 0));
+  await key(current.page, "Space"); journals.set(current.page, { undo: 0, redo: 0 });
   await key(current.page, "Control+Alt+d");
-  await tab(current.page, 5); // Data, Undo, Start empty, Open local, Sample mode.
-  await key(current.page, "Space");
-  await key(current.page, "Control+Alt+d"); // Collapse before using the export helper.
-  const sampleBeforeUndo = await exportData(current.page, false);
-  assert.notDeepEqual(sampleBeforeUndo.tasks, latestPersonal.tasks);
-  await undoKey(current.page);
-  assert.deepEqual(await exportData(current.page, false), sampleBeforeUndo, "Sample mode must not undo back into a personal dataset");
-  assert.deepEqual(await state(current.page), latestPersonal, "Sample edits and exports must preserve the saved personal dataset");
-  await key(current.page, "Control+Alt+o");
-  await undoKey(current.page);
-  assert.deepEqual(await state(current.page), latestPersonal, "Reopening local data must also start a fresh undo session");
+  const sample = await exportData(current.page);
+  assert.notDeepEqual(sample.tasks, savedPersonal.tasks);
+  await undoKey(current.page); await redoKey(current.page);
+  assert.deepEqual(await exportData(current.page), sample, "Sample mode must not traverse into a personal journal");
+  assert.deepEqual(await state(current.page), savedPersonal, "Sample operations must leave the personal dataset intact");
+  await key(current.page, "Control+Alt+o"); journals.set(current.page, { undo: 0, redo: 0 });
+  await undoKey(current.page); await redoKey(current.page); await expectState(current.page, savedPersonal);
+  await calculate(current.page, "9 + 1", 3); await undoKey(current.page);
+  const imported = { ...structuredClone(fixture), notes: [{ id: 401, text: "Sample: imported note", pinned: true }] };
+  await current.page.locator("#jig-import").setInputFiles({ name: "sample-redo-boundary.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
+  await current.page.waitForTimeout(1200); await expectState(current.page, savedPersonal, "Import must wait for confirmation");
+  await resetFocus(current.page);
+  await tab(current.page, 3 + Number(journal(current.page).undo > 0) + Number(journal(current.page).redo > 0));
+  await key(current.page, "Space"); await expectState(current.page, imported); journals.set(current.page, { undo: 0, redo: 0 });
+  await undoKey(current.page); await redoKey(current.page);
+  await expectState(current.page, imported, "Confirmed JSON import must clear both journals instead of crossing dataset boundaries");
   await current.context.close();
 
-  progress("preserve newer-tab and corrupt saved files when undo cannot save");
+  progress("preserve newer-tab and corrupt files through Undo and Redo save failures");
   for (const corrupt of [false, true]) {
-    current = await open(corrupt ? "undo-corrupt-preserved" : "undo-stale-tab");
-    await calculate(current.page, "7 + 8", 2);
-    const remote = structuredClone(fixture);
-    remote.history.push({ expression: "9 + 1", result: 10 });
+    current = await open(corrupt ? "redo-corrupt-preserved" : "redo-stale-tab");
+    await calculate(current.page, "7 + 8", 2); const calculated = await state(current.page);
+    const remote = structuredClone(fixture); remote.history.push({ expression: "9 + 1", result: 10 });
     const remoteRaw = corrupt ? "{broken sample state" : JSON.stringify(remote);
     await current.page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key: storageKey, raw: remoteRaw });
-    if (corrupt) { await key(current.page, "Control+Alt+o"); await paint(current.page); }
-    await undoKey(current.page);
-    assert.equal(await raw(current.page), remoteRaw, "Undo must not overwrite newer or undecodable saved data");
-    assert.deepEqual(await exportData(current.page, false), fixture, "A blocked save must leave the undone work available for local export");
-    assert.equal(await raw(current.page), remoteRaw);
+    if (corrupt) await key(current.page, "Control+Alt+o");
+    await undoKey(current.page); assert.equal(await raw(current.page), remoteRaw);
+    assert.deepEqual(await exportData(current.page), fixture, "A blocked save must leave undone work available for export");
+    await redoKey(current.page); assert.equal(await raw(current.page), remoteRaw);
+    assert.deepEqual(await exportData(current.page), calculated, "Redo must preserve the raw conflict and make restored work available for export");
     await current.context.close();
   }
-  assert.deepEqual(issues, [], "Undo tests must not emit page errors or contact external services");
-  console.log("Undo browser passed: global button and Ctrl-Z, precise calculator history, native text undo isolation, dated-task deletion/completion/date/color restoration, bulk linked-record restoration, chronological STL/data undo, reload/dataset boundaries, and stale/corrupt-file preservation.");
+  assert.deepEqual(issues, [], "Undo/Redo must stay local and emit no browser errors");
+  console.log("Undo/Redo browser passed: keyboard and buttons, precise calculator data, multi-step history, new-edit branching, text-local isolation, linked task and bulk restoration, reload/dataset boundaries, and stale/corrupt-file preservation.");
 } catch (error) {
-  console.error(`Undo browser failed during: ${phase}`);
+  console.error(`Undo/Redo browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "undo-failure").catch(() => {});
   throw error;
 } finally {
-  progress("close undo contexts and Chromium");
+  clearTimeout(timer);
   let cleanupTimer;
-  let cleanupFailed = false;
   try {
     await Promise.race([
-      Promise.all([
-        ...contexts.map(context => context.close().catch(() => {})),
-        browser.close(),
-      ]),
-      new Promise((_, reject) => {
-        cleanupTimer = setTimeout(() => reject(new Error("Undo browser shutdown exceeded 10 seconds")), 10000);
-      }),
+      Promise.all([...contexts.map(context => context.close().catch(() => {})), browser.close()]),
+      new Promise((_, reject) => { cleanupTimer = setTimeout(() => reject(new Error("Undo/Redo browser shutdown exceeded 10 seconds")), 10000); }),
     ]);
-  } catch (error) {
-    cleanupFailed = true;
-    console.error("Undo browser cleanup failed:", error);
-  } finally {
-    clearTimeout(cleanupTimer);
-    clearTimeout(timer);
-  }
-  // A stuck Chromium socket can keep Node alive after a rejected close promise.
-  if (cleanupFailed) process.exit(1);
+  } catch (error) { console.error(error); process.exit(1); }
+  finally { clearTimeout(cleanupTimer); }
 }

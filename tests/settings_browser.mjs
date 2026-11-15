@@ -273,7 +273,9 @@ try {
   await calculate(current, "6 * 7", 2); const calculated = await state(current.page);
   await current.page.clock.fastForward(240000); assert.equal((await backupFiles(current.page)).length, 2, "Automatic backup must not run before five minutes");
   await current.page.clock.fastForward(70000); const automatic = await waitFiles(current.page, 3);
-  assert.ok(automatic.some(file => JSON.stringify(file.data) === JSON.stringify(calculated)), "Automatic backup must contain the successfully saved document");
+  const savedCalculation = automatic.find(file => file.data.history?.at(-1)?.expression === "6 * 7");
+  assert.ok(savedCalculation, `Automatic backup must contain the saved calculation: ${JSON.stringify({ files: automatic, calculated, current: await state(current.page), settings: await settings(current.page) })}`);
+  assert.deepEqual(savedCalculation.data, calculated, `Automatic backup ${savedCalculation.name} must preserve every saved document field`);
   await current.page.clock.fastForward(310000); assert.equal((await backupFiles(current.page)).length, 3, "No saved changes means no repeated automatic backups");
   await boot(current, true);
   const restored = await backupStatus(current.page); assert.equal(restored.folder, "jig-settings-browser"); assert.equal(restored.permission, "granted");

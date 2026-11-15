@@ -89,7 +89,7 @@ pub fn convert(input: &str, target: &str) -> Result<f64> {
         .find(|c: char| c.is_ascii_alphabetic())
         .ok_or("Include a source unit, e.g. 12in")?;
     let number = input[..split].trim();
-    let source = scale(&input[split..])?;
+    let source = canonical(&input[split..])?;
     let mut parts = number.split_whitespace();
     let first = parts.next().ok_or("Missing length")?;
     let value = if let Some(fraction) = parts.next() {
@@ -106,11 +106,7 @@ pub fn convert(input: &str, target: &str) -> Result<f64> {
     } else {
         fraction_value(first)?
     };
-    let result = value * source / scale(target)?;
-    if !result.is_finite() {
-        return Err("Length must be finite".into());
-    }
-    Ok(result)
+    convert_value(value, source, canonical(target)?).map_err(|_| "Length must be finite".into())
 }
 fn fraction_value(s: &str) -> Result<f64> {
     if let Some((n, d)) = s.split_once('/') {
@@ -127,7 +123,23 @@ fn fraction_value(s: &str) -> Result<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{convert_value, ConversionError};
+    use super::{convert, convert_value, ConversionError};
+
+    #[test]
+    fn text_and_numeric_conversions_preserve_the_same_small_finite_values() {
+        let smallest = f64::from_bits(1);
+        for source in ["in", "ft", "mm", "cm", "m"] {
+            let input = format!("{smallest}{source}");
+            assert_eq!(convert(&input, source).unwrap(), smallest, "{source}");
+            for target in ["in", "ft", "mm", "cm", "m"] {
+                assert_eq!(
+                    convert(&input, target).unwrap(),
+                    convert_value(smallest, source, target).unwrap(),
+                    "{source} to {target}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn numeric_conversions_reject_nonfinite_values_and_invalid_units() {

@@ -1,5 +1,5 @@
 //! A small calendar and local-time popover. Changes stay in the caller's draft.
-use crate::web_theme::{ACCENT, ERROR, MUTED, TEXT};
+use crate::web_theme;
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, Utc};
 use eframe::egui::{self, RichText, Stroke, Ui};
 use jig::{calendar, task_dates};
@@ -23,6 +23,7 @@ pub fn button(
     existing: Option<DateTime<Utc>>,
     default_time: NaiveTime,
 ) -> bool {
+    let colors = web_theme::colors(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 26.0), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -40,7 +41,11 @@ pub fn button(
         egui::StrokeKind::Inside,
     );
     let icon = rect.shrink2(egui::vec2(7.0, 5.0));
-    let color = if response.has_focus() { ACCENT } else { TEXT };
+    let color = if response.has_focus() {
+        colors.accent
+    } else {
+        colors.text
+    };
     ui.painter().rect_stroke(
         icon,
         1.0,
@@ -155,7 +160,7 @@ pub fn button(
                     .spacing(egui::vec2(3.0, 3.0))
                     .show(ui, |ui| {
                         for label in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
-                            ui.label(RichText::new(label).color(MUTED).small());
+                            ui.label(RichText::new(label).color(colors.muted).small());
                         }
                         ui.end_row();
                         if let Ok(days) = calendar::month(picker.year, picker.month) {
@@ -163,9 +168,9 @@ pub fn button(
                                 if let Some(date) = date {
                                     let label = RichText::new(date.day().to_string()).color(
                                         if date == Local::now().date_naive() {
-                                            ACCENT
+                                            colors.accent
                                         } else {
-                                            TEXT
+                                            colors.text
                                         },
                                     );
                                     let day = ui.add_sized(
@@ -188,7 +193,7 @@ pub fn button(
                 ui.separator();
                 let mut enter = false;
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Time").color(MUTED));
+                    ui.label(RichText::new("Time").color(colors.muted));
                     let time = ui.add(
                         egui::TextEdit::singleline(&mut picker.time)
                             .id(time_id)
@@ -201,7 +206,7 @@ pub fn button(
                         && ui.input_mut(|input| {
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
                         });
-                    ui.label(RichText::new("local · 24h").small().color(MUTED));
+                    ui.label(RichText::new("local · 24h").small().color(colors.muted));
                 });
                 ui.horizontal(|ui| {
                     if ui.small_button("Today").clicked() {
@@ -228,7 +233,7 @@ pub fn button(
                     }
                 });
                 if let Some(error) = &picker.error {
-                    ui.label(RichText::new(error).small().color(ERROR));
+                    ui.label(RichText::new(error).small().color(colors.error));
                 }
             },
         );

@@ -153,28 +153,28 @@ async function renameList(scene, index, name) {
   await key(scene.page, "Enter");
   await scene.page.waitForFunction(({ key, index, name }) => JSON.parse(localStorage.getItem(key)).task_lists?.[index]?.name === name, { key: storageKey, index, name });
 }
-async function focusedControlPoint(page, limit = 180, minHeight = 10) {
+async function focusedControlPoint(page, limit = 180, minHeight = 10, fill = [77, 49, 39]) {
   const until = Date.now() + 2000;
   let point;
   do {
-    point = await readFocusedControlPoint(page, limit, minHeight);
+    point = await readFocusedControlPoint(page, limit, minHeight, fill);
     if (point) return point;
     await paint(page);
   } while (Date.now() < until);
   assert.ok(point, "A focused list control must be visibly identifiable for touch/cap checks");
 }
-async function readFocusedControlPoint(page, limit, minHeight) {
+async function readFocusedControlPoint(page, limit, minHeight, fill = [77, 49, 39]) {
   // The ordinary keyboard-focused button has Jig's active graphite fill.
   // Read its visible pixels; no Rust/widget state is exposed to this driver.
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  const point = await page.evaluate(async ({ encoded, limit, minHeight }) => {
+  const point = await page.evaluate(async ({ encoded, limit, minHeight, fill }) => {
     const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
     const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
     const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
-    const matches = index => [77, 49, 39].every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
+    const matches = index => fill.every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
     const bottom = Math.min(limit, bitmap.height);
-    const top = bitmap.width < 500 ? 60 : 42; // Phone workspace tabs occupy y34..54.
+    const top = 42; // The compact header ends at y31 on both test viewports.
     for (let y = top; y < bottom; y++) for (let x = 6; x < bitmap.width - 6; x++) {
       const start = y * bitmap.width + x;
       if (seen[start] || !matches(start)) continue;
@@ -208,7 +208,7 @@ async function readFocusedControlPoint(page, limit, minHeight) {
     }
     bitmap.close();
     return r ? { ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
-  }, { encoded: png.toString("base64"), limit, minHeight });
+  }, { encoded: png.toString("base64"), limit, minHeight, fill });
   return point;
 }
 async function bars(page) {
@@ -343,7 +343,8 @@ try {
       // The + moves with the tabs. At the cap it is skipped by keyboard focus,
       // so locate it between the actual last tab and enabled minus button.
       await focusList(current, 4);
-      const lastTab = await focusedControlPoint(current.page);
+      // A selected tab keeps its selection fill even while keyboard-focused.
+      const lastTab = await focusedControlPoint(current.page, 180, 24, [67, 42, 34]);
       await focusListControl(current, "−");
       const remove = await focusedControlPoint(current.page);
       assert.ok(remove.left - lastTab.right >= 28 && remove.left - lastTab.right <= 60,

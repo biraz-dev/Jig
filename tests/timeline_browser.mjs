@@ -392,7 +392,7 @@ async function schedule(page, due, start, submit = true) {
 async function exportData(page) {
   await resetFocus(page);
   await key(page, "Control+Alt+d");
-  await tab(page, 8); // Data, Calculator, Settings, then data actions through Export JSON.
+  await tab(page, 10); // Five header buttons, then Data actions through Export JSON.
   const downloadEvent = page.waitForEvent("download", { timeout: 5000 });
   await key(page, "Space");
   const download = await downloadEvent;
@@ -406,7 +406,7 @@ async function importData(page, imported, confirm = true) {
   await page.waitForTimeout(1600);
   if (confirm) {
     await resetFocus(page);
-    await tab(page, 4); // Data, Calculator, Settings, then the real pending-import confirmation.
+    await tab(page, 6); // Five header buttons, then the real pending-import confirmation.
     await key(page, "Space");
   }
 }
@@ -700,7 +700,7 @@ try {
   assert.ok(await bar(current.page), "The incomplete task must retain a colored duration before completion");
   const incompleteRender = await current.page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
   await tasks(current.page);
-  await tab(current.page, 10); // Data, Calculator, Settings, Source, Tasks tab, +, Gantt/ODS, star, checkbox.
+  await tab(current.page, 12); // Six header/footer targets, Tasks/+, Gantt/ODS, star, checkbox.
   await key(current.page, "Space");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].complete === true, storageKey);
   await timeline(current.page);

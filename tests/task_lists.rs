@@ -179,6 +179,203 @@ fn scoped_completed_clear_keeps_hidden_lists_and_reuses_deadline_records() {
 }
 
 #[test]
+fn task_sort_is_stable_uses_due_instants_and_preserves_metadata_and_saved_order() {
+    let mut state = State::default();
+    let ids: Vec<_> = [
+        "Undated first",
+        "Completed first",
+        "Later",
+        "Same instant first",
+        "Overdue",
+        "Undated second",
+        "Same instant second",
+        "Completed second",
+    ]
+    .iter()
+    .map(|text| state.add_task(text).unwrap())
+    .collect();
+    for (index, due) in [
+        (1, "2019-01-01T00:00:00Z"),
+        (2, "2026-11-23T10:00:00Z"),
+        (3, "2026-11-20T18:00:00-05:00"),
+        (4, "2020-01-01T00:00:00Z"),
+        (6, "2026-11-21T00:00:00+01:00"),
+    ] {
+        state.set_task_deadline(ids[index], Some(due)).unwrap();
+        state
+            .set_task_color(ids[index], Some(TaskColor::Rose))
+            .unwrap();
+    }
+    state.toggle_task(ids[1]).unwrap();
+    state.toggle_task(ids[7]).unwrap();
+    state.feature_task(ids[2]).unwrap();
+    state
+        .set_task_details(ids[0], Some("Undated first\r\n\r\n  Keep this detail"))
+        .unwrap();
+    state.add_note("Keep the test tile measurements").unwrap();
+    let order = [
+        ids[4], ids[3], ids[6], ids[2], ids[0], ids[5], ids[1], ids[7],
+    ];
+    let mut expected = snapshot(&state);
+    expected["tasks"] = Value::Array(
+        order
+            .iter()
+            .map(|id| {
+                expected["tasks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|task| task["id"] == *id)
+                    .unwrap()
+                    .clone()
+            })
+            .collect(),
+    );
+
+    assert!(state.sort_tasks_in_lists(&[state.default_list_id()]));
+    assert_eq!(snapshot(&state), expected);
+    assert!(!state.sort_tasks_in_lists(&[state.default_list_id()]));
+    assert_eq!(snapshot(&state), expected, "A second sort must be a no-op");
+    state.validate().unwrap();
+
+    let json = State::from_json(&serde_json::to_string(&state).unwrap()).unwrap();
+    let ods = read_ods(&save_ods(&state).unwrap())
+        .unwrap()
+        .embedded_state
+        .unwrap();
+    for restored in [&state, &json, &ods] {
+        assert_eq!(snapshot(restored), expected);
+        assert_eq!(
+            timeline::rows_for_lists(restored, &Utc, &[restored.default_list_id()])
+                .iter()
+                .filter_map(|row| row.task_id)
+                .collect::<Vec<_>>(),
+            order,
+            "The Gantt must follow the saved checklist order"
+        );
+    }
+}
+
+#[test]
+fn task_sort_scopes_single_and_combined_lists_without_moving_hidden_slots() {
+    let mut state = State::default();
+    let studio = state.default_list_id();
+    let home = state.add_task_list("Home").unwrap();
+    let hidden = state.add_task_list("Hidden").unwrap();
+    let a = state.add_task_to_list(studio, "Studio undated").unwrap();
+    let h1 = state.add_task_to_list(hidden, "Hidden first").unwrap();
+    let b = state.add_task_to_list(home, "Home completed").unwrap();
+    let c = state.add_task_to_list(studio, "Studio later").unwrap();
+    let h2 = state.add_task_to_list(hidden, "Hidden completed").unwrap();
+    let d = state.add_task_to_list(home, "Home soon").unwrap();
+    let e = state.add_task_to_list(studio, "Studio completed").unwrap();
+    let h3 = state.add_task_to_list(hidden, "Hidden last").unwrap();
+    let f = state.add_task_to_list(home, "Home undated").unwrap();
+    for (id, due) in [
+        (h1, "2020-01-01T00:00:00Z"),
+        (b, "2026-11-20T00:00:00Z"),
+        (c, "2026-11-28T00:00:00Z"),
+        (d, "2026-11-21T00:00:00Z"),
+    ] {
+        state.set_task_deadline(id, Some(due)).unwrap();
+    }
+    for id in [b, h2, e] {
+        state.toggle_task(id).unwrap();
+    }
+    state.feature_task(c).unwrap();
+    let original = snapshot(&state);
+    for selected in [&[][..], &[999][..]] {
+        assert!(!state.sort_tasks_in_lists(selected));
+        assert_eq!(snapshot(&state), original);
+    }
+    for (lists, order) in [
+        (vec![studio], [c, h1, b, a, h2, d, e, h3, f]),
+        (vec![home, studio], [d, h1, c, a, h2, f, b, h3, e]),
+    ] {
+        assert!(state.sort_tasks_in_lists(&lists));
+        let mut expected = original.clone();
+        expected["tasks"] = Value::Array(
+            order
+                .iter()
+                .map(|id| {
+                    original["tasks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|task| task["id"] == *id)
+                        .unwrap()
+                        .clone()
+                })
+                .collect(),
+        );
+        assert_eq!(snapshot(&state), expected);
+        assert!(!state.sort_tasks_in_lists(&lists));
+        state.validate().unwrap();
+    }
+    assert!(!state.sort_tasks_in_lists(&[home, studio, home]));
+    assert!(!State::default().sort_tasks_in_lists(&[studio]));
+}
+
+#[test]
+fn explicit_sort_can_link_legacy_rows_without_replacing_deadlines_or_partial_commits() {
+    let old = json!({
+        "version": 1,
+        "preferences": { "decimals": 2, "focus": 3, "weather": null },
+        "history": [],
+        "tasks": [
+            { "id": 1, "text": "Undated", "complete": false },
+            { "id": 2, "text": "Completed", "complete": true }
+        ],
+        "notes": [{ "id": 3, "text": "Keep measurements", "pinned": true }],
+        "deadlines": [
+            { "id": 10, "title": "Legacy later", "at": "2026-11-23T18:00:00Z" },
+            { "id": 11, "title": "Legacy soon", "at": "2026-11-20T18:00:00Z" }
+        ],
+        "entries": [],
+        "featured": 10
+    });
+    // The UI stages the entire explicit action on a copy before publishing it.
+    let sort = |source: &State| -> Result<State, String> {
+        let mut next = source.clone();
+        for deadline in [10, 11] {
+            next.ensure_task_for_deadline(deadline)?;
+        }
+        next.sort_tasks_in_lists(&[next.default_list_id()]);
+        Ok(next)
+    };
+    let source = State::from_json(&old.to_string()).unwrap();
+    let sorted = sort(&source).unwrap();
+    let mut expected = old.clone();
+    expected["tasks"] = json!([
+        { "id": 13, "text": "Legacy soon", "complete": false, "deadline": 11 },
+        { "id": 12, "text": "Legacy later", "complete": false, "deadline": 10 },
+        { "id": 1, "text": "Undated", "complete": false },
+        { "id": 2, "text": "Completed", "complete": true }
+    ]);
+    assert_eq!(snapshot(&sorted), expected);
+    assert_eq!(
+        snapshot(&source),
+        old,
+        "Loading must not migrate legacy rows"
+    );
+    assert_eq!(snapshot(&sort(&sorted).unwrap()), expected);
+    sorted.validate().unwrap();
+
+    let mut near_limit = old;
+    near_limit["notes"][0]["id"] = json!(u64::MAX - 1);
+    let source = State::from_json(&near_limit.to_string()).unwrap();
+    let mut partial = source.clone();
+    assert_eq!(partial.ensure_task_for_deadline(10).unwrap(), u64::MAX);
+    assert!(partial.ensure_task_for_deadline(11).is_err());
+    assert!(sort(&source).unwrap_err().contains("No available IDs"));
+    assert_eq!(
+        snapshot(&source),
+        near_limit,
+        "A failed sort must stay atomic"
+    );
+}
+
+#[test]
 fn relative_task_moves_handle_both_directions_and_the_checklist_edges() {
     let cases = [
         (0, 4, true, [1, 2, 3, 4, 0]),

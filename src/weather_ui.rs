@@ -283,19 +283,6 @@ impl WeatherPanel {
             .find(|day| day.date == date)
     }
 
-    pub fn day_tooltip(&self, date: NaiveDate) -> Option<String> {
-        let day = self.day(date)?;
-        let name = &self.config.as_ref()?.name;
-        Some(format!(
-            "{name} · {date}\nHigh {} · Low {}\nRain {} · Mean humidity {}\n{}",
-            temperature(day.high, self.unit()),
-            temperature(day.low, self.unit()),
-            percentage(day.rain_probability),
-            percentage(day.humidity_mean),
-            condition(day.code)
-        ))
-    }
-
     fn summary(&self, ui: &mut Ui, date: NaiveDate) {
         if let Some(day) = self.day(date) {
             let mut detail = format!(

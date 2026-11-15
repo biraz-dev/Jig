@@ -250,6 +250,24 @@ async function focusRowControl(scene, offset) {
   const strip = count + (count > 1 ? (count < 5 ? 3 : 2) : 1);
   await tab(scene.page, headerTargets(scene) + strip + 2 + offset); // Gantt chart, Save .ods.
 }
+async function focusSort(scene, selectedLists = [1]) {
+  const data = await state(scene.page);
+  const visible = data.tasks.filter(task => selectedLists.includes(task.list_id ?? 1));
+  const rowTargets = visible.reduce((count, task) => {
+    const peers = data.tasks.filter(other => (other.list_id ?? 1) === (task.list_id ?? 1));
+    const index = peers.findIndex(other => other.id === task.id);
+    // Checkbox/date/edit/del, enabled star, color, and enabled reorder arrows.
+    return count + 4 + Number(!task.complete) + Number(Boolean(task.deadline))
+      + Number(index > 0) + Number(index + 1 < peers.length);
+  }, 0);
+  const defaultList = data.task_lists?.[0]?.id ?? 1;
+  const legacyTargets = selectedLists.includes(defaultList)
+    ? data.deadlines.filter(deadline => !data.tasks.some(task => task.deadline === deadline.id)).length * 6
+    : 0;
+  const bulkDelete = Number(visible.some(task => task.complete));
+  await focusRowControl(scene, rowTargets + legacyTargets + 2 + bulkDelete + 1); // Input, +, optional delete, Sort.
+  return focusedControlPoint(scene.page, scene.page.viewportSize().height - 25);
+}
 async function undo(scene, expected) {
   await key(scene.page, "Escape"); await key(scene.page, "Control+z");
   await expectState(scene.page, expected, "Undo must restore list membership and linked records together");
@@ -493,6 +511,122 @@ try {
   await undo(current, fixture); current.undo = false;
   await current.context.close();
 
+  progress("sort visible tasks by due date, keep undated/completed order, and preserve hidden work");
+  const sorting = {
+    ...structuredClone(fixture),
+    tasks: [
+      { id: 1, text: "Sample: later dated work", complete: false, deadline: 101, color: "rose", start: "2026-10-26T12:34:56Z", details: "Sample: later dated work\nKeep the full note details." },
+      { id: 2, text: "Sample: hidden Home work", complete: false, list_id: 2, deadline: 102, color: "amber", start: "2026-10-26T12:00:00Z" },
+      { id: 3, text: "Sample: undated first", complete: false },
+      { id: 4, text: "Sample: completed first", complete: true, deadline: 104, start: "2026-10-26T12:00:00Z" },
+      { id: 5, text: "Sample: early dated work", complete: false, deadline: 105, color: "sage", start: "2026-10-26T12:00:00Z" },
+      { id: 6, text: "Sample: undated second", complete: false },
+      { id: 7, text: "Sample: equal due date", complete: false, deadline: 107, color: "blue", start: "2026-10-26T12:00:00Z" },
+      { id: 8, text: "Sample: completed second", complete: true },
+      { id: 9, text: "Sample: hidden Show work", complete: false, list_id: 3, deadline: 109, start: "2026-10-26T12:00:00Z" },
+    ],
+    deadlines: [
+      { id: 101, title: "Sample: later dated work", at: "2026-10-31T18:00:00Z" },
+      { id: 102, title: "Sample: hidden Home work", at: "2026-10-28T18:00:00Z" },
+      { id: 104, title: "Sample: completed first", at: "2026-10-27T18:00:00Z" },
+      { id: 105, title: "Sample: early dated work", at: "2026-10-29T18:00:00Z" },
+      { id: 107, title: "Sample: equal due date", at: "2026-10-29T18:00:00Z" },
+      { id: 109, title: "Sample: hidden Show work", at: "2026-10-30T18:00:00Z" },
+    ],
+    notes: [{ id: 401, text: "Sample: unrelated pinned note", pinned: true }],
+    featured: 101,
+  };
+  const ordered = (data, ids) => ({ ...structuredClone(data), tasks: ids.map(id => structuredClone(data.tasks.find(task => task.id === id))) });
+  const sorted = ordered(sorting, [5, 2, 7, 1, 3, 6, 4, 8, 9]);
+  current = await open("task-lists-sort", sorting);
+  const sortPoint = await focusSort(current);
+  await current.page.mouse.click(sortPoint.x, sortPoint.y); await paint(current.page); current.undo = true;
+  await expectState(current.page, sorted, "Sort must preserve exact linked metadata, equal-date order, undated/completed order and hidden task slots");
+  const sortedBars = await expectBars(current.page, ["rose", "sage"]);
+  assert.ok(sortedBars.sage.top < sortedBars.rose.top, "The Gantt must immediately follow the sorted checklist order");
+  const unchangedSort = await focusSort(current);
+  await current.page.mouse.click(unchangedSort.x, unchangedSort.y); await paint(current.page);
+  await expectState(current.page, sorted, "Sorting an already sorted list must be a no-op");
+  await undo(current, sorting); current.undo = false;
+  await key(current.page, "Control+z");
+  await expectState(current.page, sorting, "Repeated Sort must not add a second Undo entry");
+  await focusSort(current); await key(current.page, "Space"); current.undo = true;
+  await expectState(current.page, sorted, "Sort must also work from the keyboard");
+  await boot(current, true);
+  await expectState(current.page, sorted, "Sorted order must survive refresh");
+  const sortedExport = await exportData(current);
+  assert.deepEqual(sortedExport, sorted, "JSON export must retain the sorted order and complete original records");
+  await current.page.locator("#jig-import").setInputFiles({ name: "sample-sorted-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sorting)) });
+  await current.page.waitForTimeout(1200);
+  await expectState(current.page, sorted, "Choosing another task order must still wait for import confirmation");
+  await resetTasks(current); await tab(current.page, 2); await key(current.page, "Space");
+  await expectState(current.page, sorting, "Import must restore the original manual order without automatically sorting it");
+  await current.page.locator("#jig-import").setInputFiles({ name: "sample-sorted-tasks.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(sortedExport)) });
+  await current.page.waitForTimeout(1200);
+  await resetTasks(current); await tab(current.page, 2); await key(current.page, "Space");
+  await expectState(current.page, sorted, "JSON import must restore the saved sorted order exactly");
+  await boot(current, true); await expectState(current.page, sorted);
+  await current.context.close();
+
+  progress("sort combined lists together while preserving an unselected list");
+  current = await open("task-lists-sort-combined", sorting);
+  await selectList(current, 1, true);
+  const combinedSort = ordered(sorting, [2, 5, 7, 1, 3, 6, 4, 8, 9]);
+  await focusSort(current, [1, 2]); await key(current.page, "Space"); current.undo = true;
+  await expectState(current.page, combinedSort, "Combined Sort must order the selected lists together and leave the Show task untouched");
+  const combinedSortBars = await expectBars(current.page, ["rose", "amber", "sage"]);
+  assert.ok(combinedSortBars.amber.top < combinedSortBars.sage.top && combinedSortBars.sage.top < combinedSortBars.rose.top,
+    "Combined Gantt rows must follow due-date order across the selected lists");
+  await undo(current, sorting); current.undo = false;
+  await current.context.close();
+
+  progress("sort older standalone deadlines only on request and undo their task links together");
+  const standalone = {
+    ...structuredClone(legacy),
+    tasks: [{ id: 1, text: "Sample: older undated task", complete: false }],
+    deadlines: [
+      { id: 101, title: "Sample: older later deadline", at: "2026-10-31T18:00:00Z" },
+      { id: 102, title: "Sample: older earlier deadline", at: "2026-10-29T18:00:00Z" },
+    ],
+    entries: [],
+    featured: 101,
+  };
+  current = await open("task-lists-sort-legacy", standalone);
+  assert.equal(await raw(current.page), JSON.stringify(standalone), "Opening old deadline-only rows must not materialize or sort them");
+  await focusSort(current); await key(current.page, "Space"); current.undo = true;
+  const linkedLegacy = {
+    ...structuredClone(standalone),
+    tasks: [
+      { id: 104, text: "Sample: older earlier deadline", complete: false, deadline: 102 },
+      { id: 103, text: "Sample: older later deadline", complete: false, deadline: 101 },
+      ...structuredClone(standalone.tasks),
+    ],
+  };
+  await expectState(current.page, linkedLegacy, "Explicit Sort must reuse old deadlines and the featured ID while placing their tasks before undated work");
+  await undo(current, standalone); current.undo = false;
+  await key(current.page, "Control+z");
+  await expectState(current.page, standalone, "One Undo must restore original standalone records without leftover links");
+  await current.context.close();
+
+  progress("sort from the touch-friendly button on a phone");
+  const phoneSort = {
+    ...structuredClone(legacy),
+    tasks: [
+      structuredClone(sorting.tasks[0]),
+      { id: 3, text: "Sample: phone undated", complete: false },
+      structuredClone(sorting.tasks[4]),
+      { id: 8, text: "Sample: phone completed", complete: true },
+    ],
+    deadlines: [structuredClone(sorting.deadlines[0]), structuredClone(sorting.deadlines[3])],
+  };
+  const phoneSorted = ordered(phoneSort, [5, 1, 3, 8]);
+  current = await open("task-lists-sort-mobile", phoneSort, true);
+  const phoneSortPoint = await focusSort(current);
+  await current.page.touchscreen.tap(phoneSortPoint.x, phoneSortPoint.y); await paint(current.page); current.undo = true;
+  await expectState(current.page, phoneSorted, "A real touch on Sort must preserve every task and its exact schedule");
+  await undo(current, phoneSort); current.undo = false;
+  await current.context.close();
+
   progress("delete completed work only from the selected list and undo it");
   const bulk = structuredClone(fixture); bulk.tasks[0].complete = true; bulk.tasks[1].complete = true;
   current = await open("task-lists-bulk", bulk);
@@ -508,7 +642,7 @@ try {
   await current.context.close();
 
   assert.deepEqual(issues, [], "Task-list changes must stay local and produce no app errors");
-  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, reload and real JSON export/import without featured changes.");
+  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, stable scoped due-date sorting via mouse/keyboard/touch with single Undo and reload/JSON round trips, without featured changes.");
 } catch (error) {
   console.error(`Task-list browser checks failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "task-lists-failure").catch(() => {});

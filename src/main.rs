@@ -10,6 +10,7 @@ use jig::{
     stl, timeline, units,
 };
 use std::{
+    borrow::Cow,
     io::{Read, Write},
     path::PathBuf,
 };
@@ -464,7 +465,10 @@ fn sheet_id(workbook: &Workbook, selection: Option<&str>) -> Result<u64, String>
 }
 
 fn execute_sheet(action: SheetAction, state: &mut State) -> Result<bool, String> {
-    let mut workbook = state.workbook.clone().unwrap_or_default();
+    let mut workbook = match &state.workbook {
+        Some(workbook) => Cow::Borrowed(workbook),
+        None => Cow::Owned(Workbook::default()),
+    };
     let changed = match action {
         SheetAction::List => {
             for sheet in &workbook.sheets {
@@ -490,7 +494,9 @@ fn execute_sheet(action: SheetAction, state: &mut State) -> Result<bool, String>
         }
         SheetAction::Set { cell, input, sheet } => {
             let sheet = sheet_id(&workbook, sheet.as_deref())?;
-            workbook.set_cell(sheet, CellAddr::parse(&cell)?, &input)?
+            workbook
+                .to_mut()
+                .set_cell(sheet, CellAddr::parse(&cell)?, &input)?
         }
         SheetAction::Import { file, at, sheet } => {
             let sheet = sheet_id(&workbook, sheet.as_deref())?;
@@ -511,7 +517,9 @@ fn execute_sheet(action: SheetAction, state: &mut State) -> Result<bool, String>
                 return Err("CSV exceeds the 2 MiB input limit".into());
             }
             let rows = jig::spreadsheet::parse_delimited(&text, ',')?;
-            workbook.set_block(sheet, CellAddr::parse(&at)?, &rows)?
+            workbook
+                .to_mut()
+                .set_block(sheet, CellAddr::parse(&at)?, &rows)?
         }
         SheetAction::Export { file, sheet } => {
             let sheet = sheet_id(&workbook, sheet.as_deref())?;
@@ -537,7 +545,7 @@ fn execute_sheet(action: SheetAction, state: &mut State) -> Result<bool, String>
     };
     if changed {
         workbook.validate()?;
-        state.workbook = Some(workbook);
+        state.workbook = Some(workbook.into_owned());
     }
     Ok(changed)
 }

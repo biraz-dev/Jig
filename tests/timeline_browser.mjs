@@ -509,6 +509,7 @@ try {
   await key(current.page, "Control+z");
   await expectState(current.page, fixture, "The cancelled title-width preview must leave no extra Undo entry");
 
+  await timeline(current.page);
   const touchRangeBar = await waitForBar(current.page, item => Math.abs(item.left - touchInitialBar.left) <= 3);
   const touchDayPixels = (touchRangeBar.width + 1) / 5;
   const touchDueGrip = { x: touchRangeBar.right - 1, y: (touchRangeBar.top + touchRangeBar.bottom) / 2 };

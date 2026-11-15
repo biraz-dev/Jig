@@ -1863,6 +1863,7 @@ impl BrowserApp {
     }
 
     fn cancel_document_import(&mut self) {
+        self.pending_import = None;
         self.pending_csv_target = None;
         self.pending_paste_target = None;
         self.pdf_target = None;
@@ -2376,6 +2377,7 @@ impl BrowserApp {
                     }
                 }
                 if ui.button("Import JSON").clicked() && self.flush_sheet_edit() && self.flush_notes_edit() {
+                    self.cancel_document_import();
                     if let Err(error) = browser_storage::request_import() {
                         self.status = error;
                     }

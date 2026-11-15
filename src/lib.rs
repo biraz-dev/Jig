@@ -1,4 +1,5 @@
 //! Portable utility logic. Terminal and filesystem adapters live in the binary.
+pub mod app_settings;
 pub mod calculator;
 pub mod calendar;
 pub mod calendar_strip;

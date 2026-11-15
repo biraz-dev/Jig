@@ -96,11 +96,11 @@ async function undoKey(page) { await resetFocus(page); await key(page, "Control+
 async function redoKey(page) { await resetFocus(page); await key(page, "Control+Shift+z"); }
 async function taskControl(page, offset) {
   await tasks(page);
-  await tab(page, 8 + offset); // One Tasks tab/+, Gantt/Save, then enabled row controls.
+  await tab(page, 10 + offset); // Six header/footer targets, Tasks/+, Gantt/Save, then row controls.
 }
 async function exportData(page) {
   await tasks(page); await key(page, "Control+Alt+d");
-  await tab(page, 8); // Data, Calculator, Settings, then the five Data actions.
+  await tab(page, 10); // Five header buttons, then the five Data actions.
   const event = page.waitForEvent("download"); await key(page, "Space"); const download = await event;
   assert.equal(download.suggestedFilename(), "jig.json");
   const data = JSON.parse(await readFile(await download.path(), "utf8"));
@@ -168,8 +168,8 @@ try {
   ];
   bulk.deadlines = bulk.tasks.map(task => ({ id: task.deadline, title: task.text, at: "2030-01-15T18:00:00Z" })); bulk.featured = 103;
   current = await open("undo-redo-bulk", bulk);
-  await tasks(current.page); await tab(current.page, 31); await key(current.page, "Space");
-  await tasks(current.page); await tab(current.page, 31); await key(current.page, "Space");
+  await tasks(current.page); await tab(current.page, 33); await key(current.page, "Space");
+  await tasks(current.page); await tab(current.page, 33); await key(current.page, "Space");
   const cleared = { ...structuredClone(bulk), tasks: [bulk.tasks[2]], deadlines: [bulk.deadlines[2]] };
   await expectState(current.page, cleared);
   await undoKey(current.page); await expectState(current.page, bulk);
@@ -182,7 +182,7 @@ try {
   await undoKey(current.page); await boot(current.page, true);
   await redoKey(current.page); await undoKey(current.page); await expectState(current.page, fixture, "Reload must retain saved data and discard session Undo and Redo");
   await calculate(current.page, "7 + 8", 2); await tasks(current.page); await key(current.page, "Control+Alt+d");
-  await tab(current.page, 6);
+  await tab(current.page, 8);
   await key(current.page, "Space");
   await key(current.page, "Control+Alt+d");
   const sample = await exportData(current.page);
@@ -198,7 +198,7 @@ try {
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-redo-boundary.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
   await current.page.waitForTimeout(1200); await expectState(current.page, savedPersonal, "Import must wait for confirmation");
   await resetFocus(current.page);
-  await tab(current.page, 4);
+  await tab(current.page, 6);
   await key(current.page, "Space"); await expectState(current.page, imported);
   await undoKey(current.page); await redoKey(current.page);
   await expectState(current.page, imported, "Confirmed JSON import must clear both journals instead of crossing dataset boundaries");

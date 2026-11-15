@@ -6,6 +6,7 @@ use crate::{
     Result,
 };
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scale {
@@ -121,6 +122,12 @@ pub struct TimelineRow<'a> {
 /// Checklist order is retained, including undated and completed tasks. Legacy
 /// deadline-only records follow them without being converted into tasks.
 pub fn rows<'a, Tz: TimeZone>(state: &'a State, timezone: &Tz) -> Vec<TimelineRow<'a>> {
+    let deadlines: HashMap<_, _> = state.deadlines.iter().map(|item| (item.id, item)).collect();
+    let owned: HashSet<_> = state
+        .tasks
+        .iter()
+        .filter_map(|task| task.deadline)
+        .collect();
     let mut rows: Vec<_> = state
         .tasks
         .iter()
@@ -134,17 +141,14 @@ pub fn rows<'a, Tz: TimeZone>(state: &'a State, timezone: &Tz) -> Vec<TimelineRo
             start: task
                 .start
                 .map(|start| start.with_timezone(timezone).date_naive()),
-            due: state
-                .task_deadline(task.id)
+            due: task
+                .deadline
+                .and_then(|id| deadlines.get(&id))
                 .map(|deadline| deadline.at.with_timezone(timezone).date_naive()),
         })
         .collect();
     for deadline in &state.deadlines {
-        if state
-            .tasks
-            .iter()
-            .any(|task| task.deadline == Some(deadline.id))
-        {
+        if owned.contains(&deadline.id) {
             continue;
         }
         rows.push(TimelineRow {

@@ -2945,6 +2945,39 @@ impl BrowserApp {
         }
     }
 
+    fn sort_visible_tasks(&mut self, ctx: &egui::Context) {
+        self.cancel_task_note_drag(ctx);
+        self.timeline.cancel_gesture();
+        let mut next = self.state.clone();
+        // Sorting explicitly acts on older deadline-only rows too. Reuse their
+        // deadlines and commit together, so a failed conversion leaves work intact.
+        if self.selected_task_lists.contains(&next.default_list_id()) {
+            let legacy: Vec<_> = next
+                .deadlines
+                .iter()
+                .filter(|deadline| {
+                    !next
+                        .tasks
+                        .iter()
+                        .any(|task| task.deadline == Some(deadline.id))
+                })
+                .map(|deadline| deadline.id)
+                .collect();
+            for id in legacy {
+                if let Err(error) = next.ensure_task_for_deadline(id) {
+                    self.status = error;
+                    return;
+                }
+            }
+        }
+        let reordered = next.sort_tasks_in_lists(&self.selected_task_lists);
+        if reordered || next.tasks.len() != self.state.tasks.len() {
+            self.state = next;
+            self.changed();
+            ctx.request_repaint();
+        }
+    }
+
     fn tasks(&mut self, ui: &mut Ui) -> Vec<TaskDropRow> {
         let mut targets = Vec::new();
         let mut rows: Vec<_> = self
@@ -3395,8 +3428,9 @@ impl BrowserApp {
             .iter()
             .filter(|task| task.complete && self.selected_task_lists.contains(&task.list_id))
             .count();
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
         if completed > 0 {
-            ui.add_space(4.0);
             if self.confirm_clear_completed {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(format!("Delete {completed} completed tasks?"));
@@ -3441,6 +3475,14 @@ impl BrowserApp {
         } else {
             self.confirm_clear_completed = false;
         }
+        if ui
+            .small_button("Sort")
+            .on_hover_text("Sort selected lists: earliest due first, undated tasks in their current order, completed tasks last. Undo restores the previous order.")
+            .clicked()
+        {
+            self.sort_visible_tasks(ui.ctx());
+        }
+        });
         self.drag_auto_scroll(ui);
         targets
     }

@@ -190,13 +190,32 @@ async function backupFiles(page) {
   });
 }
 async function waitFiles(page, count) {
-  await page.waitForFunction(async count => {
-    if (JSON.parse(window.jigBackupStatus()).busy) return false;
-    const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true }); let files = 0;
-    for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && name.startsWith("jig-backup-")) files++;
-    return files === count;
-  }, count, { timeout: 15000, polling: 50 });
-  return backupFiles(page);
+  try {
+    const snapshot = await page.waitForFunction(async count => {
+      const before = JSON.parse(window.jigBackupStatus()); if (before.busy) return false;
+      const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true }), files = [];
+      for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && name.startsWith("jig-backup-") && name.endsWith(".json")) {
+        // A write can begin after the initial status read. Retry incomplete
+        // files, then recheck the writer after every asynchronous file read.
+        try { files.push({ name, data: JSON.parse(await (await handle.getFile()).text()) }); }
+        catch { return false; }
+      }
+      const after = JSON.parse(window.jigBackupStatus());
+      return !after.busy && before.last_backup === after.last_backup && files.length === count
+        ? files.sort((a, b) => a.name.localeCompare(b.name)) : false;
+    }, count, { timeout: 15000, polling: 50 });
+    try { return await snapshot.jsonValue(); } finally { await snapshot.dispose(); }
+  } catch (error) {
+    const files = await page.evaluate(async () => {
+      const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true }), files = [];
+      for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && name.startsWith("jig-backup-")) {
+        try { files.push({ name, text: await (await handle.getFile()).text() }); }
+        catch (error) { files.push({ name, error: String(error) }); }
+      }
+      return files;
+    });
+    throw new Error(`Expected ${count} committed backups: ${JSON.stringify({ status: await backupStatus(page), files, current: await state(page), settings: await settings(page) })}`, { cause: error });
+  }
 }
 
 try {
@@ -298,7 +317,7 @@ try {
   await current.page.clock.fastForward(240000); assert.equal((await backupFiles(current.page)).length, 2, "Automatic backup must not run before five minutes");
   await current.page.clock.fastForward(70000); const automatic = await waitFiles(current.page, 3);
   const savedCalculation = automatic.find(file => file.data.history?.at(-1)?.expression === "6 * 7");
-  assert.ok(savedCalculation, `Automatic backup must contain the saved calculation: ${JSON.stringify({ files: automatic, calculated, current: await state(current.page), settings: await settings(current.page) })}`);
+  assert.ok(savedCalculation, `Automatic backup must contain the saved calculation: ${JSON.stringify({ files: automatic, calculated, current: await state(current.page), settings: await settings(current.page), status: await backupStatus(current.page) })}`);
   assert.deepEqual(savedCalculation.data, calculated, `Automatic backup ${savedCalculation.name} must preserve every saved document field`);
   await current.page.clock.fastForward(310000); assert.equal((await backupFiles(current.page)).length, 3, "No saved changes means no repeated automatic backups");
   await boot(current, true);

@@ -1,6 +1,6 @@
 //! Optional live weather, isolated from sample and personal workbench records.
 use crate::weather_client::{self, CachedForecast};
-use crate::web_theme::{ACCENT, ERROR, MUTED};
+use crate::web_theme;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use eframe::egui::{self, RichText, TextEdit, Ui};
 use jig::weather::{DayWeather, TemperatureUnit, WeatherConfig};
@@ -169,6 +169,7 @@ impl WeatherPanel {
     }
 
     fn controls(&mut self, ui: &mut Ui) -> bool {
+        let colors = web_theme::colors(ui.ctx());
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             if let Some(config) = self.config.clone() {
@@ -197,7 +198,7 @@ impl WeatherPanel {
                     self.options_open = !self.options_open;
                 }
             } else {
-                ui.label(RichText::new("Weather off").color(MUTED).small());
+                ui.label(RichText::new("Weather off").color(colors.muted).small());
                 if ui.small_button("Set location").clicked() {
                     self.editing = !self.editing;
                 }
@@ -218,7 +219,7 @@ impl WeatherPanel {
             });
         }
         if self.editing {
-            ui.label(RichText::new("Location searches and chosen coordinates go to Open-Meteo. No Jig records are sent.").small().color(MUTED));
+            ui.label(RichText::new("Location searches and chosen coordinates go to Open-Meteo. No Jig records are sent.").small().color(colors.muted));
             ui.horizontal(|ui| {
                 let response = ui.add(
                     TextEdit::singleline(&mut self.query)
@@ -244,10 +245,10 @@ impl WeatherPanel {
                 }
             });
             if self.searching {
-                ui.label(RichText::new("Searching…").small().color(MUTED));
+                ui.label(RichText::new("Searching…").small().color(colors.muted));
             }
             if let Some(error) = &self.search_error {
-                ui.label(RichText::new(error).small().color(ERROR));
+                ui.label(RichText::new(error).small().color(colors.error));
             }
             for mut location in self.locations.clone() {
                 if ui.link(&location.name).clicked() {
@@ -284,6 +285,7 @@ impl WeatherPanel {
     }
 
     fn summary(&self, ui: &mut Ui, date: NaiveDate) {
+        let colors = web_theme::colors(ui.ctx());
         if let Some(day) = self.day(date) {
             let mut detail = format!(
                 "{} · High {} · Low {} · Rain {} · Mean humidity {}",
@@ -298,14 +300,14 @@ impl WeatherPanel {
                 detail.push_str(" · ");
                 detail.push_str(condition);
             }
-            ui.label(RichText::new(detail).size(12.0).color(ACCENT));
+            ui.label(RichText::new(detail).size(12.0).color(colors.accent));
         } else if self.config.is_some() {
             let message = if self.cache.is_none() && self.pending {
                 "Loading weather…".to_owned()
             } else {
                 format!("{} · Forecast unavailable", date.format("%a %d %b"))
             };
-            ui.label(RichText::new(message).small().color(MUTED));
+            ui.label(RichText::new(message).small().color(colors.muted));
         }
         if self.config.is_some() || self.editing {
             ui.horizontal_wrapped(|ui| {
@@ -327,7 +329,7 @@ impl WeatherPanel {
                             cache.forecast.timezone
                         ))
                         .small()
-                        .color(MUTED),
+                        .color(colors.muted),
                     );
                 }
                 ui.hyperlink_to(
@@ -347,7 +349,7 @@ impl WeatherPanel {
             });
         }
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).small().color(ERROR));
+            ui.label(RichText::new(error).small().color(colors.error));
         }
     }
 }

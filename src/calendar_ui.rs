@@ -1,6 +1,6 @@
 //! Compact, continuous dates. Panning and zooming never change task records.
 use crate::web::task_color;
-use crate::web_theme::{ACCENT, BG, HOVER, MUTED, RULE, SELECTED, TEXT, WEEKEND};
+use crate::web_theme;
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::{self, Align2, FontId, RichText, Stroke, Ui};
 use jig::{calendar_strip::Viewport, model::State, timeline};
@@ -52,6 +52,7 @@ impl CalendarPanel {
         selected_date: NaiveDate,
         selected_lists: &[u64],
     ) -> Option<NaiveDate> {
+        let colors = web_theme::colors(ui.ctx());
         self.focused = false;
         self.keyboard_ids.clear();
         let width = ui.available_width().max(1.0);
@@ -108,7 +109,7 @@ impl CalendarPanel {
                 } else {
                     format!("{} – {}", first.format("%b %Y"), last.format("%b %Y"))
                 };
-                ui.label(RichText::new(label).small().color(MUTED));
+                ui.label(RichText::new(label).small().color(colors.muted));
             }
         });
         let (rect, _) =
@@ -252,7 +253,7 @@ impl CalendarPanel {
             ui.painter().rect_stroke(
                 rect,
                 0,
-                Stroke::new(1.0_f32, ACCENT),
+                Stroke::new(1.0_f32, colors.accent),
                 egui::StrokeKind::Inside,
             );
         }
@@ -274,8 +275,9 @@ impl CalendarPanel {
         selected: NaiveDate,
         lists: &[u64],
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-        painter.rect_filled(rect, 0, BG);
+        painter.rect_filled(rect, 0, colors.bg);
         let dates = self.view.visible(rect.width());
         let mut deadlines = BTreeMap::<_, Vec<_>>::new();
         if let (Some((first, _)), Some((last, _))) = (dates.first(), dates.last()) {
@@ -307,7 +309,7 @@ impl CalendarPanel {
                             "%b"
                         }),
                         FontId::monospace(11.0),
-                        MUTED,
+                        colors.muted,
                     );
                 }
             }
@@ -316,15 +318,15 @@ impl CalendarPanel {
                 egui::pos2(right - 1.0, rect.bottom() - 1.0),
             );
             let fill = if *date == selected {
-                SELECTED
+                colors.selected
             } else if body
                 .contains(ui.input(|input| input.pointer.hover_pos().unwrap_or(egui::Pos2::ZERO)))
             {
-                HOVER
+                colors.hover
             } else if date.weekday().num_days_from_monday() >= 5 {
-                WEEKEND
+                colors.weekend
             } else {
-                BG
+                colors.bg
             };
             painter.rect_filled(body, 0, fill);
             painter.vline(
@@ -334,7 +336,7 @@ impl CalendarPanel {
                 } else {
                     body.top()
                 })..=rect.bottom(),
-                Stroke::new(if date.day() == 1 { 1.2_f32 } else { 0.5_f32 }, RULE),
+                Stroke::new(if date.day() == 1 { 1.2_f32 } else { 0.5_f32 }, colors.rule),
             );
             let center = (left + right) * 0.5;
             painter.text(
@@ -342,20 +344,24 @@ impl CalendarPanel {
                 Align2::CENTER_CENTER,
                 date.format("%a"),
                 FontId::monospace(10.0),
-                MUTED,
+                colors.muted,
             );
             painter.text(
                 egui::pos2(center, body.top() + 32.0),
                 Align2::CENTER_CENTER,
                 date.day(),
                 FontId::monospace(17.0),
-                if *date == today { ACCENT } else { TEXT },
+                if *date == today {
+                    colors.accent
+                } else {
+                    colors.text
+                },
             );
             if *date == today {
                 painter.hline(
                     (left + 7.0)..=(right - 7.0),
                     body.top() + 44.0,
-                    Stroke::new(1.0_f32, ACCENT),
+                    Stroke::new(1.0_f32, colors.accent),
                 );
             }
             if let Some(items) = deadlines.get(date) {
@@ -399,22 +405,26 @@ impl CalendarPanel {
                     let label_left = left + 10.0 + (count - 1) as f32 * 7.0;
                     let available = (right - 2.0 - label_left).max(1.0);
                     let mut label =
-                        painter.layout_no_wrap(text.clone(), FontId::monospace(8.0), MUTED);
+                        painter.layout_no_wrap(text.clone(), FontId::monospace(8.0), colors.muted);
                     if label.size().x > available {
                         label = painter.layout_no_wrap(
                             text,
                             FontId::monospace(8.0 * available / label.size().x),
-                            MUTED,
+                            colors.muted,
                         );
                     }
                     painter.galley(
                         egui::pos2(label_left, body.bottom() - 10.0 - label.size().y * 0.5),
                         label,
-                        MUTED,
+                        colors.muted,
                     );
                 }
             }
         }
-        painter.hline(rect.x_range(), rect.bottom(), Stroke::new(0.5_f32, RULE));
+        painter.hline(
+            rect.x_range(),
+            rect.bottom(),
+            Stroke::new(0.5_f32, colors.rule),
+        );
     }
 }

@@ -40,6 +40,10 @@ async function paint(page) {
 }
 async function key(page, value) { await page.keyboard.press(value); await paint(page); }
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
+async function canvasFocus(page) {
+  const viewport = page.viewportSize();
+  await page.locator("#jig_canvas").click({ position: { x: viewport.width - 6, y: viewport.height - 6 } });
+}
 async function text(page, value) {
   await key(page, "Control+a");
   await page.keyboard.press("Backspace");
@@ -128,7 +132,7 @@ async function boot(page, reload = false, address = base) {
   assert.equal(await page.evaluate(() => window.jigBootError), undefined, "The Rust spreadsheet must start successfully");
   assert.equal(await page.locator("#jig_canvas").isVisible(), true);
   await page.waitForTimeout(500);
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await canvasFocus(page);
   await paint(page);
 }
 async function raw(page) { return page.evaluate(key => localStorage.getItem(key), storageKey); }
@@ -212,7 +216,7 @@ async function exportCsv(page) {
 async function exportJson(page) {
   await boot(page, true); // A fresh journal gives a predictable Data toolbar.
   await key(page, "Control+Alt+d");
-  await tab(page, 6);
+  await tab(page, 7);
   const event = page.waitForEvent("download", { timeout: 5000 });
   await key(page, "Space");
   const download = await event;
@@ -225,9 +229,9 @@ async function importJson(page, imported, confirm = true) {
   await page.locator("#jig-import").setInputFiles({ name: "sample-workbook.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
   await page.waitForTimeout(1600);
   if (confirm) {
-    await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+    await canvasFocus(page);
     await key(page, "Escape");
-    await tab(page, 2);
+    await tab(page, 3); // Data, Calculator, Confirm import after the fresh journal.
     await key(page, "Space");
   }
 }
@@ -325,7 +329,7 @@ async function importStatementPdf(page) {
   await paint(page);
 }
 async function reviewControl(page, index) {
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await canvasFocus(page);
   await key(page, "Escape");
   await tab(page, index);
   await key(page, "Space");
@@ -341,10 +345,10 @@ async function showCharts(page) {
   await key(page, "Space");
 }
 async function backToCells(page) {
-  // Chart gallery controls follow Data/Undo and the footer Source link.
-  await page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  // Chart gallery controls follow Data/Undo/Calculator and the footer Source link.
+  await canvasFocus(page);
   await key(page, "Escape");
-  await tab(page, 6); // Data, Undo, Source, Save ODS, Export PDF, Back to cells.
+  await tab(page, 7); // Data, Undo, Calculator, Source, Save ODS, Export PDF, Back to cells.
   await key(page, "Space");
 }
 async function renderedBarWidths(page) {
@@ -735,7 +739,7 @@ try {
   await capture(current.page, "sheet-chart");
   await backToCells(current.page);
   await key(current.page, "Control+Alt+2");
-  await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await canvasFocus(current.page);
   await key(current.page, "Escape");
   const taskChartButton = await taskGanttButtonPoint(current.page);
   await current.page.mouse.click(taskChartButton.x, taskChartButton.y);
@@ -747,7 +751,7 @@ try {
   assert.deepEqual(toolsOnly(saved), fixture, "Creating a task chart must reference the existing task rather than duplicate or migrate it");
   await backToCells(current.page);
 
-  progress("retain existing workbench tools and share the same Undo journal");
+  progress("use the calculator popup without leaving the sheet and share the same Undo journal");
   const workbookBeforeTools = structuredClone((await state(current.page)).workbook);
   await key(current.page, "Control+Alt+4");
   await pageTextInput(current.page, "6 * 7");
@@ -757,7 +761,7 @@ try {
   assert.deepEqual(saved.workbook, workbookBeforeTools);
   await undo(current.page);
   assert.deepEqual(toolsOnly(await state(current.page)), fixture);
-  await key(current.page, "Control+Alt+w");
+  // The calculator is a popup; closing it leaves the same sheet active.
   await value(current.page, "K3", 14);
 
   progress("reload and move spreadsheet formulas through the existing JSON import/export");
@@ -802,9 +806,9 @@ try {
   const beforeOdsReview = await raw(current.page);
   await importOds(current.page, ods);
   assert.equal(await raw(current.page), beforeOdsReview, "Opening ODS must wait for the user's review before replacing current data");
-  await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await canvasFocus(current.page);
   await key(current.page, "Escape");
-  await tab(current.page, 3); // Data, active Undo, then Confirm import.
+  await tab(current.page, 4); // Data, active Undo, Calculator, then Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, beforeOds, "Confirming a locally saved ODS must restore formulas and all original Jig records");
   assert.deepEqual(sheet(await state(current.page)).styles.D15, { strike: true, alignment: "center" }, "ODS import must restore the actual alignment and strike style");
@@ -821,12 +825,12 @@ try {
   await importStatementPdf(current.page);
   await expectState(current.page, beforeStatement, "Reading a PDF must preserve the entire workbook until reviewed rows are applied");
   await capture(current.page, "sheet-import");
-  await reviewControl(current.page, 3); // Data, Source, then Cancel import; ODS restore starts a fresh Undo journal.
+  await reviewControl(current.page, 4); // Data, Calculator, Source, then Cancel import; ODS restore starts a fresh Undo journal.
   await value(current.page, "M1", "");
   await expectState(current.page, beforeStatement, "Cancelling document review must preserve every original record");
   await select(current.page, "M1");
   await importStatementPdf(current.page);
-  await reviewControl(current.page, 15); // Apply reviewed rows, including the footer Source tab stop.
+  await reviewControl(current.page, 16); // Apply reviewed rows, including Calculator and the footer Source tab stop.
   saved = await state(current.page);
   assert.equal(sheet(saved).cells.M1, "Column 1");
   assert.equal(sheet(saved).cells.M2, "11/10/2026");
@@ -848,9 +852,9 @@ try {
   current = await open("sheet-standard-ods", legacyForStandardOds);
   await enter(current.page, "Z1", "Sample: standard ODS import Undo journal");
   await importOds(current.page, odsWithOnlyStandardWorkbook(ods));
-  await current.page.locator("#jig_canvas").click({ position: { x: 12, y: 12 } });
+  await canvasFocus(current.page);
   await key(current.page, "Escape");
-  await tab(current.page, 3); // Data, active Undo, Confirm import.
+  await tab(current.page, 4); // Data, active Undo, Calculator, Confirm import.
   await key(current.page, "Space");
   saved = await state(current.page);
   assert.deepEqual(sheet(saved).styles.D15, { strike: true, alignment: "center" }, "Standard ODS XML must restore strikethrough and centered text without Jig metadata");
@@ -893,7 +897,7 @@ try {
   await value(current.page, "D10", "Sample: temporary spreadsheet edit");
   assert.equal(await raw(current.page), null, "Sample spreadsheet edits must not create or replace personal data");
   assert.deepEqual(issues, [], "The local spreadsheet must emit no application errors or remote data requests");
-  console.log("Spreadsheet browser checks passed: legacy-data preservation; cell editing, formulas, ranges, errors and cycle recovery; clipboard rectangles, formula relocation and global Undo; quoted CSV; sheet lifecycle and cross-sheet references; USD-only number choices with retained legacy currencies; visible alignment and strike, Auto reset, every border preset and style round trips; bottom sheet controls and double-click rename; header context-menu row/column span edits, reference updates and Undo; rendered live bar charts and existing-task Gantt charts; unchanged workbench tools; JSON backup/import and reload; real ODS documents with formulas, styles, charts and Jig data; embedded-font PDF export; local text-PDF review, cancellation, source provenance and atomic import/Undo; phone touch editing, draft cancellation and sample isolation.");
+  console.log("Spreadsheet browser checks passed: legacy-data preservation; cell editing, formulas, ranges, errors and cycle recovery; clipboard rectangles, formula relocation and global Undo; quoted CSV; sheet lifecycle and cross-sheet references; USD-only number choices with retained legacy currencies; visible alignment and strike, Auto reset, every border preset and style round trips; bottom sheet controls and double-click rename; header context-menu row/column span edits, reference updates and Undo; rendered live bar charts and existing-task Gantt charts; calculator popup with shared Undo; JSON backup/import and reload; real ODS documents with formulas, styles, charts and Jig data; embedded-font PDF export; local text-PDF review, cancellation, source provenance and atomic import/Undo; phone touch editing, draft cancellation and sample isolation.");
 } catch (error) {
   originalError = error;
   console.error(`Spreadsheet browser failed during: ${phase}; ${interaction}`);

@@ -3430,58 +3430,59 @@ impl BrowserApp {
             .count();
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
-        if completed > 0 {
-            if self.confirm_clear_completed {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!("Delete {completed} completed tasks?"));
-                    if ui.small_button("Confirm").clicked() {
-                        self.state
-                            .remove_completed_tasks_in_lists(&self.selected_task_lists);
-                        if self
-                            .task_edit
-                            .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
-                        {
-                            self.task_edit = None;
-                            self.task_edit_original = None;
-                            self.task_edit_list = None;
-                            self.task_text.clear();
-                            self.task_details.clear();
+            if completed > 0 {
+                if self.confirm_clear_completed {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!("Delete {completed} completed tasks?"));
+                        if ui.small_button("Confirm").clicked() {
+                            self.state
+                                .remove_completed_tasks_in_lists(&self.selected_task_lists);
+                            if self.task_edit.is_some_and(|id| {
+                                !self.state.tasks.iter().any(|task| task.id == id)
+                            }) {
+                                self.task_edit = None;
+                                self.task_edit_original = None;
+                                self.task_edit_list = None;
+                                self.task_text.clear();
+                                self.task_details.clear();
+                            }
+                            if self.task_date_edit.is_some_and(|id| {
+                                !self.state.tasks.iter().any(|task| task.id == id)
+                            }) {
+                                self.task_date_edit = None;
+                            }
+                            if self.task_color_edit.is_some_and(|id| {
+                                !self
+                                    .state
+                                    .deadlines
+                                    .iter()
+                                    .any(|deadline| deadline.id == id)
+                            }) {
+                                self.task_color_edit = None;
+                            }
+                            self.confirm_clear_completed = false;
+                            self.changed();
                         }
-                        if self
-                            .task_date_edit
-                            .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
-                        {
-                            self.task_date_edit = None;
+                        if ui.small_button("Cancel").clicked() {
+                            self.confirm_clear_completed = false;
                         }
-                        if self.task_color_edit.is_some_and(|id| {
-                            !self
-                                .state
-                                .deadlines
-                                .iter()
-                                .any(|deadline| deadline.id == id)
-                        }) {
-                            self.task_color_edit = None;
-                        }
-                        self.confirm_clear_completed = false;
-                        self.changed();
-                    }
-                    if ui.small_button("Cancel").clicked() {
-                        self.confirm_clear_completed = false;
-                    }
-                });
-            } else if ui.small_button("Delete all completed tasks").clicked() {
-                self.confirm_clear_completed = true;
+                    });
+                } else if ui.small_button("Delete all completed tasks").clicked() {
+                    self.confirm_clear_completed = true;
+                }
+            } else {
+                self.confirm_clear_completed = false;
             }
-        } else {
-            self.confirm_clear_completed = false;
-        }
-        if ui
-            .small_button("Sort")
-            .on_hover_text("Sort selected lists: earliest due first, undated tasks in their current order, completed tasks last. Undo restores the previous order.")
-            .clicked()
-        {
-            self.sort_visible_tasks(ui.ctx());
-        }
+            let sort = ui.small_button("Sort").on_hover_text(concat!(
+                "Sort selected lists: earliest due first, undated tasks in their ",
+                "current order, completed tasks last. Undo restores the previous order."
+            ));
+            if sort.has_focus() {
+                sort.scroll_to_me(None);
+            }
+            if sort.clicked() {
+                self.sort_visible_tasks(ui.ctx());
+            }
         });
         self.drag_auto_scroll(ui);
         targets

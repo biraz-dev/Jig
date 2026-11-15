@@ -1,11 +1,11 @@
 # Jig
 
-You are a small Small Giant Psionicist.
-
 Jig is a small, local artist's workbench in Rust. The browser starts in **Tasks**
-and remembers your workspace. **Notes**, **Sheet**, and **Workbench** remain in
-the top bar. Tasks, their Gantt timeline, notes, calculator/converter, calendar,
-optional weather and STL viewer use the same portable state. The native CLI and Ratatui terminal
+and remembers your workspace. **Tasks**, **Notes** and **Sheet** are the main
+views, with a calculator icon, Undo, Redo and Data controls in the header. Tasks,
+their Gantt timeline, notes, calculator/converter, calendar and optional weather
+use the same portable state. The browser STL interface is hidden for now; the
+native geometry tools remain available. The native CLI and Ratatui terminal
 interface share the Rust core; running `jig` still opens the terminal dashboard.
 
 No accounts, telemetry, database or backend. Files are processed on your device.
@@ -57,7 +57,7 @@ Use the address field to jump to `B12` or select `A1:D20`.
 - Copy and paste rectangular cells. Copies made inside Jig translate relative
   formula references when pasted elsewhere; pasted tab-separated text fills a
   block. Clear removes contents while retaining formatting. **Undo** covers sheet
-  changes alongside existing task and workbench changes.
+  changes alongside existing task, note and calculator changes.
 
 The grid paints visible cells and caches calculated values until edits or a local
 calendar-day change. Each sheet has **1,000 rows × 52 columns (A–AZ)**; a workbook
@@ -127,7 +127,7 @@ Chart results follow changes to their source cells. **View → Charts** opens th
 inline gallery, where charts can be renamed or removed.
 
 **Tasks** opens the existing checklist and calendar/timeline. Add a task, give it
-an optional due date, and star it to drive the featured countdown in Workbench.
+an optional due date, and star it to drive the featured countdown in Tasks.
 **Gantt from Jig tasks** reads these same records directly, including their
 colors and completion status. Editing a task updates its live chart; there is no
 second copy of the task to maintain.
@@ -147,9 +147,10 @@ second copy of the task to maintain.
 | Shift-F11 | Add a sheet |
 | Alt-PageUp / Alt-PageDown | Previous / next sheet |
 | Ctrl-S / Ctrl-O / Ctrl-P | Download ODS / open ODS / export PDF |
-| Ctrl-Z outside text fields | Undo a Jig change |
+| Ctrl-Z / Ctrl-Shift-Z outside text fields | Undo / Redo a Jig change |
 | Ctrl-Alt-2 | Tasks |
-| Ctrl-Alt-W | Switch Sheet / Workbench |
+| Ctrl-Alt-W | Switch Sheet / Tasks |
+| Ctrl-Alt-4 | Open the calculator popover |
 
 Text fields retain their normal editing shortcuts. File and Edit menus also
 provide pointer/touch access to these actions.
@@ -218,7 +219,8 @@ See [preview notes](docs/preview.md) and [Actions](https://github.com/biraz-dev/
 ## Local browser data
 
 New visitors start with an empty personal document in Tasks. Existing saved work
-opens automatically; your workspace choice is remembered. **Data → Start empty**
+opens automatically; your workspace choice is remembered. Older Workbench
+preferences open Tasks. **Data → Start empty**
 replaces personal data after confirmation. **Open local data** reopens saved work;
 **Sample mode** returns to temporary samples. Demo edits never replace saved
 personal data. Importing a real document explicitly leaves sample mode.
@@ -230,9 +232,9 @@ state and asks before replacement. Older files without spreadsheets, task colors
 or start dates still load. **Clear saved data** also requires confirmation.
 
 A normal refresh or application update keeps personal data. Press **Enter** to
-commit a spreadsheet cell before leaving. Check the header: **your data** is
-saved, while **sample data** is temporary. To keep work already entered in sample
-mode, **Export JSON**, then **Import JSON** that file and confirm the import.
+commit a spreadsheet cell before leaving. The wide header marks **your data**
+versus temporary **sample data**; status messages also identify sample mode. To
+keep work already entered in sample mode, **Export JSON**, then **Import JSON** that file and confirm the import.
 Use **Start empty** only when you intend to begin with an empty dataset.
 
 Unfinished note/task text and start/due date edits are backed up separately in
@@ -244,9 +246,9 @@ Browser JSON saves/imports have a 2 MiB limit. Invalid saved data is preserved a
 reported. Failed saves leave edits in memory with **Retry save** available; export
 before closing the page. A stale tab cannot overwrite a newer save. Storage is
 specific to this profile and origin, so keep portable file backups. Opened
-PDF/image/STL source bytes are session-only and are not embedded in saved state.
+PDF/image source bytes are session-only and are not embedded in saved state.
 
-## Workbench, tasks and timeline
+## Tasks, calendar and timeline
 
 Task lists appear as horizontal tabs, with a maximum of five. Click a tab to show
 one list; **Shift-click** tabs to combine them. Combined views use subtly different
@@ -258,8 +260,13 @@ Tasks, their dates and the featured countdown are preserved.
 
 New tasks go into the active list. The task editor can move an existing task to
 another list. Reorder and clear-completed actions apply to the visible lists.
-Lists and membership are included in JSON and ODS saves; older files open as one
-**Tasks** list. Selecting tabs or calendar dates never replaces the starred task.
+Sort places open tasks with the earliest due dates first, keeps undated tasks
+in their current relative order below them, and moves completed tasks to the
+bottom. Matching due dates retain their order. Sorting affects the selected
+lists, updates the same Gantt order, survives refresh and can be undone once;
+you can still reorder manually afterward. Lists and membership are included in
+JSON and ODS saves; older files open as one **Tasks** list. Selecting tabs or
+calendar dates never replaces the starred task.
 
 Drag the grip at the start of a task to reorder it. An insertion line previews
 the destination; release commits one Undo step and updates the Gantt row order.
@@ -274,22 +281,29 @@ default split. A finished resize is one Undo step, and the preferred width is
 saved with your local preferences and portable backups. Narrow screens stack
 the panels without replacing your saved split.
 
-**Workbench** keeps the fixed applets: featured countdown, unified task/deadline
-checklist, compact calendar/timeline, calculator/converter and STL viewer.
-Click an applet or use arrows outside text editors to select it; **Ctrl-M**
-maximizes/restores the highlighted applet. **Esc** leaves an editor. Narrow
-screens stack the applets and scroll. **Ctrl-Alt-4** focuses the calculator;
-**Ctrl-Alt-D** opens Data controls.
+The separate Workbench tab, header title and tagline are removed. The selected
+task or calendar/timeline panel can be maximized/restored with **Ctrl-M**.
+Arrows outside text fields move panel selection; **Esc** leaves an editor or
+closes a popup. Narrow screens stack the panels and scroll. **Ctrl-Alt-D** opens
+Data controls.
 
-The shared math input accepts `125 * 1.15`, `72 in mm`, `72in to mm` and
-`1 1/2 in cm`. Decimal places and Copy remain inside this instrument. Clicking a
-history result reuses full precision, including its unit for conversions.
+The calculator icon beside Undo, or **Ctrl-Alt-4**, opens a compact popover
+without leaving the current workspace. Its input accepts `125 * 1.15`,
+`72 in mm`, `72in to mm` and `1 1/2 in cm`. Decimal places and Copy stay inside;
+click a history result to reuse its full precision and conversion unit. Click
+outside or press Esc to close it.
+
+The calendar is a continuous strip of days with month boundaries. Widen the
+panel to see more dates, drag or use horizontal/Shift-wheel scrolling to pan, and
+use **+ / −**, Ctrl-wheel or a pinch to zoom. Today returns to the current day.
+With the strip focused, Left/Right select a day, Page Up/Down move a page, Home
+returns to today and +/− zoom. These view changes do not move any deadlines.
 
 Dated tasks have optional Rose, Amber, Sage, Blue or Lilac colors. Their due day
 gets the same mark in the calendar; several tasks show separate marks and dense
 dates add a count. Completed tasks keep subdued, hollow marks. Click/tap a date,
-or use Tab then Enter/Space, to see task names, Open/Done status and weather.
-Selecting a date leaves the starred countdown alone. Completing a task clears
+or select a day with the focused strip's arrow keys, to see task names, Open/Done
+status and weather. Selecting a date leaves the starred countdown alone. Completing a task clears
 its star; deleting a task also removes its linked deadline. **del** removes one
 task; **Delete all completed tasks** asks before clearing completed work.
 Calendar note controls are hidden in the browser, while saved notes and native
@@ -310,15 +324,27 @@ handle and use Left/Right to change one day, or Shift-Left/Right for a week;
 Esc cancels a drag. A clipped end must be brought into view before resizing it.
 Deadline-only diamonds still use the date editor.
 
-Select a row to edit dates inline. Start accepts `YYYY-MM-DD`; due accepts that
-format or timezone-qualified RFC3339. Changing a due day keeps its existing time;
-new date-only deadlines use 09:00 local time. Saving the range is one undo step.
-Removing a due date clears its start. The starred task stays independent of
-calendar/timeline selection. Legacy standalone deadlines remain usable.
+Select a row to edit dates inline. A calendar icon beside each start/due field
+opens a month picker with local 24-hour HH:MM time. **Use date** updates the draft;
+**Save date** commits the schedule and **Cancel** leaves it unchanged. You can
+also type `YYYY-MM-DD`, local `YYYY-MM-DD HH:MM`, or a timezone-qualified RFC3339
+timestamp. Date-only edits retain an existing time; new starts use midnight and
+new deadlines use 09:00 local time. Unchanged displayed times retain their exact
+stored precision, and nonexistent local times are rejected. Removing a due date
+clears its start. The starred task stays independent of calendar/timeline
+selection. Legacy standalone deadlines remain usable.
 
-The browser's Undo button, or **Ctrl-Z** outside text fields, covers data and STL
-changes. The session journal keeps up to 20 steps within a 64 MiB budget and is
-cleared when switching datasets or reloading; it is not saved in documents.
+You can also pick on the main Calendar strip: keep the date editor open, choose
+Calendar, then click or focus Start or Due. The calendar labels the active field;
+selecting a day fills that draft and retains its time. **Save date** commits the
+range. **Done picking** or Esc exits picking without discarding the draft.
+Panning and zooming do not assign dates or change the featured countdown.
+
+**Undo / Ctrl-Z** and **Redo / Ctrl-Shift-Z**, outside text fields, cover document
+changes. A new committed edit clears Redo; a no-op keeps it. The session journal
+keeps up to 20 combined steps within a shared 64 MiB budget and is cleared when
+switching datasets or reloading; it is not saved in documents. Text fields keep
+their normal local Undo/Redo shortcuts.
 
 ## Notes
 
@@ -362,7 +388,7 @@ for a town or postcode, and select a result. You can change location, switch
 also carry the chosen weather preference. Changing weather in sample mode does
 not save the sample checklist as personal data.
 
-The month grid stays compact with day numbers and task marks. The compact weather
+The date strip stays compact with day numbers and task marks. The compact weather
 strip above the calendar/timeline shows today's forecast high/low, rain probability
 and mean relative humidity. Select a calendar day to show that date instead.
 Location settings open in the same header; no weather footer uses space beneath
@@ -386,48 +412,20 @@ from available hourly values grouped by the forecast's local date. Forecasts
 cover up to 16 days; longer-range values are less certain. The forecast timezone
 is shown. Weather requires a connection for fresh data; other tools work locally.
 
-## STL viewer and clay estimates
+## STL and clay calculations
 
-Open a local binary or ASCII STL in the browser applet. Drag to rotate, use the
-zoom controls, and choose front, side, top or isometric views. The corner X/Y/Z
-gnomon follows the camera. **Ctrl-Alt-5** selects the viewer and focuses **Open
-STL**; Enter opens the file picker. **Ctrl-M** maximizes or restores the applet.
-Click X, Y or Z on the gnomon to look straight along that axis. **Perspective**
-switches between orthographic and perspective projection with a 45° vertical
-field of view. **Iso** returns to the isometric orthographic view. Camera changes
-do not alter dimensions or exported geometry and can be undone.
-The viewport's **Human 5′9″** toggle (or **Ctrl-Alt-H**) adds a 1752.6 mm height reference in
-an orthographic front XZ view with Z up. The silhouette's feet align with the
-model's lowest Z level. Both use the same physical scale; resizing the model
-changes its relationship to the person. The reference is excluded from STL
-exports and from object measurements.
-**Grey matcap** in the viewport (or **Ctrl-Alt-G**) switches to a neutral grey
-studio material for inspecting surface shape. Its broad, camera-relative
-lighting makes details readable in front and axis-aligned views. Toggle it off
-to return to warm clay. This appearance setting is session-only and undoable;
-it does not affect measurements, clay shrinkage settings or exported geometry.
-The viewer uses WebGL 2 with a depth buffer, so surfaces occlude
-one another correctly. Other workbench tools continue to use the existing layout.
+The browser STL controls and their shortcuts are hidden for now. No files or
+saved clay preferences are removed, and this change does not move anything into
+another application. The native `jig stl` command and shared Rust geometry,
+camera, scale and shrinkage modules remain available and tested.
 
-STL files do not contain units. Choose **mm**, **cm** or **in** for the source
-coordinates before interpreting the numbers. Physical scale is independent of
-camera zoom. The applet reports dimensions, surface area and total enclosed
-volume, including cm³ (equivalent to mL) and in³. Length changes by the scale
-factor, area by its square and volume by its cube when scaling uniformly. For
-independent X/Y/Z scaling, area is calculated from the transformed faces and
-volume follows the product of the three scale factors. Measurements use every
-accepted triangle. Models are limited to **20 MiB and 200,000 triangles**.
-
-The main **Scale** percentage resizes all axes. Open **Size / export** (or press
-**Ctrl-Alt-S**) for per-axis percentages and exact target dimensions in mm.
-Linked edits preserve proportions; unlinked edits change only the chosen axis.
-Target dimensions include the selected shrinkage or compensation mode, so they
-describe the geometry that will be exported. Scaling edits are undoable.
-
-Small volume and area displays switch to mm³ and mm² when needed. Positive
-measurements below two-decimal display precision show `<0.01` rather than zero.
-Reports and scaled STL exports keep their existing precision. Maximizing the STL
-applet aligns it to the top so its action row remains visible.
+STL files do not contain units, so pass `--units mm`, `cm` or `in` explicitly when
+needed. The CLI reports dimensions, surface area and total enclosed volume,
+including cm³ (equivalent to mL) and in³. Uniform scaling changes length by the
+factor, area by its square and volume by its cube. For independent X/Y/Z scaling,
+area is calculated from transformed faces and volume follows the product of the
+three factors. Measurements use every accepted triangle. Models are limited to
+**20 MiB and 200,000 triangles**.
 
 Surface area is the sum of triangle areas. Volume requires closed, consistently
 oriented, nondegenerate faces. Holes, inconsistent edges, non-manifold edges or
@@ -442,30 +440,21 @@ linear shrinkage retains 94% of each length and about 83.06% of volume.
 Compensation requires about **106.38%** of the target length. These calculations
 do not predict warping, cracking, anisotropy or a particular kiln's firing result.
 
-The initial material is **Standard #104 Red with Grog**. Its
+The retained clay profile is **Standard #104 Red with Grog**. Its
 [manufacturer's page](https://www.standardclay.com/products/104-red-clay-w-grog)
 publishes average shrinkage of **6% at cone 06** and **11% at cone 4**, within a
 listed cone 06–4 firing range (reviewed 2026-10-30). Only those two exact points
 are presets. Cone **06 differs from 6**; Jig does not infer other cones or
 interpolate shrinkage between them. The source does not specify the starting
-moisture stage, so the presets display that uncertainty. Save your own test-bar
-values with a clay name, cone and wet-to-fired or dry-to-fired basis for a more
-useful estimate of your process.
+moisture stage, so the profile records that uncertainty. User test-bar profiles
+carry a clay name, cone and wet-to-fired or dry-to-fired basis for interpreting
+measurements from a particular process.
 
-Clay profile selection and custom values travel in the existing portable JSON.
-Older files remain valid. Loaded mesh bytes, filenames, camera, source units and
-per-model scale remain in memory and are discarded on reload. Reopen the STL to
-continue; it is never uploaded or included in workbench JSON. Scaled STL export
-is a local download in the explicitly selected output units, defaulting to mm.
-The filename and report identify the output units; the recipient must import
-using those units because STL carries no standard unit metadata. Exported
-vertices contain the selected physical scale, independently of camera zoom or
-projection. Jig checks exported dimensions against the requested size within
-binary STL precision (relative tolerance 0.001%) and rejects files whose distant
-coordinates or rounding would distort the dimensions. Original files remain
-unchanged.
+Clay profile selection and custom values remain in the existing portable JSON;
+older files remain valid. Mesh bytes and filenames are never embedded in saved
+state or uploaded. The native command reads the source without overwriting it.
 
-The CLI reads a model without changing it or the saved workbench:
+The CLI reads a model without changing it or the saved document:
 
 ```sh
 jig stl sculpture.stl --units mm

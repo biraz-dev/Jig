@@ -194,8 +194,8 @@ async function expectCalculation(page, expression, result, length, unit) {
 }
 async function openTaskDates(page) {
   await resetFocus(page); await navigateKey(page, "Control+Alt+2");
-  // Fresh journal: Data/Calculator/Source, Tasks/+, Gantt/Save, then row date.
-  await tab(page, 11); await navigateKey(page, "Space");
+  // Data/Calculator/Settings/Source, Tasks/+, Gantt/Save, then row date.
+  await tab(page, 12); await navigateKey(page, "Space");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
 }
 async function openDuePicker(page) {
@@ -241,9 +241,8 @@ async function exportData(page) {
 }
 async function confirmImport(page) {
   await resetFocus(page);
-  // This helper is used immediately after reload/import, with empty journals:
-  // Data, Calculator, then the pending import's real Confirm control.
-  await tab(page, 3); await navigateKey(page, "Space");
+  // Data, Calculator, Settings, then the pending import's real Confirm control.
+  await tab(page, 4); await navigateKey(page, "Space");
 }
 async function expectClipChange(page, before, clip, message) {
   const until = Date.now() + 5000; let actual;
@@ -287,7 +286,7 @@ async function selectedDay(page) {
 }
 async function clickCalculatorIcon(page, touch = false) {
   await resetFocus(page);
-  // Fresh datasets have disabled Undo/Redo: Data, then the Calculator icon.
+  // Header order is stable: Data, Calculator, Settings; tabs are pointer controls.
   await tab(page, 2);
   const regions = await filledRegions(page, [77, 49, 39], 0, 90);
   const icon = regions.find(r => r.count > 200 && r.width >= 24 && r.width <= 34 && r.height >= 22 && r.height <= 32);

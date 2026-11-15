@@ -2,6 +2,8 @@
 use crate::web_theme;
 use jig::app_settings::{Action as AppAction, AppSettings};
 
+#[path = "web_info.rs"]
+mod info;
 #[path = "web_settings.rs"]
 mod settings;
 use crate::{
@@ -17,6 +19,7 @@ use crate::{
 use chrono::{Local, NaiveDate, Utc};
 use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextEdit, Ui};
+use info::InfoPage;
 use jig::{
     model::{State, TaskColor, MAX_TASK_LISTS},
     spreadsheet::{self, CellAddr, Workbook},
@@ -122,6 +125,7 @@ enum DeferredView {
     Sheet,
     Calculator,
     Settings,
+    Info(InfoPage),
     Calendar,
     Tasks,
     Notes,
@@ -156,6 +160,8 @@ pub struct BrowserApp {
     settings: AppSettings,
     settings_panel: crate::settings_ui::SettingsPanel,
     settings_open: bool,
+    info_page: Option<InfoPage>,
+    focus_info: bool,
     pending_settings: Option<AppSettings>,
     auto_backup_due: Option<f64>,
     initial_backup_pending: bool,
@@ -315,6 +321,8 @@ impl BrowserApp {
             settings,
             settings_panel: crate::settings_ui::SettingsPanel::new(),
             settings_open: false,
+            info_page: None,
+            focus_info: false,
             pending_settings: None,
             auto_backup_due: None,
             initial_backup_pending,
@@ -1172,6 +1180,7 @@ impl BrowserApp {
         self.sheet_workspace = false;
         self.tasks_workspace = false;
         self.close_settings();
+        self.info_page = None;
         self.notes_workspace = true;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
@@ -1194,6 +1203,7 @@ impl BrowserApp {
         }
         if self.sheet_workspace {
             self.close_settings();
+            self.info_page = None;
             return true;
         }
         if self.pending_note_input || self.pending_task_input.is_some() {
@@ -1207,6 +1217,7 @@ impl BrowserApp {
         self.calendar_task_date_target = None;
         ctx.memory_mut(|memory| memory.close_popup());
         self.close_settings();
+        self.info_page = None;
         self.sheet_workspace = true;
         self.tasks_workspace = false;
         self.notes_workspace = false;
@@ -1280,6 +1291,7 @@ impl BrowserApp {
         self.timeline.cancel_gesture();
         self.sheet_workspace = false;
         self.close_settings();
+        self.info_page = None;
         self.tasks_workspace = true;
         self.notes_workspace = false;
         self.focus = 1;
@@ -1302,7 +1314,9 @@ impl BrowserApp {
         if ui
             .add(
                 egui::Button::new("Sheet")
-                    .selected(self.sheet_workspace && !self.settings_open)
+                    .selected(
+                        self.sheet_workspace && !self.settings_open && self.info_page.is_none(),
+                    )
                     .sense(sense),
             )
             .on_hover_text(format!(
@@ -1316,7 +1330,9 @@ impl BrowserApp {
         if ui
             .add(
                 egui::Button::new("Tasks")
-                    .selected(self.tasks_workspace && !self.settings_open)
+                    .selected(
+                        self.tasks_workspace && !self.settings_open && self.info_page.is_none(),
+                    )
                     .sense(sense),
             )
             .on_hover_text(format!(
@@ -1330,7 +1346,9 @@ impl BrowserApp {
         if ui
             .add(
                 egui::Button::new("Notes")
-                    .selected(self.notes_workspace && !self.settings_open)
+                    .selected(
+                        self.notes_workspace && !self.settings_open && self.info_page.is_none(),
+                    )
                     .sense(sense),
             )
             .on_hover_text(format!(
@@ -1488,6 +1506,7 @@ impl BrowserApp {
         };
         let lists = self.state.task_lists.clone();
         let mut reveal_tabs = false;
+        let mut confirm_remove = false;
         let strip = ui.horizontal(|ui| {
             let controls = if lists.len() > 1 { 148.0 } else { 76.0 };
             let natural_width = lists.iter().map(|list| {
@@ -1587,10 +1606,12 @@ impl BrowserApp {
             }
             if ui
                 .add_enabled(lists.len() > 1, egui::Button::new("−").min_size(egui::vec2(26.0, 30.0)))
-                .on_hover_text("Remove the active list · Its tasks move to a remaining list")
+                .on_hover_text("Remove the active list · Click again to confirm · Its tasks move to a remaining list")
                 .clicked()
             {
-                if let Some(target) = lists.iter().find(|list| list.id != self.active_task_list) {
+                if self.task_list_remove.is_some_and(|(id, _)| id == self.active_task_list) {
+                    confirm_remove = true;
+                } else if let Some(target) = lists.iter().find(|list| list.id != self.active_task_list) {
                     self.task_list_remove = Some((self.active_task_list, target.id));
                     self.task_list_rename = None;
                 }
@@ -1668,7 +1689,7 @@ impl BrowserApp {
                 ui.label(format!(
                     "Remove {name}? Its {count} tasks move to {target_name}."
                 ));
-                if ui.button("Remove").clicked() {
+                if ui.button("Remove").clicked() || confirm_remove {
                     let result = self.state.remove_task_list(id, target);
                     if result.is_ok() {
                         self.task_list_remove = None;
@@ -2431,23 +2452,27 @@ impl BrowserApp {
                 self.data_open = !self.data_open;
             }
             self.workspace_buttons(ui);
+            self.settings_button(ui);
             self.calculator_button(ui);
-            if width >= 360.0 {
+            for page in [InfoPage::About, InfoPage::Help] {
+                if ui
+                    .add(egui::Button::new(page.label()).selected(self.info_page == Some(page)))
+                    .clicked()
+                {
+                    self.deferred_view = Some(DeferredView::Info(page));
+                }
+            }
+            if width >= 600.0 {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    self.settings_button(ui);
-                    if self.demo && width >= 600.0 {
+                    if self.demo {
                         ui.label(RichText::new("sample").small().color(palette.accent));
                     }
-                    if width >= 600.0 {
-                        ui.label(
-                            RichText::new(Local::now().format("%a %d %b %Y").to_string())
-                                .size(13.0)
-                                .color(palette.muted),
-                        );
-                    }
+                    ui.label(
+                        RichText::new(Local::now().format("%a %d %b %Y").to_string())
+                            .size(13.0)
+                            .color(palette.muted),
+                    );
                 });
-            } else {
-                self.settings_button(ui);
             }
         });
         if self.data_open {
@@ -2626,6 +2651,7 @@ impl BrowserApp {
             return;
         }
         self.close_settings();
+        self.info_page = None;
         ctx.memory_mut(|memory| {
             memory.close_popup();
             if let Some(id) = memory.focused() {
@@ -4370,7 +4396,7 @@ impl eframe::App for BrowserApp {
         }
         let settings_capture = self.settings_open && self.settings_panel.owns_keyboard();
         crate::settings_storage::set_capture(settings_capture);
-        if !self.settings_open && !settings_capture {
+        if !self.settings_open && self.info_page.is_none() && !settings_capture {
             self.navigation_shortcuts(ctx);
             if self.sheet_workspace || self.tasks_workspace {
                 for (key, action) in [
@@ -4520,6 +4546,7 @@ impl eframe::App for BrowserApp {
             self.last_task_list_click = None;
         }
         let settings_was_open = self.settings_open;
+        let info_was_open = self.info_page.is_some();
         let popup_was_open = ctx.memory(|memory| memory.any_popup_open());
         egui::TopBottomPanel::top("jig-header").show(ctx, |ui| self.toolbar(ui));
         egui::TopBottomPanel::bottom("jig-status").show(ctx, |ui| {
@@ -4540,7 +4567,9 @@ impl eframe::App for BrowserApp {
                     );
                 }
                 ui.label(
-                    RichText::new(if self.settings_open {
+                    RichText::new(if self.info_page.is_some() {
+                        "Esc return to workspace".to_owned()
+                    } else if self.settings_open {
                         "Preferences save in this browser · Esc return".to_owned()
                     } else if self.sheet_workspace {
                         format!(
@@ -4564,6 +4593,14 @@ impl eframe::App for BrowserApp {
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(page) = self.info_page {
+                match info::show(ui, page, &self.settings, &mut self.focus_info) {
+                    Some(info::InfoAction::Done) => self.info_page = None,
+                    Some(info::InfoAction::Settings) => self.toggle_settings(ui.ctx()),
+                    None => {}
+                }
+                return;
+            }
             if self.settings_open {
                 self.settings_workspace(ui);
                 return;
@@ -4593,6 +4630,18 @@ impl eframe::App for BrowserApp {
         if !self.settings_panel.owns_keyboard() {
             if self.consume_shortcut(ctx, AppAction::Settings) {
                 self.toggle_settings(ctx);
+            }
+            if info_was_open && self.info_page.is_some() {
+                if !popup_was_open
+                    && !ctx.memory(|memory| memory.any_popup_open())
+                    && ctx.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    })
+                {
+                    self.info_page = None;
+                } else {
+                    self.navigation_shortcuts(ctx);
+                }
             }
             if settings_was_open && self.settings_open {
                 if !popup_was_open
@@ -4647,9 +4696,21 @@ impl eframe::App for BrowserApp {
                         if self.settings_open {
                             self.close_settings();
                         } else {
+                            self.info_page = None;
                             self.settings_open = true;
                             self.settings_panel.open();
                         }
+                    }
+                }
+                DeferredView::Info(page) => {
+                    if self.pending_task_input.is_some() || self.pending_note_input {
+                        self.deferred_view = Some(DeferredView::Info(page));
+                    } else if self.flush_sheet_edit() {
+                        self.cancel_task_note_drag(ctx);
+                        self.timeline.cancel_gesture();
+                        self.close_settings();
+                        self.info_page = Some(page);
+                        self.focus_info = true;
                     }
                 }
                 DeferredView::Tasks => {

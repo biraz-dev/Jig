@@ -251,7 +251,7 @@ impl StlPanel {
         }
     }
 
-    fn snapshot(&self) -> Snapshot {
+    pub(crate) fn snapshot(&self) -> Snapshot {
         Snapshot {
             mesh: self.mesh.clone(),
             name: self.name.clone(),
@@ -334,12 +334,6 @@ impl StlPanel {
                 .pending_gesture
                 .as_ref()
                 .is_some_and(|pending| self.differs(&pending.before))
-    }
-
-    /// Give the applet shortcut a predictable keyboard entry point, including
-    /// after maximizing changes the control's layout identity.
-    pub fn request_open_focus(&mut self) {
-        self.focus_open = true;
     }
 
     /// Finish a drag/edit before the dashboard records another applet's action
@@ -474,12 +468,6 @@ impl StlPanel {
     fn export_axes(&self, settings: &Settings) -> [f64; 3] {
         let units = self.unit.millimeters_per_unit() / self.export_unit.millimeters_per_unit();
         self.effective_axes(settings).map(|axis| axis * units)
-    }
-
-    pub fn request_size_focus(&mut self) {
-        self.size_open = true;
-        self.focus_size = true;
-        self.focus_open = false;
     }
 
     /// Returns true only when portable material preferences change.

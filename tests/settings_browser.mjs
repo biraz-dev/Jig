@@ -191,20 +191,30 @@ async function backupFiles(page) {
 }
 async function waitFiles(page, count) {
   try {
-    const snapshot = await page.waitForFunction(async count => {
-      const before = JSON.parse(window.jigBackupStatus()); if (before.busy) return false;
-      const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true }), files = [];
-      for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && name.startsWith("jig-backup-") && name.endsWith(".json")) {
-        // A write can begin after the initial status read. Retry incomplete
-        // files, then recheck the writer after every asynchronous file read.
-        try { files.push({ name, data: JSON.parse(await (await handle.getFile()).text()) }); }
-        catch { return false; }
-      }
-      const after = JSON.parse(window.jigBackupStatus());
-      return !after.busy && before.last_backup === after.last_backup && files.length === count
-        ? files.sort((a, b) => a.name.localeCompare(b.name)) : false;
-    }, count, { timeout: 15000, polling: 50 });
-    try { return await snapshot.jsonValue(); } finally { await snapshot.dispose(); }
+    // waitForFunction tests a returned Promise's truthiness before it resolves.
+    // Await the actual filesystem probe here, then explicitly retry false.
+    const until = Date.now() + 15000;
+    while (Date.now() < until) {
+      let timer;
+      try {
+        const snapshot = await Promise.race([page.evaluate(async count => {
+          const before = JSON.parse(window.jigBackupStatus()); if (before.busy) return false;
+          const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true }), files = [];
+          for await (const [name, handle] of folder.entries()) if (handle.kind === "file" && name.startsWith("jig-backup-") && name.endsWith(".json")) {
+            // A write can begin after the initial status read. Retry incomplete
+            // files, then recheck the writer after every asynchronous file read.
+            try { files.push({ name, data: JSON.parse(await (await handle.getFile()).text()) }); }
+            catch { return false; }
+          }
+          const after = JSON.parse(window.jigBackupStatus());
+          return !after.busy && before.last_backup === after.last_backup && files.length === count
+            ? files.sort((a, b) => a.name.localeCompare(b.name)) : false;
+        }, count), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Backup filesystem probe exceeded its deadline")), Math.max(1, until - Date.now())); })]);
+        if (Array.isArray(snapshot) && snapshot.length === count) return snapshot;
+      } finally { clearTimeout(timer); }
+      await new Promise(resolve => setTimeout(resolve, Math.min(25, Math.max(0, until - Date.now()))));
+    }
+    throw new Error("Committed backup count did not reach the expected value before the deadline");
   } catch (error) {
     const files = await page.evaluate(async () => {
       const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true }), files = [];

@@ -100,10 +100,14 @@ async function resetFocus(page) {
 async function waitDoneFocus(page) {
   // Settings opens after the current app update. Fence its actual focused
   // control rather than letting the first Tab race that deferred update.
+  const y = page.viewportSize().width < 500 ? 77 : 41;
+  await waitButtonFocus(page, { x: 81, y, width: 40, height: 20 }, "Done");
+}
+async function waitButtonFocus(page, clip, name) {
   const until = Date.now() + 10000, { width, height } = page.viewportSize(); let attempt = 0;
   while (Date.now() < until) {
     await page.mouse.move(width - 6 - attempt++ % 2, height - 6);
-    const png = await page.screenshot({ clip: { x: 81, y: 31, width: 40, height: 100 }, timeout: Math.max(1, until - Date.now()), animations: "disabled", caret: "hide" });
+    const png = await page.screenshot({ clip, timeout: Math.max(1, until - Date.now()), animations: "disabled", caret: "hide" });
     const focused = await page.evaluate(async encoded => {
       const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
@@ -114,7 +118,7 @@ async function waitDoneFocus(page) {
     if (focused) return;
     await page.waitForTimeout(Math.min(50, Math.max(0, until - Date.now())));
   }
-  assert.fail("Settings must visibly focus Done before keyboard navigation starts");
+  assert.fail(`Settings must visibly focus ${name} before keyboard activation`);
 }
 async function closeSettings(scene) { if (scene.settingsOpen) { await key(scene.page, "Control+Comma"); scene.settingsOpen = false; } }
 async function openSettings(scene, header = false) {
@@ -242,6 +246,9 @@ async function downloadAt(scene, index) {
 }
 async function importSettings(scene, value, name = "sample-settings.json") {
   await focusSetting(scene, 3);
+  // Import tests use the desktop layout. Check this actual button after Tab
+  // delivery before asking Chromium to open its native file chooser.
+  await waitButtonFocus(scene.page, { x: 145, y: 116, width: 128, height: 20 }, "Import settings");
   const routing = await scene.page.evaluate(() => ({ tag: document.activeElement?.tagName, id: document.activeElement?.id, focused: document.hasFocus(), activation: { active: navigator.userActivation.isActive, previouslyActive: navigator.userActivation.hasBeenActive } }));
   console.log(`Settings file chooser keyboard routing: ${JSON.stringify(routing)}`);
   assert.equal(routing.id, "jig_canvas", "Settings import activation must reach the app's keyboard handler");

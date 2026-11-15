@@ -172,7 +172,11 @@ Ctrl-Alt-N opens Notes. Tab/Shift-Tab navigate controls;
 normal mouse and text editing work. Type `125 * 1.15` for arithmetic or
 `72 in mm` for a length conversion. History results can be clicked to reuse their
 full precision, including the source unit of a converted result. Task arrows
-reorder the checklist. Tasks may have a due date; a star chooses the featured
+reorder the checklist. Sort orders the selected lists by earliest due date, keeps
+undated tasks in their current order beneath dated tasks, and moves completed
+tasks to the bottom. Equal due dates retain their order. The Gantt follows the
+same saved order; one Undo restores it. Sorting is explicit, so manual ordering
+still works afterward. Tasks may have a due date; a star chooses the featured
 countdown and reveals its date in the calendar. Starring an undated task opens
 its date editor first. Completing a task clears its star and subdues its calendar mark;
 removing a task also removes its linked date. Existing standalone deadlines

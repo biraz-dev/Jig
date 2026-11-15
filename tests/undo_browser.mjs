@@ -212,6 +212,7 @@ try {
   assert.deepEqual(await state(current.page), savedPersonal, "Sample operations must leave the personal dataset intact");
   await key(current.page, "Control+Alt+o"); journals.set(current.page, { undo: 0, redo: 0 });
   await undoKey(current.page); await redoKey(current.page); await expectState(current.page, savedPersonal);
+  assert.deepEqual(await exportData(current.page), savedPersonal, "Open local must actually restore the personal dataset, not merely leave its raw storage untouched");
   await calculate(current.page, "9 + 1", 3); await undoKey(current.page);
   const imported = { ...structuredClone(fixture), notes: [{ id: 401, text: "Sample: imported note", pinned: true }] };
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-redo-boundary.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });

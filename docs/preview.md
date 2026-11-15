@@ -1,9 +1,9 @@
 # Browser development preview
 
 The egui/eframe browser application opens Tasks by default and remembers the
-selected workspace. The top bar switches between Tasks, Notes and Sheet;
-calculator, Undo, Redo and Data controls sit on the right. The title and tagline
-no longer occupy header space. Sheet retains its named tabs, formulas,
+selected workspace. Data precedes the Sheet, Tasks and Notes tabs on the left;
+calculator, Undo and Redo sit on the right. The title and tagline no longer
+occupy header space. Sheet retains its named tabs, formulas,
 formatting and charts. An older saved Workbench preference opens Tasks.
 Tasks and task Gantt charts read the same records;
 they are never copied into a second task store. ODS is the portable document,

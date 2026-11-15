@@ -1,5 +1,5 @@
 //! Spreadsheet presentation only. Workbook values and formulas live in the core.
-use crate::web_theme::{ACCENT, BG, ERROR, GRID as RULE, MUTED, SELECTED, SURFACE as HEADER, TEXT};
+use crate::web_theme;
 use chrono::{Local, NaiveDate};
 use eframe::egui::emath::GuiRounding;
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
@@ -155,7 +155,7 @@ pub struct SheetPanel {
     metrics_sheet: u64,
     expanded_selection: CellRange,
     pending_copy: bool,
-    color_menu_key: Option<(u64, CellAddr, CellAddr, bool)>,
+    color_menu_key: Option<(u64, CellAddr, CellAddr, bool, bool)>,
     text_color_draft: [u8; 3],
     fill_color_draft: [u8; 3],
     show_gridlines: bool,
@@ -250,10 +250,6 @@ impl SheetPanel {
 
     pub fn selection(&self) -> CellRange {
         self.expanded_selection
-    }
-
-    pub fn is_editing(&self) -> bool {
-        self.editing.is_some()
     }
 
     pub fn commit_pending(&mut self) -> Option<SheetAction> {
@@ -485,6 +481,7 @@ impl SheetPanel {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, book: &Workbook, decimals: usize) -> Vec<SheetAction> {
+        let colors = web_theme::colors(ui.ctx());
         let mut actions = Vec::new();
         if let Some(previous) = self.pending_add.take() {
             if book.sheets.len() > previous {
@@ -527,7 +524,7 @@ impl SheetPanel {
         self.commands(ui, book, &mut actions);
         self.format_toolbar(ui, book, &mut actions);
         if let Some(error) = &self.error {
-            ui.label(RichText::new(error).color(ERROR).size(11.0));
+            ui.label(RichText::new(error).color(colors.error).size(11.0));
         }
         let reserve = if self.renaming || self.confirm_delete {
             98.0
@@ -763,7 +760,7 @@ impl SheetPanel {
                 self.menu_action(ui, actions, "Save Jig JSON backup", SheetAction::ExportJson);
             });
             ui.menu_button("Edit", |ui| {
-                self.menu_action(ui, actions, "Undo     Ctrl+Z", SheetAction::Undo);
+                self.menu_action(ui, actions, "Undo", SheetAction::Undo);
                 ui.separator();
                 if ui.button("Copy cells     Ctrl+C").clicked() {
                     self.commit(actions);
@@ -1093,6 +1090,7 @@ impl SheetPanel {
     }
 
     fn border_choices(&mut self, ui: &mut Ui, actions: &mut Vec<SheetAction>) {
+        let colors = web_theme::colors(ui.ctx());
         ui.set_min_width(BORDER_ICON_SIZE * 5.0 + 6.0 * 4.0);
         ui.label("Borders");
         let mut caption = "Choose borders";
@@ -1143,7 +1141,7 @@ impl SheetPanel {
                     }
                 }
             });
-        ui.label(RichText::new(caption).color(MUTED));
+        ui.label(RichText::new(caption).color(colors.muted));
     }
 
     fn color_menu(
@@ -1167,13 +1165,20 @@ impl SheetPanel {
         style: &CellStyle,
         actions: &mut Vec<SheetAction>,
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let range = self.selection();
-        let key = (self.active, range.start, range.end, fill);
+        let key = (
+            self.active,
+            range.start,
+            range.end,
+            fill,
+            ui.visuals().dark_mode,
+        );
         if self.color_menu_key != Some(key) {
             let color = if fill {
-                style.fill_color.unwrap_or(jig::palette::BACKGROUND)
+                style.fill_color.unwrap_or(web_theme::srgb(colors.bg))
             } else {
-                style.text_color.unwrap_or(jig::palette::TEXT)
+                style.text_color.unwrap_or(web_theme::srgb(colors.text))
             };
             if fill {
                 self.fill_color_draft = color;
@@ -1250,6 +1255,7 @@ impl SheetPanel {
     }
 
     fn format_toolbar(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        let colors = web_theme::colors(ui.ctx());
         let style = book.style(self.active, self.cursor);
         ui.horizontal_wrapped(|ui| {
             ui.menu_button(font_label(style.font_family), |ui| {
@@ -1300,13 +1306,13 @@ impl SheetPanel {
             }
             sheet_icon_menu(
                 ui,
-                SheetIcon::TextColor(style.text_color.unwrap_or(jig::palette::TEXT)),
+                SheetIcon::TextColor(style.text_color.unwrap_or(web_theme::srgb(colors.text))),
                 "Text color",
                 |ui| self.color_choices(ui, "Text color", false, &style, actions),
             );
             sheet_icon_menu(
                 ui,
-                SheetIcon::FillColor(style.fill_color.unwrap_or(jig::palette::BACKGROUND)),
+                SheetIcon::FillColor(style.fill_color.unwrap_or(web_theme::srgb(colors.bg))),
                 "Fill color",
                 |ui| self.color_choices(ui, "Fill color", true, &style, actions),
             );
@@ -1342,6 +1348,7 @@ impl SheetPanel {
     }
 
     fn formula_bar(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        let colors = web_theme::colors(ui.ctx());
         ui.horizontal(|ui| {
             let id = egui::Id::new("spreadsheet-address-input");
             if self.goto_focus {
@@ -1384,7 +1391,7 @@ impl SheetPanel {
                     Err(error) => self.error = Some(error),
                 }
             }
-            ui.label(RichText::new("fx").color(ACCENT));
+            ui.label(RichText::new("fx").color(colors.accent));
             let field = egui::Id::new(("spreadsheet-formula-input", self.active, self.cursor));
             let width = (ui.available_width() - 58.0).max(60.0);
             if self.editing == Some(EditOrigin::Cell) {
@@ -1463,6 +1470,7 @@ impl SheetPanel {
         height: f32,
         actions: &mut Vec<SheetAction>,
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let active = self.active;
         egui::ScrollArea::both()
             .id_salt(("spreadsheet-scroll", active))
@@ -1578,7 +1586,7 @@ impl SheetPanel {
                 let last_row =
                     (self.row_at(body.bottom() - rect.top() - COL_HEAD) + 2).min(MAX_ROWS);
                 let painter = ui.painter().with_clip_rect(body);
-                painter.rect_filled(body, 0.0, BG);
+                painter.rect_filled(body, 0.0, colors.bg);
                 let selection = self.selection();
                 let mut drawn = std::collections::HashSet::new();
                 for row in first_row..last_row {
@@ -1594,9 +1602,9 @@ impl SheetPanel {
                         let style = book.rendered_style(active, span.start);
                         let fill = style.fill_color.map(rgb).unwrap_or_else(|| {
                             if ranges_intersect(selection, span) {
-                                SELECTED
+                                colors.selected
                             } else {
-                                BG
+                                colors.bg
                             }
                         });
                         painter.rect_filled(cell, 0.0, fill);
@@ -1604,12 +1612,12 @@ impl SheetPanel {
                             painter.hline(
                                 cell.x_range(),
                                 cell.bottom() - 0.5,
-                                Stroke::new(1.0_f32, RULE),
+                                Stroke::new(1.0_f32, colors.grid),
                             );
                             painter.vline(
                                 cell.right() - 0.5,
                                 cell.y_range(),
-                                Stroke::new(1.0_f32, RULE),
+                                Stroke::new(1.0_f32, colors.grid),
                             );
                         }
                         let value = self
@@ -1620,11 +1628,11 @@ impl SheetPanel {
                         let number = matches!(value, CellValue::Number(_) | CellValue::Date(_));
                         let error = matches!(value, CellValue::Error(_));
                         let text = value.formatted(&style.number_format, decimals);
-                        let color =
-                            style
-                                .text_color
-                                .map(rgb)
-                                .unwrap_or(if error { ERROR } else { TEXT });
+                        let color = style.text_color.map(rgb).unwrap_or(if error {
+                            colors.error
+                        } else {
+                            colors.text
+                        });
                         let mut job = egui::text::LayoutJob::simple_singleline(
                             text,
                             cell_font(&style),
@@ -1677,7 +1685,7 @@ impl SheetPanel {
                         if style.bold {
                             text_painter.galley(position + egui::vec2(0.5, 0.0), galley, color);
                         }
-                        let border = Stroke::new(1.1_f32, MUTED);
+                        let border = Stroke::new(1.1_f32, colors.muted);
                         if style.borders.top {
                             painter.hline(cell.x_range(), cell.top(), border);
                         }
@@ -1702,22 +1710,22 @@ impl SheetPanel {
                     clip.hline(
                         selected.x_range(),
                         selected.top(),
-                        Stroke::new(1.0_f32, ACCENT),
+                        Stroke::new(1.0_f32, colors.accent),
                     );
                     clip.hline(
                         selected.x_range(),
                         selected.bottom(),
-                        Stroke::new(1.0_f32, ACCENT),
+                        Stroke::new(1.0_f32, colors.accent),
                     );
                     clip.vline(
                         selected.left(),
                         selected.y_range(),
-                        Stroke::new(1.0_f32, ACCENT),
+                        Stroke::new(1.0_f32, colors.accent),
                     );
                     clip.vline(
                         selected.right(),
                         selected.y_range(),
-                        Stroke::new(1.0_f32, ACCENT),
+                        Stroke::new(1.0_f32, colors.accent),
                     );
                 }
                 self.headers(
@@ -1790,6 +1798,7 @@ impl SheetPanel {
         last_col: usize,
         actions: &mut Vec<SheetAction>,
     ) {
+        let colors = web_theme::colors(ui.ctx());
         let top = egui::Rect::from_min_max(
             visible.min,
             egui::pos2(visible.right(), visible.top() + COL_HEAD),
@@ -1809,8 +1818,8 @@ impl SheetPanel {
             && ui.memory(|memory| memory.has_focus(self.grid_id()))
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::F10));
         let painter = ui.painter().with_clip_rect(visible);
-        painter.rect_filled(top, 0.0, HEADER);
-        painter.rect_filled(left, 0.0, HEADER);
+        painter.rect_filled(top, 0.0, colors.surface);
+        painter.rect_filled(left, 0.0, colors.surface);
         for col in first_col..last_col {
             let x = rect.left() + ROW_HEAD + col as f32 * COL_WIDTH;
             let cell = egui::Rect::from_min_size(
@@ -1848,16 +1857,20 @@ impl SheetPanel {
             });
             let clipped = painter.with_clip_rect(clip);
             if col >= self.selection().start.col && col <= self.selection().end.col {
-                clipped.rect_filled(cell, 0.0, SELECTED);
+                clipped.rect_filled(cell, 0.0, colors.selected);
             }
             clipped.text(
                 cell.center(),
                 egui::Align2::CENTER_CENTER,
                 column_label(col),
                 FontId::monospace(11.0),
-                MUTED,
+                colors.muted,
             );
-            clipped.vline(cell.right(), cell.y_range(), Stroke::new(0.5_f32, RULE));
+            clipped.vline(
+                cell.right(),
+                cell.y_range(),
+                Stroke::new(0.5_f32, colors.grid),
+            );
         }
         for row in first_row..last_row {
             let y = rect.top() + COL_HEAD + self.row_offsets[row];
@@ -1892,16 +1905,20 @@ impl SheetPanel {
             });
             let clipped = painter.with_clip_rect(clip);
             if row >= self.selection().start.row && row <= self.selection().end.row {
-                clipped.rect_filled(cell, 0.0, SELECTED);
+                clipped.rect_filled(cell, 0.0, colors.selected);
             }
             clipped.text(
                 cell.center(),
                 egui::Align2::CENTER_CENTER,
                 (row + 1).to_string(),
                 FontId::monospace(11.0),
-                MUTED,
+                colors.muted,
             );
-            clipped.hline(cell.x_range(), cell.bottom(), Stroke::new(0.5_f32, RULE));
+            clipped.hline(
+                cell.x_range(),
+                cell.bottom(),
+                Stroke::new(0.5_f32, colors.grid),
+            );
         }
         let corner = egui::Rect::from_min_size(visible.min, egui::vec2(ROW_HEAD, COL_HEAD));
         if ui
@@ -1920,9 +1937,17 @@ impl SheetPanel {
             self.address = range_label(self.selection());
             ui.memory_mut(|memory| memory.request_focus(self.grid_id()));
         }
-        painter.rect_filled(corner, 0.0, HEADER);
-        painter.hline(top.x_range(), top.bottom(), Stroke::new(1.0_f32, RULE));
-        painter.vline(left.right(), left.y_range(), Stroke::new(1.0_f32, RULE));
+        painter.rect_filled(corner, 0.0, colors.surface);
+        painter.hline(
+            top.x_range(),
+            top.bottom(),
+            Stroke::new(1.0_f32, colors.grid),
+        );
+        painter.vline(
+            left.right(),
+            left.y_range(),
+            Stroke::new(1.0_f32, colors.grid),
+        );
         if had_menu && menu.is_none() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.grid_focus = true;
         }
@@ -2093,6 +2118,7 @@ impl SheetPanel {
     }
 
     fn tabs(&mut self, ui: &mut Ui, book: &Workbook, actions: &mut Vec<SheetAction>) {
+        let colors = web_theme::colors(ui.ctx());
         egui::ScrollArea::horizontal()
             .id_salt("spreadsheet-tabs")
             .auto_shrink([false, true])
@@ -2193,7 +2219,7 @@ impl SheetPanel {
                         book.sheet(self.active)
                             .map_or("sheet", |sheet| sheet.name.as_str())
                     ))
-                    .color(ERROR),
+                    .color(colors.error),
                 );
                 if self.delete_focus {
                     ui.input_mut(|input| {
@@ -2223,6 +2249,7 @@ impl SheetPanel {
     }
 
     fn summary(&mut self, ui: &mut Ui, decimals: usize, actions: &mut Vec<SheetAction>) {
+        let colors = web_theme::colors(ui.ctx());
         ui.horizontal_wrapped(|ui| {
             let selection = self.selection();
             ui.label(
@@ -2231,7 +2258,7 @@ impl SheetPanel {
                     range_label(selection),
                     selection.rows() * selection.cols()
                 ))
-                .color(MUTED)
+                .color(colors.muted)
                 .size(11.0),
             );
             if let Some(values) = &self.values {
@@ -2250,12 +2277,12 @@ impl SheetPanel {
                 if count > 0 && sum.is_finite() {
                     ui.label(
                         RichText::new(format!("Sum {sum:.decimals$}"))
-                            .color(TEXT)
+                            .color(colors.text)
                             .size(11.0),
                     );
                 }
             }
-            ui.label(RichText::new("Decimals").color(MUTED).size(11.0));
+            ui.label(RichText::new("Decimals").color(colors.muted).size(11.0));
             let mut number = decimals as u32;
             if ui
                 .add(egui::DragValue::new(&mut number).range(0..=10))
@@ -2381,6 +2408,7 @@ fn sheet_icon_button(
 }
 
 fn sheet_icon_menu(ui: &mut Ui, icon: SheetIcon, label: &str, add_contents: impl FnOnce(&mut Ui)) {
+    let colors = web_theme::colors(ui.ctx());
     // egui 0.31 returns menu.inner only when closing; the closure marks visibility.
     let mut open = false;
     let menu = egui::menu::menu_custom_button(
@@ -2393,7 +2421,7 @@ fn sheet_icon_menu(ui: &mut Ui, icon: SheetIcon, label: &str, add_contents: impl
     );
     if open {
         ui.painter()
-            .rect_filled(menu.response.rect.shrink(1.0), 2.0, SELECTED);
+            .rect_filled(menu.response.rect.shrink(1.0), 2.0, colors.selected);
     }
     sheet_icon_response(ui, menu.response, icon, label, open);
 }
@@ -2405,6 +2433,7 @@ fn sheet_icon_response(
     label: &str,
     selected: bool,
 ) -> egui::Response {
+    let colors = web_theme::colors(ui.ctx());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
     });
@@ -2414,7 +2443,7 @@ fn sheet_icon_response(
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
             2.0,
-            Stroke::new(1.0_f32, ACCENT),
+            Stroke::new(1.0_f32, colors.accent),
             egui::StrokeKind::Inside,
         );
     }
@@ -2422,6 +2451,7 @@ fn sheet_icon_response(
 }
 
 fn paint_sheet_icon(painter: &egui::Painter, rect: egui::Rect, icon: SheetIcon, color: Color32) {
+    let colors = web_theme::colors(painter.ctx());
     let center = rect.center();
     let stroke = Stroke::new(1.4_f32, color);
     let line = |start: egui::Pos2, end: egui::Pos2, stroke: Stroke| {
@@ -2522,7 +2552,7 @@ fn paint_sheet_icon(painter: &egui::Painter, rect: egui::Rect, icon: SheetIcon, 
             );
         }
         SheetIcon::Border(preset) => {
-            let guide = Stroke::new(0.8_f32, MUTED.gamma_multiply(0.5));
+            let guide = Stroke::new(0.8_f32, colors.muted.gamma_multiply(0.5));
             let start = center - egui::vec2(8.0, 8.0);
             for index in 0..3 {
                 let offset = index as f32 * 8.0;

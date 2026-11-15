@@ -97,12 +97,31 @@ async function resetFocus(page) {
   const { width, height } = page.viewportSize();
   await page.locator("#jig_canvas").click({ position: { x: width - 6, y: height - 6 } }); await key(page, "Escape");
 }
+async function waitDoneFocus(page) {
+  // Settings opens after the current app update. Fence its actual focused
+  // control rather than letting the first Tab race that deferred update.
+  const until = Date.now() + 10000, { width, height } = page.viewportSize(); let attempt = 0;
+  while (Date.now() < until) {
+    await page.mouse.move(width - 6 - attempt++ % 2, height - 6);
+    const png = await page.screenshot({ clip: { x: 81, y: 41, width: 40, height: 20 }, timeout: Math.max(1, until - Date.now()), animations: "disabled", caret: "hide" });
+    const focused = await page.evaluate(async encoded => {
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
+      const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data; let active = 0;
+      for (let index = 0; index < pixels.length; index += 4) if ([[77, 49, 39], [226, 192, 173]].some(color => color.every((value, axis) => Math.abs(pixels[index + axis] - value) <= 3))) active++;
+      bitmap.close(); return active > 80;
+    }, png.toString("base64"));
+    if (focused) return;
+    await page.waitForTimeout(Math.min(50, Math.max(0, until - Date.now())));
+  }
+  assert.fail("Settings must visibly focus Done before keyboard navigation starts");
+}
 async function closeSettings(scene) { if (scene.settingsOpen) { await key(scene.page, "Control+Comma"); scene.settingsOpen = false; } }
 async function openSettings(scene, header = false) {
   await closeSettings(scene); await resetFocus(scene.page);
   if (header) { await tab(scene.page, 3); await key(scene.page, "Space"); }
   else await key(scene.page, "Control+Comma");
-  scene.settingsOpen = true; await scene.page.waitForTimeout(150); await paint(scene.page);
+  scene.settingsOpen = true; await waitDoneFocus(scene.page);
 }
 async function focusSetting(scene, index) { await openSettings(scene); await tab(scene.page, index); }
 async function backupStatus(page) { return page.evaluate(() => JSON.parse(window.jigBackupStatus())); }
@@ -192,7 +211,7 @@ try {
   progress("phone Settings touch target and persistent theme selection");
   current = await open("settings-mobile", { phone: true });
   await current.page.touchscreen.tap(350, 16); await paint(current.page); current.settingsOpen = true;
-  await current.page.waitForTimeout(150); await paint(current.page);
+  await waitDoneFocus(current.page);
   // A real tap must open Settings and focus Done. The overflowing phone
   // ScrollArea contributes one Tab stop before its Theme control.
   await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 3); await key(current.page, "Space");
@@ -200,7 +219,7 @@ try {
   assert.equal(await raw(current.page), taskRaw); await boot(current, true);
   assert.equal((await settings(current.page)).theme, "light"); await waitBrightness(current.page, true);
   await current.page.touchscreen.tap(350, 16); await paint(current.page); current.settingsOpen = true;
-  await current.page.waitForTimeout(150); await paint(current.page); await capture(current.page, "settings-mobile");
+  await waitDoneFocus(current.page); await capture(current.page, "settings-mobile");
   assert.equal(await raw(current.page), taskRaw); await current.context.close();
 
   progress("shortcut capture, reserved/conflicting keys, current guide and reset");

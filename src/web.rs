@@ -2446,7 +2446,22 @@ impl BrowserApp {
         let width = ui.available_width();
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(28.0);
-            if ui.selectable_label(self.data_open, "Data").clicked() {
+            if ui
+                .add(
+                    egui::Button::new("Data")
+                        .selected(self.data_open)
+                        .corner_radius(0.0)
+                        .stroke(Stroke::new(
+                            1.0_f32,
+                            if self.data_open {
+                                palette.accent
+                            } else {
+                                palette.rule
+                            },
+                        )),
+                )
+                .clicked()
+            {
                 self.settings_panel.cancel_capture();
                 crate::settings_storage::set_capture(false);
                 self.data_open = !self.data_open;

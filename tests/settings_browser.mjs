@@ -68,13 +68,45 @@ async function open(label, { unsupported = false, directory = false, clock = fal
       return root.getDirectoryHandle("jig-settings-browser", { create: true });
     } });
   });
+  if (clock) await context.addInitScript(() => {
+    // Adjust timestamps while keeping the browser's real timers and rAF. A
+    // mocked rAF chain can skip egui's update when its clock jumps forward.
+    const NativeDate = Date, nativeNow = performance.now.bind(performance);
+    const started = nativeNow(), wallTime = NativeDate.parse("2026-10-30T12:00:00Z");
+    let offset = 0;
+    const dateNow = () => wallTime + nativeNow() - started + offset;
+    Object.defineProperty(performance, "now", { configurable: true, value: () => nativeNow() + offset });
+    globalThis.Date = new Proxy(NativeDate, {
+      apply: () => new NativeDate(dateNow()).toString(),
+      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [dateNow()], newTarget),
+      get: (target, property, receiver) => property === "now" ? dateNow : Reflect.get(target, property, receiver),
+    });
+    window.jigTestAdvanceBackupClock = milliseconds => { offset += milliseconds; };
+    const probe = window.jigTestBackupFrames = { updates: 0, paints: 0, lastUpdate: -1, lastPaint: -1 };
+    const setProperty = CSSStyleDeclaration.prototype.setProperty;
+    CSSStyleDeclaration.prototype.setProperty = function (name, value, priority) {
+      const result = setProperty.call(this, name, value, priority);
+      if (this === document.body?.style && name === "cursor") { probe.updates++; probe.lastUpdate = performance.now(); }
+      return result;
+    };
+    for (const Context of [window.WebGLRenderingContext, window.WebGL2RenderingContext]) {
+      if (!Context) continue;
+      const clear = Context.prototype.clear;
+      Context.prototype.clear = function (mask) {
+        const result = clear.call(this, mask);
+        if (this.canvas?.id === "jig_canvas" && mask === this.COLOR_BUFFER_BIT && this.getParameter(this.FRAMEBUFFER_BINDING) === null) {
+          probe.paints++; probe.lastPaint = performance.now();
+        }
+        return result;
+      };
+    }
+  });
   await context.route("**/*", async route => {
     const url = new URL(route.request().url());
     if (["data:", "blob:", "about:"].includes(url.protocol) || url.origin === origin) await route.continue();
     else { issues.push(`${label}: unexpected request ${url.origin}${url.pathname}`); await route.abort(); }
   });
   const page = await context.newPage(); page.on("pageerror", error => issues.push(`${label}: ${error.message}`)); page.setDefaultTimeout(10000);
-  if (clock) await page.clock.install({ time: new Date("2026-10-30T12:00:00Z") });
   const scene = { context, page, settingsOpen: false }; await boot(scene); return scene;
 }
 async function boot(scene, reload = false) {
@@ -267,20 +299,34 @@ async function backupFiles(page) {
   });
 }
 async function advanceBackupClock(page, milliseconds) {
-  const snapshot = () => page.evaluate(() => ({ date: Date.now(), performance: performance.now(), frames: { ...window.jigTestFrames } }));
+  const snapshot = () => page.evaluate(() => ({
+    date: Date.now(), performance: performance.now(), frames: { ...window.jigTestFrames },
+    activity: { ...window.jigTestBackupFrames }, hidden: document.hidden, focused: document.hasFocus(),
+    active: { tag: document.activeElement?.tagName, id: document.activeElement?.id },
+  }));
   const before = await snapshot();
-  await page.clock.fastForward(milliseconds);
-  const { width, height } = page.viewportSize();
-  // fastForward fires timers at most once. Let eframe process fresh input and
-  // regular animation frames after the jump before inspecting committed files.
-  await page.mouse.move(width - 12, height - 6); await page.mouse.move(width - 13, height - 6);
-  await page.clock.runFor(100); await paint(page);
+  await page.evaluate(milliseconds => window.jigTestAdvanceBackupClock(milliseconds), milliseconds);
+  console.log(`Backup clock jumped: ${JSON.stringify({ milliseconds, before, jumped: await snapshot() })}`);
+  try {
+    // Native rAF must run real app logic after the timestamp change, then
+    // paint its output. No input or manual repaint wakes the idle app here.
+    await page.waitForFunction(({ updates, paints, minimum }) => {
+      const frame = window.jigTestBackupFrames;
+      return frame.updates > updates && frame.paints > paints
+        && frame.lastUpdate >= minimum && frame.lastPaint >= frame.lastUpdate;
+    }, { updates: before.activity.updates, paints: before.activity.paints, minimum: before.performance + milliseconds }, { polling: 25 });
+  } catch (error) {
+    console.error(`Backup clock update failed: ${JSON.stringify({ milliseconds, before, after: await snapshot(), issues })}`);
+    throw error;
+  }
   const after = await snapshot();
   console.log(`Backup clock advance: ${JSON.stringify({ milliseconds, before, after })}`);
   assert.ok(after.performance - before.performance >= milliseconds, "The monotonic browser clock must advance by the requested duration");
-  assert.ok(after.frames.input > before.frames.input, "The clock probe must deliver fresh canvas input");
-  assert.ok(after.frames.painted >= after.frames.input, "The app must process and paint the fresh input after the clock jump");
+  assert.equal(after.frames.input, before.frames.input, "The idle backup clock check must not inject user input");
+  assert.ok(after.activity.updates > before.activity.updates && after.activity.paints > before.activity.paints,
+    "The idle app must update and paint after the clock change");
 }
+
 async function waitFiles(page, count) {
   try {
     // waitForFunction tests a returned Promise's truthiness before it resolves.

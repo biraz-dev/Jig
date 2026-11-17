@@ -100,7 +100,7 @@ async function taskControl(page, offset) {
 }
 async function exportData(page) {
   await tasks(page); await key(page, "Control+Alt+d");
-  await tab(page, 10); // Five header buttons, then the five Data actions.
+  await tab(page, 9); // Five header buttons, then four Data actions through Export JSON.
   const event = page.waitForEvent("download"); await key(page, "Space"); const download = await event;
   assert.equal(download.suggestedFilename(), "jig.json");
   const data = JSON.parse(await readFile(await download.path(), "utf8"));
@@ -181,15 +181,7 @@ try {
   await calculate(current.page, "7 + 8", 2); const savedPersonal = await state(current.page);
   await undoKey(current.page); await boot(current.page, true);
   await redoKey(current.page); await undoKey(current.page); await expectState(current.page, fixture, "Reload must retain saved data and discard session Undo and Redo");
-  await calculate(current.page, "7 + 8", 2); await tasks(current.page); await key(current.page, "Control+Alt+d");
-  await tab(current.page, 8);
-  await key(current.page, "Space");
-  await key(current.page, "Control+Alt+d");
-  const sample = await exportData(current.page);
-  assert.notDeepEqual(sample.tasks, savedPersonal.tasks);
-  await undoKey(current.page); await redoKey(current.page);
-  assert.deepEqual(await exportData(current.page), sample, "Sample mode must not traverse into a personal journal");
-  assert.deepEqual(await state(current.page), savedPersonal, "Sample operations must leave the personal dataset intact");
+  await calculate(current.page, "7 + 8", 2); await tasks(current.page);
   await key(current.page, "Control+Alt+o");
   await undoKey(current.page); await redoKey(current.page); await expectState(current.page, savedPersonal);
   assert.deepEqual(await exportData(current.page), savedPersonal, "Open local must actually restore the personal dataset, not merely leave its raw storage untouched");
@@ -202,6 +194,19 @@ try {
   await key(current.page, "Space"); await expectState(current.page, imported);
   await undoKey(current.page); await redoKey(current.page);
   await expectState(current.page, imported, "Confirmed JSON import must clear both journals instead of crossing dataset boundaries");
+  await calculate(current.page, "5 + 5", imported.history.length + 1); await undoKey(current.page);
+  await tasks(current.page); await key(current.page, "Control+Alt+d");
+  await tab(current.page, 6); await key(current.page, "Space"); // Five header buttons, then Start empty.
+  await tab(current.page, 5); await key(current.page, "Space"); // Open, Import, Export, Clear, Confirm.
+  await key(current.page, "Control+Alt+d");
+  const empty = await state(current.page);
+  for (const field of ["tasks", "deadlines", "entries", "history"]) assert.deepEqual(empty[field], []);
+  assert.deepEqual(empty.notes ?? [], []); assert.equal(empty.featured, null); assert.equal(empty.workbook, undefined);
+  await undoKey(current.page); await redoKey(current.page);
+  await expectState(current.page, empty, "Starting empty must clear both journals without recovering an earlier dataset");
+  assert.deepEqual(await exportData(current.page), empty, "The new empty document must be the actual exportable personal state");
+  await boot(current.page, true);
+  await expectState(current.page, empty, "An explicit empty document must survive reload without synthetic records");
   await current.context.close();
 
   progress("preserve newer-tab and corrupt files through Undo and Redo save failures");

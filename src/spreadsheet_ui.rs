@@ -109,6 +109,10 @@ pub enum SheetAction {
         source: ChartSource,
         title: String,
     },
+    SendToCharts {
+        sheet: u64,
+        range: CellRange,
+    },
     ShowCharts,
     ShowTasks,
     ShowCalculator,
@@ -969,6 +973,16 @@ impl SheetPanel {
                 self.menu_action(
                     ui,
                     actions,
+                    "Line chart · labels and values",
+                    SheetAction::AddChart {
+                        kind: ChartKind::Line,
+                        source,
+                        title: "Line chart".into(),
+                    },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
                     "Gantt chart · labels, starts and due dates",
                     SheetAction::AddChart {
                         kind: ChartKind::Gantt,
@@ -985,6 +999,12 @@ impl SheetPanel {
                         source: ChartSource::Tasks,
                         title: "Task timeline".into(),
                     },
+                );
+                self.menu_action(
+                    ui,
+                    actions,
+                    "Send selection to Charts…",
+                    SheetAction::SendToCharts { sheet, range },
                 );
                 ui.separator();
                 if ui.button("New sheet     Shift+F11").clicked() {

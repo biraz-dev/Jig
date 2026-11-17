@@ -372,17 +372,19 @@ popover without leaving the current workspace. Its input accepts `125 * 1.15`,
 click a history result to reuse its full precision and conversion unit. Click
 outside or press Esc to close it.
 
-Choose **Calendar** for a continuous strip of days with month boundaries. Widen
+The view buttons are **Calendar**, **Dates** and **Timeline**. Calendar shows a
+classic Monday-first month grid. Previous/next arrows browse months, and Today
+returns to the current day.
+
+Choose **Dates** for a continuous strip of days with month boundaries. Widen
 the panel to see more dates, drag or use horizontal/Shift-wheel scrolling to pan, and
 use **+ / −**, Ctrl-wheel or a pinch to zoom. Today returns to the current day.
 With the strip focused, Left/Right select a day, Page Up/Down move a page, Home
 returns to today and +/− zoom. These view changes do not move any deadlines.
 
-Choose **Month** beside Calendar and Timeline for a classic Monday-first month
-grid. Previous/next arrows browse months, and Today returns to the current day.
-The grid shares the strip's selected date, due-date colors, task details and
-weather. Picking a task's Start or Due date also works in this view; browsing
-months and selecting dates leave the starred countdown unchanged.
+Calendar and Dates share the selected date, due-date colors, task details and
+weather. Both views can fill a task's Start or Due date; browsing months and
+selecting dates leave the starred countdown unchanged.
 
 Dated tasks have optional Rose, Amber, Sage, Blue or Lilac colors. Their due day
 gets the same mark in the calendar; several tasks show separate marks and dense
@@ -394,7 +396,7 @@ task; **Delete all completed tasks** asks before clearing completed work.
 Calendar note controls are hidden in the browser, while saved notes and native
 CLI/terminal note functions remain available.
 
-Choose **Timeline** beside Calendar, or **Ctrl-Alt-T**, for the task Gantt view.
+Choose **Timeline** beside Dates, or **Ctrl-Alt-T**, for the task Gantt view.
 Week/Month, arrows and Today change the visible range. Tasks with start and due
 dates are bars; due-only tasks are diamonds. Completed rows are labelled Done.
 Drag the divider between task titles and the date grid to make room for longer
@@ -419,8 +421,8 @@ stored precision, and nonexistent local times are rejected. Removing a due date
 clears its start. The starred task stays independent of calendar/timeline
 selection. Legacy standalone deadlines remain usable.
 
-You can also pick on the main Calendar strip or Month grid: keep the date editor
-open, choose Calendar or Month, then click or focus Start or Due. The calendar
+You can also pick on the Calendar grid or Dates strip: keep the date editor
+open, choose Calendar or Dates, then click or focus Start or Due. The calendar
 labels the active field;
 selecting a day fills that draft and retains its time. **Save date** commits the
 range. **Done picking** or Esc exits picking without discarding the draft.

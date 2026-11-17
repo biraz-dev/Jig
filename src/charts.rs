@@ -2,7 +2,7 @@
 use crate::{
     model::{State, TaskColor},
     palette,
-    spreadsheet::{CellAddr, CellRange, CellValue, Workbook},
+    spreadsheet::{CellAddr, CellRange, CellValue, Evaluation, Workbook},
     timeline, Result,
 };
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Utc};
@@ -132,6 +132,16 @@ pub fn chart_data_at<Tz: TimeZone>(
     timezone: &Tz,
     today: NaiveDate,
 ) -> Result<ChartData> {
+    chart_data_evaluated(state, spec, timezone, today, None)
+}
+
+fn chart_data_evaluated<Tz: TimeZone>(
+    state: &State,
+    spec: &ChartSpec,
+    timezone: &Tz,
+    today: NaiveDate,
+    values: Option<&Evaluation>,
+) -> Result<ChartData> {
     let empty = Workbook::default();
     let book = state.workbook.as_ref().unwrap_or(&empty);
     spec.validate(book)?;
@@ -162,7 +172,14 @@ pub fn chart_data_at<Tz: TimeZone>(
     let ChartSource::Range { sheet, range } = spec.source else {
         unreachable!("Task sources were handled above")
     };
-    let values = book.recalculate_at(today);
+    let calculated;
+    let values = match values {
+        Some(values) => values,
+        None => {
+            calculated = book.recalculate_at(today);
+            &calculated
+        }
+    };
     let mut series = Vec::new();
     let mut schedule = Vec::new();
     for row in range.start.row..=range.end.row {
@@ -331,6 +348,15 @@ struct Theme {
 }
 
 impl Theme {
+    fn from_palette(colors: palette::ThemePalette) -> Self {
+        Self {
+            background: colors.background,
+            text: colors.text,
+            muted: colors.muted,
+            rule: colors.grid,
+        }
+    }
+
     fn new(light: bool) -> Self {
         if light {
             Self {
@@ -356,6 +382,49 @@ pub fn scene(state: &State, spec: &ChartSpec, width: f64, height: f64) -> Result
 
 pub fn scene_light(state: &State, spec: &ChartSpec, width: f64, height: f64) -> Result<ChartScene> {
     scene_in_timezone(state, spec, width, height, true, &Local)
+}
+
+/// Interface colors affect chart chrome, never the source's category or task
+/// colors. File exports keep their explicit dark or printer-friendly defaults.
+pub fn scene_themed(
+    state: &State,
+    spec: &ChartSpec,
+    width: f64,
+    height: f64,
+    colors: palette::ThemePalette,
+) -> Result<ChartScene> {
+    scene_with_theme_at(
+        state,
+        spec,
+        width,
+        height,
+        Theme::from_palette(colors),
+        &Local,
+        Local::now().date_naive(),
+    )
+}
+
+/// Render with the gallery's existing evaluation of this workbook and day.
+/// Reuse it across charts, resizing and palette changes; rebuild it when the
+/// source state or local date changes. Task charts still read task records.
+pub fn scene_themed_with_values(
+    state: &State,
+    spec: &ChartSpec,
+    width: f64,
+    height: f64,
+    colors: palette::ThemePalette,
+    values: &Evaluation,
+) -> Result<ChartScene> {
+    validate_dimensions(width, height)?;
+    let data = chart_data_evaluated(state, spec, &Local, Local::now().date_naive(), Some(values))?;
+    scene_from_data(
+        spec,
+        data,
+        state.preferences.decimals,
+        width,
+        height,
+        Theme::from_palette(colors),
+    )
 }
 
 pub fn scene_in_timezone<Tz: TimeZone>(
@@ -386,6 +455,32 @@ pub fn scene_at<Tz: TimeZone>(
     timezone: &Tz,
     today: NaiveDate,
 ) -> Result<ChartScene> {
+    scene_with_theme_at(
+        state,
+        spec,
+        width,
+        height,
+        Theme::new(light),
+        timezone,
+        today,
+    )
+}
+
+fn scene_with_theme_at<Tz: TimeZone>(
+    state: &State,
+    spec: &ChartSpec,
+    width: f64,
+    height: f64,
+    theme: Theme,
+    timezone: &Tz,
+    today: NaiveDate,
+) -> Result<ChartScene> {
+    validate_dimensions(width, height)?;
+    let data = chart_data_at(state, spec, timezone, today)?;
+    scene_from_data(spec, data, state.preferences.decimals, width, height, theme)
+}
+
+fn validate_dimensions(width: f64, height: f64) -> Result<()> {
     if !width.is_finite()
         || !height.is_finite()
         || !(280.0..=4096.0).contains(&width)
@@ -393,8 +488,17 @@ pub fn scene_at<Tz: TimeZone>(
     {
         return Err("Use a finite chart width of 280–4096 and height of 180–12000".into());
     }
-    let data = chart_data_at(state, spec, timezone, today)?;
-    let theme = Theme::new(light);
+    Ok(())
+}
+
+fn scene_from_data(
+    spec: &ChartSpec,
+    data: ChartData,
+    decimals: usize,
+    width: f64,
+    height: f64,
+    theme: Theme,
+) -> Result<ChartScene> {
     let rows = match &data {
         ChartData::Series(rows) => rows.len(),
         ChartData::Schedule(rows) => rows.len(),
@@ -429,12 +533,12 @@ pub fn scene_at<Tz: TimeZone>(
     );
     match data {
         ChartData::Series(items) if spec.kind == ChartKind::Pie => {
-            pie(&mut scene, &items, theme, state.preferences.decimals)
+            pie(&mut scene, &items, theme, decimals)
         }
         ChartData::Series(items) if spec.kind == ChartKind::Line => {
-            lines(&mut scene, &items, theme, state.preferences.decimals)
+            lines(&mut scene, &items, theme, decimals)
         }
-        ChartData::Series(items) => bars(&mut scene, &items, theme, state.preferences.decimals),
+        ChartData::Series(items) => bars(&mut scene, &items, theme, decimals),
         ChartData::Schedule(items) => gantt(&mut scene, &items, theme)?,
     }
     Ok(scene)

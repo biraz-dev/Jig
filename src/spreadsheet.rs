@@ -1801,7 +1801,12 @@ impl Recalculator<'_> {
                 Err(error) => return CellValue::Error(error),
             };
             let factor = 10_f64.powi(places);
-            return finite((value * factor).round() / factor);
+            let scaled = value * factor;
+            if places > 0 && value.is_finite() && scaled.is_infinite() {
+                // This magnitude already has no fractional digits in f64.
+                return CellValue::Number(value);
+            }
+            return finite(scaled.round() / factor);
         }
         if !matches!(name, "SUM" | "AVERAGE" | "MIN" | "MAX" | "COUNT") {
             return CellValue::Error(CellError::Name);

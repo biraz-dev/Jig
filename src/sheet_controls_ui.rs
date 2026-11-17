@@ -127,9 +127,19 @@ pub struct ControlsPanel {
     numbers: BTreeMap<u64, NumberDraft>,
     sliders: BTreeMap<u64, SliderPreview>,
     cancelled_sliders: BTreeSet<u64>,
+    active_slider: Option<u64>,
 }
 
 impl ControlsPanel {
+    pub fn reset(&mut self) {
+        self.cancel_gesture();
+        let cancelled_sliders = std::mem::take(&mut self.cancelled_sliders);
+        *self = Self {
+            cancelled_sliders,
+            ..Self::default()
+        };
+    }
+
     pub fn begin_add(&mut self, target: Option<ControlTarget>, kind: ControlKind) {
         if let Some(draft) = &mut self.editor {
             if draft.id.is_some() {
@@ -160,6 +170,7 @@ impl ControlsPanel {
 
     pub fn cancel_gesture(&mut self) {
         self.cancelled_sliders.extend(self.sliders.keys().copied());
+        self.cancelled_sliders.extend(self.active_slider.take());
         self.sliders.clear();
     }
 
@@ -707,6 +718,20 @@ impl ControlsPanel {
             })
             .inner;
         let pointer_down = ui.input(|input| input.pointer.any_down());
+        if !pointer_down {
+            self.active_slider = None;
+        } else if response.is_pointer_button_down_on() {
+            // A thumb press may not change the value yet, but still needs to
+            // be cancelled if history or the document resets before release.
+            self.active_slider = Some(id);
+        }
+        // History/data resets can stop egui's drag while the physical pointer
+        // remains down. Keep that interrupted gesture cancelled until release.
+        if response.drag_stopped() && pointer_down {
+            self.sliders.remove(&id);
+            self.cancelled_sliders.insert(id);
+            return;
+        }
         if self.cancelled_sliders.contains(&id) {
             if !pointer_down {
                 self.cancelled_sliders.remove(&id);

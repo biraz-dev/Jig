@@ -13,9 +13,16 @@ No accounts, telemetry or backend. Files are processed on your device.
 The [browser app](https://biraz.dev/Jig/) starts with your saved data or an empty
 personal document. Personal documents are never published by the Pages build.
 
+For everyday work, capture text in **Notes** or **Draft**, turn useful pieces into
+**Tasks**, and add dates when they matter. Use **Sheets** to work out numbers and
+**Charts** to inspect the results. **Data → Export JSON** and **Save Jig backup
+(.ods)** keep a portable copy of the whole document; CSV and PDF share sheet
+content. The [1.0 review](docs/1.0-review.md) records the scope and stabilization
+decisions.
+
 ## Spreadsheet
 
-The grid starts in warm dark Graphite, with familiar top menus, a formula bar, a formatting toolbar and
+The grid starts in warm dark Ember, with familiar top menus, a formula bar, a formatting toolbar and
 named sheet tabs. Click a cell and type, double-click or press **F2** to edit;
 **Enter** commits, **Esc** cancels. Drag or Shift-click to select a range.
 Use the address field to jump to `B12` or select `A1:D20`.
@@ -92,7 +99,7 @@ the formula and its references.
 
 ### Documents, CSV and printing
 
-**File → Save ODS** downloads `jig.ods`, the main portable document. Standard
+**File → Save Jig backup (.ods)** downloads `jig.ods`, the main portable document. Standard
 OpenDocument cells carry formulas, typed values, formats, merges and sheet names.
 A Jig metadata entry also retains the complete state: tasks, linked deadlines,
 colors, notes, Draft, charts, cell-linked controls, preferences, calendar notes
@@ -242,7 +249,7 @@ replaces personal data after confirmation. **Open local data** reopens saved wor
 There is no sample mode; older `?sample=1` links open your normal document.
 
 Personal edits autosave in this browser profile under `jig.personal.v1`.
-**Save ODS** is the portable document download; **Export JSON** is a full Jig
+**Save Jig backup (.ods)** is the portable document download; **Export JSON** is a full Jig
 backup compatible with the native CLI. **Import JSON** validates the complete
 state and asks before replacement. Older files without Draft, spreadsheets,
 task colors or start dates still load. **Clear saved data** also requires confirmation and
@@ -266,9 +273,22 @@ PDF/image source bytes are session-only and are not embedded in saved state.
 ## Settings and backups
 
 Open **Settings** between **Charts** and **Help**, or use **Ctrl+,**. It opens a
-full main view; **Done** returns to the workspace. **Graphite** keeps Jig's warm dark palette,
-**Light** uses warm light surfaces, and **System** follows the browser/OS
-appearance. Document cell colors and task colors remain their own values.
+full main view; **Done** returns to the workspace. **Appearance** offers **Ember**
+(Jig's original warm dark look), **Paper**, neutral dark **Graphite**, **Nord**
+and **Dracula**. **System** follows the browser's light/dark preference.
+
+Expand **Customize colors** at the end of Settings to edit background, surface,
+text and accent with `#RRGGBB` values or a color picker. Choose **Custom** to use
+your saved palette, or **Customize this theme** to start from the current preset.
+Selecting a preset keeps your custom colors for later. Optional system accent
+uses CSS `AccentColor` when the browser exposes it and otherwise keeps your
+chosen accent. Manual controls remain available; turn off system accent to use
+your chosen accent. The browser cannot read a full desktop or GTK theme.
+
+Themes apply across browser workspaces, including Draft and chart backgrounds,
+text and controls. Task/list colors, chart series colors and explicit cell
+formatting remain document data. Printed PDF pages keep a white background.
+Theme choices and customization work locally without a network request.
 
 **About** starts the header; **Help** follows **Settings**, and the calculator
 sits at the far right. About and Help open in the main panel without changing your
@@ -278,12 +298,15 @@ Help covers tasks, Gantt dates, notes, Draft, sheets/charts, calculations, short
 
 Settings are saved separately under `jig.settings.v1`, so changing appearance,
 shortcuts or backup options does not edit the task document. **Export settings**
-downloads `jig-settings.json`; **Import settings** validates its version-1
-format and shows a review before applying it. Invalid or conflicting settings
+downloads `jig-settings.json`; **Import settings** accepts up to 32 KiB, validates
+its version-2 format and shows a review before applying it. Version-1 settings,
+including files without an explicit version, migrate with shortcuts, Undo levels
+and backup preferences intact: old Graphite becomes Ember, and Light becomes
+Paper, preserving their appearance. Invalid or conflicting settings
 leave the current settings and document intact. Task JSON and ODS remain the
 portable document formats; copy settings separately when moving computers.
 
-The twelve application shortcuts can be changed, reset or unassigned. Click a
+The thirteen application shortcuts can be changed, reset or unassigned. Click a
 binding and press the combination; Esc cancels capture. Conflicting bindings,
 ordinary typing keys, and reserved browser/text commands are rejected. The
 Settings cheatsheet shows current application bindings and the fixed contextual

@@ -88,6 +88,11 @@ enum UndoEntry {
     Viewer(StlSnapshot),
 }
 
+enum PendingBackup {
+    Write,
+    Download,
+}
+
 fn same_schedule_source(original: &str, current: &str) -> bool {
     let schedule = |source: &str| {
         serde_json::from_str::<(Option<jig::model::Task>, Option<jig::model::Deadline>)>(source)
@@ -179,6 +184,7 @@ pub struct BrowserApp {
     pending_settings: Option<AppSettings>,
     auto_backup_due: Option<f64>,
     initial_backup_pending: bool,
+    pending_backup: Option<PendingBackup>,
     weather: WeatherPanel,
     calendar_panel: crate::calendar_ui::CalendarPanel,
     stl: StlPanel,
@@ -319,6 +325,7 @@ impl BrowserApp {
             pending_settings: None,
             auto_backup_due: None,
             initial_backup_pending,
+            pending_backup: None,
             weather,
             calendar_panel: crate::calendar_ui::CalendarPanel::new(today),
             stl: StlPanel::new(cc),
@@ -765,9 +772,10 @@ impl BrowserApp {
     fn reset_document_session(&mut self) {
         self.settings_panel.cancel_capture();
         crate::settings_storage::set_capture(false);
-        crate::settings_storage::cancel_pending();
+        crate::settings_storage::reset_document();
         self.auto_backup_due = None;
         self.initial_backup_pending = false;
+        self.pending_backup = None;
         self.clear_working_drafts();
         self.cancel_document_import();
         self.charts.reset();
@@ -4550,6 +4558,17 @@ impl eframe::App for BrowserApp {
                     .color(palette.muted),
                 );
             });
+            if !self.settings_open {
+                let backup = crate::settings_storage::status();
+                if let Some(action) = crate::settings_ui::backup_recovery(
+                    ui,
+                    &backup,
+                    !self.dirty && !self.storage_error,
+                    true,
+                ) {
+                    self.backup_recovery_action(action, ui.ctx());
+                }
+            }
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(page) = self.info_page {
@@ -4681,6 +4700,7 @@ impl eframe::App for BrowserApp {
             }
             ctx.request_repaint();
         }
+        self.finish_backup_action(ctx);
         self.run_automatic_backup(ctx);
         let task_draft = self.backup_working_drafts();
         browser_storage::set_unsaved(

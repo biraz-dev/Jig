@@ -88,6 +88,20 @@ enum UndoEntry {
     Viewer(StlSnapshot),
 }
 
+fn same_schedule_source(original: &str, current: &str) -> bool {
+    let schedule = |source: &str| {
+        serde_json::from_str::<(Option<jig::model::Task>, Option<jig::model::Deadline>)>(source)
+            .ok()
+            .map(|(task, deadline)| {
+                (
+                    task.map(|task| (task.id, task.deadline, task.start)),
+                    deadline.map(|deadline| (deadline.id, deadline.at)),
+                )
+            })
+    };
+    schedule(original).is_some_and(|original| schedule(current) == Some(original))
+}
+
 pub(crate) fn task_color(color: Option<TaskColor>, complete: bool) -> Color32 {
     let color = match color {
         Some(TaskColor::Rose) => Color32::from_rgb(234, 133, 173),
@@ -172,7 +186,6 @@ pub struct BrowserApp {
     redo_history: Vec<UndoEntry>,
     undo_baseline: State,
     undo_baseline_json: Vec<u8>,
-    demo: bool,
     dirty: bool,
     storage_error: bool,
     status: String,
@@ -266,40 +279,21 @@ impl BrowserApp {
                 .insert(FontFamily::Name(name.into()), vec![name.into()]);
         }
         cc.egui_ctx.set_fonts(fonts);
-        // Observe the current saved file even in explicit sample mode, so a
-        // later confirmed replacement uses the same stale-tab save guard.
         let loaded = browser_storage::load();
         let has_saved_personal = matches!(&loaded, Ok(Some(_)));
-        let (mut state, demo, status, storage_error) = if browser_storage::sample_requested() {
-            (
-                jig::sample::state(Utc::now()),
-                true,
-                "Sample changes are temporary. Start empty or import a file for your own data."
+        let (mut state, status, storage_error) = match loaded {
+            Ok(Some(state)) => (state, "Restored your browser-local data.".into(), false),
+            Ok(None) => (
+                State::default(),
+                "Your tasks and notes save in this browser. Export JSON for a portable backup."
                     .into(),
                 false,
-            )
-        } else {
-            match loaded {
-                Ok(Some(state)) => (
-                    state,
-                    false,
-                    "Restored your browser-local data.".into(),
-                    false,
-                ),
-                Ok(None) => (
-                    State::default(),
-                    false,
-                    "Your tasks and notes save in this browser. Export JSON for a portable backup."
-                        .into(),
-                    false,
-                ),
-                Err(error) => (
-                    State::default(),
-                    false,
-                    format!("Stored data could not be opened and has been preserved: {error}"),
-                    true,
-                ),
-            }
+            ),
+            Err(error) => (
+                State::default(),
+                format!("Stored data could not be opened and has been preserved: {error}"),
+                true,
+            ),
         };
         let today = Local::now().date_naive();
         let weather = WeatherPanel::new(state.preferences.weather.clone());
@@ -313,8 +307,7 @@ impl BrowserApp {
             "tasks".into()
         };
         browser_storage::set_workspace(&workspace);
-        let initial_backup_pending =
-            settings.auto_backup && has_saved_personal && !demo && !storage_error;
+        let initial_backup_pending = settings.auto_backup && has_saved_personal && !storage_error;
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
             state,
@@ -333,7 +326,6 @@ impl BrowserApp {
             redo_history: Vec::new(),
             undo_baseline,
             undo_baseline_json,
-            demo,
             dirty: false,
             storage_error,
             status,
@@ -510,13 +502,11 @@ impl BrowserApp {
             if drafts.version != 1 {
                 return Err("Unsupported draft backup version".into());
             }
-            let kind = if self.demo { "demo" } else { "personal" };
             if !matches!(drafts.kind.as_str(), "personal" | "demo") {
                 return Err("Unknown draft backup kind".into());
             }
-            if drafts.kind != kind {
-                // Leave the other view's recovery record untouched until the
-                // user actually starts a draft in this view.
+            if drafts.kind != "personal" {
+                // Never restore an old temporary sample draft as personal work.
                 return Ok(());
             }
             self.draft_backup_payload = Some(raw);
@@ -626,7 +616,7 @@ impl BrowserApp {
         } else {
             match serde_json::to_string(&WorkingDrafts {
                 version: 1,
-                kind: if self.demo { "demo" } else { "personal" }.into(),
+                kind: "personal".into(),
                 note,
                 task,
                 schedule,
@@ -685,30 +675,34 @@ impl BrowserApp {
     }
 
     fn save_current(&mut self) {
-        if self.demo {
-            self.status =
-                "Sample edit applied; demo data is temporary. Export JSON to keep a copy.".into();
-        } else {
-            self.dirty = true;
-            if self.storage_error {
-                self.status = "Stored data could not be decoded and has been preserved. Export your current work, then explicitly import a valid file or confirm Start empty before saving.".into();
-                return;
-            }
-            match browser_storage::save(&self.state) {
-                Ok(()) => {
-                    self.dirty = false;
-                    self.storage_error = false;
-                    self.status =
-                        "Saved in this browser. Export JSON for a portable backup.".into();
-                    if self.settings.auto_backup && self.auto_backup_due.is_none() {
-                        self.auto_backup_due = Some(self.ctx.input(|input| input.time) + 300.0);
+        self.dirty = true;
+        if self.storage_error {
+            self.status = "Stored data could not be decoded and has been preserved. Export your current work, then explicitly import a valid file or confirm Start empty before saving.".into();
+            return;
+        }
+        match browser_storage::save(&self.state) {
+            Ok(()) => {
+                self.dirty = false;
+                self.storage_error = false;
+                // Rebase unfinished dates after saved local metadata changes,
+                // while retaining conflicts with changed dates or identities.
+                if let (Some(original), Some(current)) = (
+                    self.task_date_original.as_deref(),
+                    self.schedule_source(self.task_date_edit, self.task_date_legacy),
+                ) {
+                    if same_schedule_source(original, &current) {
+                        self.task_date_original = Some(current);
                     }
                 }
-                Err(error) => {
-                    self.status = format!(
-                        "Not saved: {error}. Your changes remain in memory; retry or export JSON."
-                    )
+                self.status = "Saved in this browser. Export JSON for a portable backup.".into();
+                if self.settings.auto_backup && self.auto_backup_due.is_none() {
+                    self.auto_backup_due = Some(self.ctx.input(|input| input.time) + 300.0);
                 }
+            }
+            Err(error) => {
+                self.status = format!(
+                    "Not saved: {error}. Your changes remain in memory; retry or export JSON."
+                )
             }
         }
     }
@@ -768,7 +762,7 @@ impl BrowserApp {
         changed
     }
 
-    fn reset_undo(&mut self) {
+    fn reset_document_session(&mut self) {
         self.settings_panel.cancel_capture();
         crate::settings_storage::set_capture(false);
         crate::settings_storage::cancel_pending();
@@ -2023,14 +2017,8 @@ impl BrowserApp {
         browser_storage::cancel_documents();
     }
 
-    fn import_rows(
-        &mut self,
-        sheet: u64,
-        origin: CellAddr,
-        rows: Vec<Vec<String>>,
-        title: &str,
-    ) -> bool {
-        self.import_formatted_rows(sheet, origin, rows, title, &[], &[])
+    fn import_rows(&mut self, sheet: u64, origin: CellAddr, rows: Vec<Vec<String>>) -> bool {
+        self.import_formatted_rows(sheet, origin, rows, &[], &[])
     }
 
     fn import_formatted_rows(
@@ -2038,7 +2026,6 @@ impl BrowserApp {
         sheet: u64,
         origin: CellAddr,
         rows: Vec<Vec<String>>,
-        title: &str,
         date_columns: &[usize],
         amount_columns: &[usize],
     ) -> bool {
@@ -2071,67 +2058,13 @@ impl BrowserApp {
             }
             Ok(changed)
         };
-        if !self.demo {
-            let mut book = self.state.workbook.clone().unwrap_or_default();
-            return match apply(&mut book, sheet) {
-                Ok(changed) => {
-                    if changed {
-                        self.state.workbook = Some(book);
-                        self.changed();
-                    }
-                    true
+        let mut book = self.state.workbook.clone().unwrap_or_default();
+        match apply(&mut book, sheet) {
+            Ok(changed) => {
+                if changed {
+                    self.state.workbook = Some(book);
+                    self.changed();
                 }
-                Err(error) => {
-                    self.status = error;
-                    false
-                }
-            };
-        }
-        // Importing a real file is an explicit move out of the temporary demo.
-        // Keep the user's saved tools and sheets, adding an import sheet when
-        // a workbook already exists instead of replacing it with sample data.
-        let base = match browser_storage::load() {
-            Ok(state) => state.unwrap_or_default(),
-            Err(error) => {
-                self.status = format!("Saved data was preserved; import could not start: {error}");
-                return false;
-            }
-        };
-        let existed = base.workbook.is_some();
-        let mut book = base.workbook.clone().unwrap_or_default();
-        let result = (|| -> Result<u64, String> {
-            let target = if existed {
-                let mut name = title.to_owned();
-                let mut suffix = 2;
-                while book
-                    .sheets
-                    .iter()
-                    .any(|sheet| sheet.name.eq_ignore_ascii_case(&name))
-                {
-                    name = format!("{title} {suffix}");
-                    suffix += 1;
-                }
-                book.add_sheet(&name)?
-            } else {
-                book.sheets[0].id
-            };
-            apply(&mut book, target)?;
-            Ok(target)
-        })();
-        match result {
-            Ok(target) => {
-                self.state = base;
-                self.demo = false;
-                self.storage_error = false;
-                self.reset_editors();
-                self.reset_undo();
-                self.state.workbook = Some(book);
-                self.changed();
-                self.sheet.activate(target);
-                self.sheet_workspace = true;
-                self.tasks_workspace = false;
-                self.notes_workspace = false;
-                browser_storage::set_workspace("sheet");
                 true
             }
             Err(error) => {
@@ -2287,14 +2220,7 @@ impl BrowserApp {
                 amount_columns,
             }) => {
                 let count = rows.len();
-                if self.import_formatted_rows(
-                    sheet,
-                    origin,
-                    rows,
-                    "Imported documents",
-                    &date_columns,
-                    &amount_columns,
-                ) {
+                if self.import_formatted_rows(sheet, origin, rows, &date_columns, &amount_columns) {
                     self.cancel_document_import();
                     self.sheet.request_focus();
                     self.status = format!(
@@ -2313,7 +2239,7 @@ impl BrowserApp {
                 if let Some((sheet, origin)) = self.pending_csv_target.take() {
                     match spreadsheet::parse_delimited(&text, ',') {
                         Ok(rows) => {
-                            self.import_rows(sheet, origin, rows, "Imported CSV");
+                            self.import_rows(sheet, origin, rows);
                         }
                         Err(error) => self.status = format!("CSV import rejected: {error}"),
                     }
@@ -2348,14 +2274,7 @@ impl BrowserApp {
                     let state = match import.embedded_state {
                         Some(state) => state,
                         None => {
-                            let mut state = if self.demo {
-                                match browser_storage::load() {
-                                    Ok(state) => state.unwrap_or_default(),
-                                    Err(_) => State::default(),
-                                }
-                            } else {
-                                self.state.clone()
-                            };
+                            let mut state = self.state.clone();
                             state.workbook = Some(import.workbook);
                             state
                         }
@@ -2402,11 +2321,10 @@ impl BrowserApp {
     fn replace_personal(&mut self, state: State) {
         self.state = state;
         self.restore_weather();
-        self.demo = false;
         // This path is reached only after explicit replacement confirmation.
         self.storage_error = false;
         self.reset_editors();
-        self.reset_undo();
+        self.reset_document_session();
         self.save_current();
     }
 
@@ -2415,7 +2333,7 @@ impl BrowserApp {
             self.status = "Save or clear task edits before opening another dataset.".into();
             return;
         }
-        if !self.flush_notes_edit() {
+        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return;
         }
         if self.dirty {
@@ -2425,12 +2343,13 @@ impl BrowserApp {
         } else {
             match browser_storage::load() {
                 Ok(state) => {
+                    let has_saved_personal = state.is_some();
                     self.state = state.unwrap_or_default();
                     self.restore_weather();
-                    self.demo = false;
                     self.storage_error = false;
                     self.reset_editors();
-                    self.reset_undo();
+                    self.reset_document_session();
+                    self.initial_backup_pending = self.settings.auto_backup && has_saved_personal;
                     self.status = "Opened your browser-local data.".into();
                 }
                 Err(error) => {
@@ -2468,7 +2387,6 @@ impl BrowserApp {
             }
             self.workspace_buttons(ui);
             self.settings_button(ui);
-            self.calculator_button(ui);
             for page in [InfoPage::About, InfoPage::Help] {
                 if ui
                     .add(egui::Button::new(page.label()).selected(self.info_page == Some(page)))
@@ -2477,11 +2395,9 @@ impl BrowserApp {
                     self.deferred_view = Some(DeferredView::Info(page));
                 }
             }
+            self.calculator_button(ui);
             if width >= 600.0 {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.demo {
-                        ui.label(RichText::new("sample").small().color(palette.accent));
-                    }
                     ui.label(
                         RichText::new(Local::now().format("%a %d %b %Y").to_string())
                             .size(13.0)
@@ -2499,27 +2415,19 @@ impl BrowserApp {
                 if ui.button("Open local data").clicked() {
                     self.open_local();
                 }
-                if ui.button("Sample mode").clicked() && self.flush_notes_edit() {
-                    if self.pending_task_input.is_some() || self.has_task_draft() || self.has_schedule_draft() {
-                        self.status = "Save or clear task edits before switching to sample mode.".into();
-                    } else if self.dirty {
-                        self.status = "Save your changes before switching to sample mode. If saving is unavailable, export JSON, then reload before switching.".into();
-                    } else {
-                        self.state = jig::sample::state(Utc::now());
-                        self.restore_weather();
-                        self.demo = true;
-                        self.reset_editors();
-                        self.reset_undo();
-                        self.status = "Sample mode. Your saved personal data has not changed.".into();
-                    }
-                }
-                if ui.button("Import JSON").clicked() && self.flush_sheet_edit() && self.flush_notes_edit() {
+                if ui.button("Import JSON").clicked()
+                    && self.flush_sheet_edit()
+                    && self.flush_notes_edit()
+                {
                     self.cancel_document_import();
                     if let Err(error) = browser_storage::request_import() {
                         self.status = error;
                     }
                 }
-                if ui.button("Export JSON").clicked() && self.flush_sheet_edit() && self.flush_notes_edit() {
+                if ui.button("Export JSON").clicked()
+                    && self.flush_sheet_edit()
+                    && self.flush_notes_edit()
+                {
                     self.status = match browser_storage::download(&self.state) {
                         Ok(()) => "JSON download prepared on this device.".into(),
                         Err(error) => error,
@@ -2541,7 +2449,15 @@ impl BrowserApp {
                     match confirm {
                         Confirm::Empty => self.replace_personal(State::default()),
                         Confirm::Clear => match browser_storage::clear() {
-                            Ok(()) => { self.weather.disable(); self.state = jig::sample::state(Utc::now()); self.demo = true; self.dirty = false; self.storage_error = false; self.reset_editors(); self.reset_undo(); self.status = "Browser-local data cleared. Displaying temporary sample data.".into(); }
+                            Ok(()) => {
+                                self.weather.disable();
+                                self.state = State::default();
+                                self.dirty = false;
+                                self.storage_error = false;
+                                self.reset_editors();
+                                self.reset_document_session();
+                                self.status = "Browser-local data cleared. Start a new task, note or sheet to save new work.".into();
+                            }
                             Err(error) => self.status = error,
                         },
                     }
@@ -2952,6 +2868,35 @@ impl BrowserApp {
         );
         self.task_date_edit = Some(id);
         self.feature_after_date = feature_after;
+        self.focus_task_date = true;
+        self.capture_schedule_draft();
+        true
+    }
+
+    fn begin_legacy_date(&mut self, id: u64, timeline: bool) -> bool {
+        if self.pending_task_input.is_some() {
+            self.status = "Finish the current task input before opening a date editor.".into();
+            return false;
+        }
+        if self.has_schedule_draft() {
+            self.status =
+                "Save or cancel the current date edit before editing another date.".into();
+            return false;
+        }
+        let Some(deadline) = self.state.deadlines.iter().find(|item| item.id == id) else {
+            return false;
+        };
+        let date = deadline.at.with_timezone(&Local).date_naive();
+        self.task_date = date.to_string();
+        self.selected_date = date;
+        self.calendar_weather_date = None;
+        self.calendar_panel.reveal(date);
+        self.task_start.clear();
+        self.task_date_edit = None;
+        self.task_date_legacy = Some(id);
+        self.task_date_timeline = timeline;
+        self.task_date_error = None;
+        self.feature_after_date = false;
         self.focus_task_date = true;
         self.capture_schedule_draft();
         true
@@ -3399,14 +3344,10 @@ impl BrowserApp {
                                         .to_string()
                                 });
                             if ui.small_button(date.as_deref().unwrap_or("date")).clicked() {
-                                match self.row_task(&row) {
-                                    Ok(id) => {
-                                        self.begin_task_date(id, false);
-                                        if row.task.is_none() {
-                                            self.changed();
-                                        }
-                                    }
-                                    Err(error) => self.status = error,
+                                if let Some(id) = row.task {
+                                    self.begin_task_date(id, false);
+                                } else if let Some(id) = row.deadline {
+                                    self.begin_legacy_date(id, false);
                                 }
                             }
                             if ui.small_button("edit").clicked() {
@@ -3491,10 +3432,15 @@ impl BrowserApp {
                                 .find(|task| task.deadline == row.deadline)
                                 .map(|task| task.id)
                         });
-                        if let Some(id) = row_id.filter(|id| {
-                            self.task_date_edit == Some(*id) && !self.task_date_timeline
-                        }) {
-                            self.task_date_editor(ui, id);
+                        if !self.task_date_timeline {
+                            let target = row_id
+                                .filter(|id| self.task_date_edit == Some(*id))
+                                .or_else(|| {
+                                    row.deadline.filter(|id| self.task_date_legacy == Some(*id))
+                                });
+                            if let Some(id) = target {
+                                self.task_date_editor(ui, id);
+                            }
                         }
                     });
                 });
@@ -3733,6 +3679,9 @@ impl BrowserApp {
         edge: timeline::ResizeEdge,
         date: NaiveDate,
     ) -> Result<(), String> {
+        if self.task_date_edit == Some(id) && self.has_schedule_draft() {
+            return Err("Save or cancel the date edit before resizing its timeline bar.".into());
+        }
         let (start, due) = timeline::resize_schedule(&self.state, id, edge, date, &Local)?;
         let old_start = self
             .state
@@ -4075,9 +4024,7 @@ impl BrowserApp {
         let weather_date = self.calendar_weather_date.unwrap_or(today);
         if self.weather.header(ui, weather_date) {
             self.state.preferences.weather = self.weather.config().cloned();
-            if !self.demo {
-                self.changed();
-            }
+            self.changed();
         }
         if !self.timeline_view {
             self.timeline.cancel_gesture();
@@ -4121,29 +4068,7 @@ impl BrowserApp {
                 }
             }
             Some(TimelineAction::EditDeadline(id)) => {
-                self.calendar_weather_date = None;
-                if self.has_schedule_draft() || self.pending_task_input.is_some() {
-                    self.status =
-                        "Save or cancel the current date edit before editing another date.".into();
-                } else if let Some(deadline) =
-                    self.state.deadlines.iter().find(|item| item.id == id)
-                {
-                    self.task_date = deadline
-                        .at
-                        .with_timezone(&Local)
-                        .format("%Y-%m-%d")
-                        .to_string();
-                    self.selected_date = deadline.at.with_timezone(&Local).date_naive();
-                    self.calendar_panel.reveal(self.selected_date);
-                    self.task_start.clear();
-                    self.task_date_edit = None;
-                    self.task_date_legacy = Some(id);
-                    self.task_date_timeline = true;
-                    self.task_date_error = None;
-                    self.feature_after_date = false;
-                    self.focus_task_date = true;
-                    self.capture_schedule_draft();
-                }
+                self.begin_legacy_date(id, true);
             }
             None => {}
         }
@@ -4340,7 +4265,17 @@ impl BrowserApp {
 impl eframe::App for BrowserApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         let schedule = self.task_date_edit.or(self.task_date_legacy);
-        let protect = self.settings_open
+        let sheet_input = self.sheet_workspace
+            && !self.settings_open
+            && self.info_page.is_none()
+            && self.sheet.owns_text_input(ctx);
+        let sheet_commands = sheet_input
+            || (self.sheet_workspace
+                && !self.settings_open
+                && self.info_page.is_none()
+                && self.sheet.owns_grid_input(ctx));
+        let protect = sheet_input
+            || self.settings_open
             || ctx.memory(|memory| memory.focused()).is_some_and(|id| {
                 id == egui::Id::new("task-input")
                     || id == egui::Id::new("task-details-input")
@@ -4352,7 +4287,16 @@ impl eframe::App for BrowserApp {
                             || id == egui::Id::new(("task-start-picker", target)).with("time")
                     })
             });
-        self.ordered_input.process(ctx, input, protect);
+        let sheet_navigation = [
+            AppAction::ToggleWorkspace,
+            AppAction::Tasks,
+            AppAction::Notes,
+            AppAction::Calendar,
+            AppAction::OpenLocal,
+        ]
+        .map(|action| self.settings.binding(action));
+        self.ordered_input
+            .process(ctx, input, protect, sheet_commands, &sheet_navigation);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

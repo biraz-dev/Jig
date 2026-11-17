@@ -727,6 +727,18 @@ pub fn read_ods(bytes: &[u8]) -> Result<DocumentImport> {
                         workbook.charts.push(chart);
                     }
                 }
+                for control in &old.controls {
+                    let mut control = control.clone();
+                    control.target = control.target.and_then(|target| {
+                        let name = &old.sheet(target.sheet)?.name;
+                        let sheet = workbook.sheets.iter().find(|sheet| sheet.name == *name)?.id;
+                        Some(crate::sheet_controls::ControlTarget {
+                            sheet,
+                            cell: target.cell,
+                        })
+                    });
+                    workbook.controls.push(control);
+                }
             }
             state.workbook = Some(workbook.clone());
         }

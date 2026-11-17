@@ -6,6 +6,7 @@ pub mod calendar_strip;
 pub mod charts;
 pub mod clay;
 pub mod documents;
+pub mod draft;
 pub mod model;
 pub mod palette;
 pub mod pdf_import;

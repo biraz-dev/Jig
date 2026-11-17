@@ -527,6 +527,15 @@ try {
   await key(current.page, "Escape"); // Cancel the new empty card after the old note was saved.
   await expectState(current.page, edited, "Cancelling the new card must preserve the preceding note's final character");
 
+  progress("cancel a settled note edit and clear its unfinished recovery text");
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  const cancelledBody = "Sample: Escape should discard this unfinished note edit.";
+  await typeBody(current.page, cancelledBody);
+  await current.page.waitForFunction(text => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.note?.text === text, cancelledBody);
+  await key(current.page, "Escape");
+  await current.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.note);
+  await expectState(current.page, edited, "Escape must close the note edit, clear its recovery and preserve its saved body");
+
   progress("pin, keyboard reorder and drag notes as atomic operations");
   await focusNote(current, 1, 2); await key(current.page, "Space");
   const pinned = structuredClone(edited); const pin = pinned.notes.splice(1, 1)[0]; pin.pinned = true; pinned.notes.unshift(pin);

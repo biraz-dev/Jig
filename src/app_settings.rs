@@ -496,7 +496,7 @@ impl Action {
             Self::RenameTaskList => {
                 "Rename a focused task-list tab, otherwise expand or restore its panel."
             }
-            Self::OpenLocal => "Return from temporary samples to the saved personal document.",
+            Self::OpenLocal => "Reload the saved document from this browser.",
         }
     }
 

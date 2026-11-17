@@ -1,7 +1,8 @@
-use chrono::{FixedOffset, NaiveDate, Utc};
+use chrono::{FixedOffset, Local, NaiveDate, Utc};
 use jig::{
     charts::{self, ChartData, ChartKind, ChartScene, ChartSource, ChartSpec, Primitive},
     model::{State, TaskColor},
+    palette::ThemePalette,
     spreadsheet::{CellAddr, CellRange, Workbook},
 };
 
@@ -56,6 +57,255 @@ fn data_segments(scene: &ChartScene) -> usize {
     scene.primitives.iter().filter(|primitive| matches!(primitive,
         Primitive::Line { stroke, .. } if stroke.color == [109, 185, 238] && stroke.width == 2.0
     )).count()
+}
+
+fn geometry(scene: &ChartScene) -> ChartScene {
+    let mut scene = scene.clone();
+    for primitive in &mut scene.primitives {
+        match primitive {
+            Primitive::Rect { fill, stroke, .. } | Primitive::Polygon { fill, stroke, .. } => {
+                if let Some(fill) = fill {
+                    *fill = [0; 3];
+                }
+                if let Some(stroke) = stroke {
+                    stroke.color = [0; 3];
+                }
+            }
+            Primitive::Line { stroke, .. } => stroke.color = [0; 3],
+            Primitive::Text { color, .. } => *color = [0; 3],
+        }
+    }
+    scene
+}
+
+#[test]
+fn interface_palettes_change_chart_chrome_without_changing_geometry_or_series() {
+    let state = table(&[&["Item", "Value"], &["Clay", "10"], &["Tools", "20"]]);
+    let before = serde_json::to_string(&state).unwrap();
+    for kind in [ChartKind::Pie, ChartKind::Bar, ChartKind::Line] {
+        let spec = chart(
+            kind,
+            ChartSource::Range {
+                sheet: 1,
+                range: range("A1", "B3"),
+            },
+        );
+        let original = charts::scene(&state, &spec, 720.0, 280.0).unwrap();
+        assert_eq!(
+            charts::scene_themed(&state, &spec, 720.0, 280.0, ThemePalette::EMBER).unwrap(),
+            original,
+            "Ember must preserve the existing dark chart rendering"
+        );
+        for colors in [
+            ThemePalette::NORD,
+            ThemePalette::DRACULA,
+            ThemePalette::GRAPHITE,
+            ThemePalette::PAPER,
+        ] {
+            let scene = charts::scene_themed(&state, &spec, 720.0, 280.0, colors).unwrap();
+            assert_eq!(geometry(&scene), geometry(&original));
+            assert!(
+                matches!(scene.primitives.first(), Some(Primitive::Rect {fill:Some(fill),..}) if *fill == colors.background)
+            );
+            for (themed, original) in scene.primitives.iter().zip(&original.primitives).skip(1) {
+                match (themed, original) {
+                    (
+                        Primitive::Text { color, .. },
+                        Primitive::Text {
+                            color: original, ..
+                        },
+                    ) => {
+                        assert_eq!(
+                            *color,
+                            if *original == ThemePalette::EMBER.text {
+                                colors.text
+                            } else {
+                                colors.muted
+                            }
+                        );
+                    }
+                    (Primitive::Rect { fill, .. }, Primitive::Rect { fill: original, .. })
+                    | (
+                        Primitive::Polygon { fill, .. },
+                        Primitive::Polygon { fill: original, .. },
+                    ) => {
+                        assert_eq!(fill, original, "Data marks must retain their series colors");
+                    }
+                    (
+                        Primitive::Line { stroke, .. },
+                        Primitive::Line {
+                            stroke: original, ..
+                        },
+                    ) => {
+                        assert_eq!(
+                            stroke.color,
+                            if original.color == ThemePalette::EMBER.grid {
+                                colors.grid
+                            } else if original.color == ThemePalette::EMBER.muted {
+                                colors.muted
+                            } else {
+                                original.color
+                            }
+                        );
+                    }
+                    _ => panic!("Themed scene changed primitive order"),
+                }
+            }
+        }
+    }
+    assert_eq!(serde_json::to_string(&state).unwrap(), before);
+}
+
+#[test]
+fn themed_task_gantt_preserves_task_colors_and_printer_friendly_exports() {
+    let mut state = State::default();
+    let task = state.add_task("Photograph work").unwrap();
+    state
+        .set_task_schedule(
+            task,
+            Some("2026-11-01T12:00:00Z"),
+            Some("2026-11-03T12:00:00Z"),
+        )
+        .unwrap();
+    state.set_task_color(task, Some(TaskColor::Rose)).unwrap();
+    let spec = chart(ChartKind::Gantt, ChartSource::Tasks);
+    let before = serde_json::to_string(&state).unwrap();
+    for colors in [
+        ThemePalette::NORD,
+        ThemePalette::DRACULA,
+        ThemePalette::PAPER,
+    ] {
+        let scene = charts::scene_themed(&state, &spec, 720.0, 280.0, colors).unwrap();
+        assert!(scene.primitives.iter().any(|primitive| matches!(
+            primitive,
+            Primitive::Rect {
+                height: 11.0,
+                fill: Some([234, 133, 173]),
+                ..
+            }
+        )));
+        assert_eq!(serde_json::to_string(&state).unwrap(), before);
+    }
+    state.toggle_task(task).unwrap();
+    let scene = charts::scene_themed(&state, &spec, 720.0, 280.0, ThemePalette::NORD).unwrap();
+    assert!(scene.primitives.iter().any(|primitive| matches!(primitive, Primitive::Text {text,color,..} if text=="Done" && *color == ThemePalette::NORD.muted)));
+    let printable = charts::scene_light(&state, &spec, 720.0, 280.0).unwrap();
+    assert!(matches!(
+        printable.primitives.first(),
+        Some(Primitive::Rect {
+            fill: Some([255, 255, 255]),
+            ..
+        })
+    ));
+    assert!(matches!(
+        printable.primitives.get(1),
+        Some(Primitive::Text {
+            color: [31, 39, 48],
+            ..
+        })
+    ));
+}
+
+#[test]
+fn shared_evaluation_scenes_match_fresh_scenes_after_source_and_palette_changes() {
+    let mut state = table(&[&["Item", "Value"], &["Clay", "=B3/2"], &["Tools", "20"]]);
+    let task = state.add_task("Photograph work").unwrap();
+    state
+        .set_task_schedule(
+            task,
+            Some("2035-05-01T12:00:00Z"),
+            Some("2035-05-04T12:00:00Z"),
+        )
+        .unwrap();
+    state.set_task_color(task, Some(TaskColor::Rose)).unwrap();
+    for raw in ["20", "40"] {
+        state
+            .workbook
+            .as_mut()
+            .unwrap()
+            .set_cell(1, CellAddr::new(2, 1), raw)
+            .unwrap();
+        let values = state
+            .workbook
+            .as_ref()
+            .unwrap()
+            .recalculate_at(Local::now().date_naive());
+        for kind in [
+            ChartKind::Pie,
+            ChartKind::Bar,
+            ChartKind::Line,
+            ChartKind::Gantt,
+        ] {
+            let source = if kind == ChartKind::Gantt {
+                ChartSource::Tasks
+            } else {
+                ChartSource::Range {
+                    sheet: 1,
+                    range: range("A1", "B3"),
+                }
+            };
+            let spec = chart(kind, source);
+            for colors in [
+                ThemePalette::EMBER,
+                ThemePalette::NORD,
+                ThemePalette::DRACULA,
+                ThemePalette::GRAPHITE,
+                ThemePalette::PAPER,
+            ] {
+                for width in [340.0, 720.0] {
+                    assert_eq!(
+                        charts::scene_themed_with_values(
+                            &state, &spec, width, 280.0, colors, &values
+                        )
+                        .unwrap(),
+                        charts::scene_themed(&state, &spec, width, 280.0, colors).unwrap(),
+                        "Shared values changed {kind:?} with {raw} at width {width}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_evaluation_gantt_uses_its_evaluated_day_and_mixed_date_cells() {
+    let state = table(&[
+        &["Piece", "Start", "Due"],
+        &["Drying", "=TODAY()", "=TODAY()+2"],
+        &["Delivery", "", "2035-05-04"],
+    ]);
+    let spec = chart(
+        ChartKind::Gantt,
+        ChartSource::Range {
+            sheet: 1,
+            range: range("A1", "C3"),
+        },
+    );
+    let mut previous = None;
+    for day in [1, 2] {
+        let today = NaiveDate::from_ymd_opt(2035, 5, day).unwrap();
+        let values = state.workbook.as_ref().unwrap().recalculate_at(today);
+        let scene = charts::scene_themed_with_values(
+            &state,
+            &spec,
+            720.0,
+            280.0,
+            ThemePalette::EMBER,
+            &values,
+        )
+        .unwrap();
+        assert_eq!(
+            scene,
+            charts::scene_at(&state, &spec, 720.0, 280.0, false, &Local, today).unwrap()
+        );
+        if let Some(previous) = previous {
+            assert_ne!(
+                scene, previous,
+                "A new date evaluation must update TODAY() charts"
+            );
+        }
+        previous = Some(scene);
+    }
 }
 
 #[test]

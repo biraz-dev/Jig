@@ -1,23 +1,60 @@
-//! Preserve native editor event order when typing and clicking share a frame.
+//! Preserve native editor event order when text and navigation share a frame.
 use eframe::egui::{Context, Event, Key, PointerButton, RawInput, TextEdit, TouchPhase};
+use jig::app_settings::Chord;
 
 pub fn has_edit_events(ctx: &Context) -> bool {
-    ctx.input(|input| {
-        input.events.iter().any(|event| match event {
-            Event::Text(_) | Event::Paste(_) | Event::Cut | Event::Ime(_) => true,
-            Event::Key {
-                key,
-                pressed: true,
-                modifiers,
-                ..
-            } => {
-                matches!(key, Key::Backspace | Key::Delete)
-                    || (*key == Key::Enter && !modifiers.ctrl && !modifiers.command)
-                    || (matches!(key, Key::Z | Key::Y) && (modifiers.ctrl || modifiers.command))
-            }
-            _ => false,
+    ctx.input(|input| input.events.iter().any(edits_text))
+}
+
+fn edits_text(event: &Event) -> bool {
+    match event {
+        Event::Text(_) | Event::Paste(_) | Event::Cut | Event::Ime(_) => true,
+        Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } => {
+            matches!(key, Key::Backspace | Key::Delete)
+                || (*key == Key::Enter && !modifiers.ctrl && !modifiers.command)
+                || (matches!(key, Key::Z | Key::Y) && (modifiers.ctrl || modifiers.command))
+        }
+        _ => false,
+    }
+}
+
+fn commits_sheet_edit(event: &Event, navigation: &[Option<Chord>]) -> bool {
+    let Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    (modifiers.ctrl
+        && !modifiers.shift
+        && !modifiers.alt
+        && !modifiers.mac_cmd
+        && matches!(key, Key::G | Key::S | Key::O | Key::P))
+        || (modifiers.alt
+            && !modifiers.ctrl
+            && !modifiers.shift
+            && !modifiers.mac_cmd
+            && matches!(key, Key::PageUp | Key::PageDown))
+        || (modifiers.shift
+            && !modifiers.ctrl
+            && !modifiers.alt
+            && !modifiers.mac_cmd
+            && *key == Key::F11)
+        || navigation.iter().flatten().any(|chord| {
+            Key::from_name(chord.key.name()) == Some(*key)
+                && modifiers.ctrl == chord.ctrl
+                && modifiers.shift == chord.shift
+                && modifiers.alt == chord.alt
+                && modifiers.mac_cmd == chord.meta
         })
-    })
 }
 
 #[derive(Default)]
@@ -32,9 +69,17 @@ impl OrderedInput {
 
     /// Called before egui begins its pass. Finish earlier editor input or a
     /// cancelled touch before a later pointer press starts another interaction.
+    /// Sheet commands also wait for earlier edits before committing the draft.
     /// Prime an idle pointer before a press whose location changed without a
     /// prior paint, so that jump cannot scroll a parent panel.
-    pub fn process(&mut self, ctx: &Context, input: &mut RawInput, protect_editor: bool) {
+    pub fn process(
+        &mut self,
+        ctx: &Context,
+        input: &mut RawInput,
+        protect_editor: bool,
+        protect_sheet_commands: bool,
+        sheet_navigation: &[Option<Chord>],
+    ) {
         let resuming = !self.deferred.is_empty();
         if resuming {
             let mut events = std::mem::take(&mut self.deferred);
@@ -66,8 +111,16 @@ impl OrderedInput {
             .count()
             <= 1;
         let mut finish_before_press = false;
+        let mut sheet_edit_pending = false;
         let mut press_origin = None;
         for (index, event) in input.events.iter().enumerate() {
+            if sheet_edit_pending && commits_sheet_edit(event, sheet_navigation) {
+                // Sheet navigation and file commands commit before TextEdit
+                // runs. Let earlier text reach the current draft first.
+                self.deferred = input.events.split_off(index);
+                ctx.request_repaint();
+                break;
+            }
             if let Event::PointerMoved(pos) = event {
                 if press_origin.is_some_and(|origin| origin != *pos) {
                     // A resumed touch must hit-test its grip before later motion
@@ -143,6 +196,8 @@ impl OrderedInput {
                         | Event::Ime(_)
                         | Event::Key { pressed: true, .. }
                 );
+            sheet_edit_pending |= protect_sheet_commands && edits_text(event);
+            finish_before_press |= sheet_edit_pending;
         }
     }
 }

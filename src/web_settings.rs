@@ -95,6 +95,7 @@ impl BrowserApp {
             return false;
         }
         let enable_backup = next.auto_backup && !self.settings.auto_backup;
+        let disable_backup = !next.auto_backup && self.settings.auto_backup;
         self.settings = next;
         self.trim_history();
         web_theme::apply(ctx, self.settings.theme);
@@ -106,7 +107,9 @@ impl BrowserApp {
         };
         if !self.settings.auto_backup {
             self.auto_backup_due = None;
-            settings_storage::cancel_pending();
+            if disable_backup {
+                settings_storage::cancel_pending();
+            }
         } else if enable_backup && !self.dirty && !self.storage_error {
             self.auto_backup_due = Some(ctx.input(|input| input.time) + 300.0);
         }
@@ -176,15 +179,18 @@ impl BrowserApp {
                     self.auto_backup_due = None;
                     settings_storage::disconnect_folder()
                 }
-                SettingsAction::BackupNow => {
-                    if self.dirty || self.storage_error {
-                        Err("Save your personal data before making a folder backup.".into())
-                    } else {
-                        self.auto_backup_due = None;
-                        settings_storage::backup(&self.state, false)
-                    }
+                SettingsAction::BackupNow | SettingsAction::RetryBackup => {
+                    self.pending_backup = Some(PendingBackup::Write);
+                    Ok(())
                 }
-                SettingsAction::DownloadBackup => browser_storage::download(&self.state),
+                SettingsAction::DownloadBackup => {
+                    self.pending_backup = Some(PendingBackup::Download);
+                    Ok(())
+                }
+                SettingsAction::OpenBackupSettings => {
+                    self.toggle_settings(ui.ctx());
+                    Ok(())
+                }
                 SettingsAction::RestoreBackup => {
                     self.close_settings();
                     self.data_open = true;
@@ -201,6 +207,70 @@ impl BrowserApp {
             }
         }
         settings_storage::set_capture(self.settings_open && self.settings_panel.owns_keyboard());
+    }
+
+    pub(super) fn backup_recovery_action(&mut self, action: SettingsAction, ctx: &egui::Context) {
+        let result = match action {
+            SettingsAction::RetryBackup => {
+                self.pending_backup = Some(PendingBackup::Write);
+                Ok(())
+            }
+            SettingsAction::DownloadBackup => {
+                self.pending_backup = Some(PendingBackup::Download);
+                Ok(())
+            }
+            SettingsAction::AuthorizeFolder => settings_storage::authorize_folder(),
+            SettingsAction::ChooseFolder => settings_storage::choose_folder(),
+            SettingsAction::OpenBackupSettings => {
+                self.toggle_settings(ctx);
+                Ok(())
+            }
+            _ => return,
+        };
+        if let Err(error) = result {
+            self.status = error;
+        }
+        ctx.request_repaint();
+    }
+
+    pub(super) fn finish_backup_action(&mut self, ctx: &egui::Context) {
+        if self.pending_backup.is_none() {
+            return;
+        }
+        // Earlier input may still be queued for its editor. Use the document
+        // only after those edits and this pass's UI actions have been handled.
+        if self.pending_task_input.is_some()
+            || self.pending_note_input
+            || self.ordered_input.has_pending()
+        {
+            ctx.request_repaint();
+            return;
+        }
+        let result = match self.pending_backup.take() {
+            Some(PendingBackup::Write) if self.dirty || self.storage_error => {
+                Err("Save your changes before retrying the folder backup. Download backup can keep a recovery copy.".into())
+            }
+            Some(PendingBackup::Write) => {
+                self.auto_backup_due = None;
+                settings_storage::backup(&self.state, false)
+            }
+            Some(PendingBackup::Download) => {
+                let failed_folder = settings_storage::status().error.is_some();
+                browser_storage::download(&self.state).map(|()| {
+                    self.status = if failed_folder {
+                        "Backup download started. Folder backup still needs attention."
+                    } else {
+                        "Backup download started."
+                    }
+                    .into();
+                })
+            }
+            None => return,
+        };
+        if let Err(error) = result {
+            self.status = error;
+        }
+        ctx.request_repaint();
     }
 
     pub(super) fn run_automatic_backup(&mut self, ctx: &egui::Context) {

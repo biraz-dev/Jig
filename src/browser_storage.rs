@@ -18,8 +18,6 @@ extern "C" {
     fn drafts_save(text: &str) -> Result<(), JsValue>;
     #[wasm_bindgen(catch, js_name = jigClearDrafts)]
     fn drafts_clear() -> Result<(), JsValue>;
-    #[wasm_bindgen(js_name = jigSampleRequested)]
-    fn sample_requested_js() -> bool;
     #[wasm_bindgen(js_name = jigPreferredWorkspace)]
     fn preferred_workspace_js() -> String;
     #[wasm_bindgen(catch, js_name = jigExport)]
@@ -100,9 +98,6 @@ pub fn save_drafts(text: &str) -> Result<(), String> {
 }
 pub fn clear_drafts() -> Result<(), String> {
     drafts_clear().map_err(error)
-}
-pub fn sample_requested() -> bool {
-    sample_requested_js()
 }
 pub fn preferred_workspace() -> String {
     preferred_workspace_js()

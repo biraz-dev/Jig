@@ -55,7 +55,6 @@
       throw new Error("Could not clear this tab's saved unfinished text. Refresh may restore the previous draft. " + String(error));
     }
   };
-  window.jigSampleRequested = () => new URLSearchParams(location.search).get("sample") === "1";
   window.jigExport = text => {
     const url = URL.createObjectURL(new Blob([text + "\n"], { type: "application/json" }));
     const anchor = document.createElement("a");

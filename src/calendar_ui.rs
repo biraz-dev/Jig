@@ -1,4 +1,4 @@
-//! Compact, continuous dates. Panning and zooming never change task records.
+//! Compact calendar projections. Browsing never changes task records.
 use crate::web::task_color;
 use crate::web_theme;
 use chrono::{Datelike, Duration, Local, NaiveDate};
@@ -8,9 +8,14 @@ use std::collections::BTreeMap;
 
 const BAND_HEIGHT: f32 = 90.0;
 const MONTH_HEIGHT: f32 = 22.0;
+const MONTH_CELL_HEIGHT: f32 = 38.0;
+const MONTH_MIN_WIDTH: f32 = 7.0 * 30.0;
+const MONTH_MAX_WIDTH: f32 = 480.0;
 
 pub struct CalendarPanel {
     view: Viewport,
+    month_view: bool,
+    month: NaiveDate,
     last_width: f32,
     focus_requested: bool,
     keyboard_ids: Vec<egui::Id>,
@@ -21,6 +26,8 @@ impl CalendarPanel {
     pub fn new(today: NaiveDate) -> Self {
         Self {
             view: Viewport::new(today),
+            month_view: false,
+            month: today.with_day(1).unwrap(),
             last_width: 320.0,
             focus_requested: false,
             keyboard_ids: Vec::new(),
@@ -30,6 +37,16 @@ impl CalendarPanel {
 
     pub fn reveal(&mut self, date: NaiveDate) {
         self.view.reveal(date, self.last_width);
+        self.month = date.with_day(1).unwrap();
+    }
+
+    pub fn month_view(&self) -> bool {
+        self.month_view
+    }
+
+    pub fn set_month_view(&mut self, enabled: bool, selected: NaiveDate) {
+        self.month_view = enabled;
+        self.reveal(selected);
     }
 
     pub fn request_focus(&mut self) {
@@ -55,6 +72,9 @@ impl CalendarPanel {
         let colors = web_theme::colors(ui.ctx());
         self.focused = false;
         self.keyboard_ids.clear();
+        if self.month_view {
+            return self.month_ui(ui, state, today, selected_date, selected_lists);
+        }
         let width = ui.available_width().max(1.0);
         let selected_left = self.view.x_for(selected_date);
         if width < self.last_width
@@ -261,6 +281,244 @@ impl CalendarPanel {
         selected
     }
 
+    fn shifted_month(&self, delta: i32) -> Option<NaiveDate> {
+        let (year, month) =
+            jig::calendar::shift(self.month.year(), self.month.month(), delta).ok()?;
+        (1..=9999)
+            .contains(&year)
+            .then(|| NaiveDate::from_ymd_opt(year, month, 1))
+            .flatten()
+    }
+
+    fn month_ui(
+        &mut self,
+        ui: &mut Ui,
+        state: &State,
+        today: NaiveDate,
+        selected_date: NaiveDate,
+        selected_lists: &[u64],
+    ) -> Option<NaiveDate> {
+        let colors = web_theme::colors(ui.ctx());
+        let mut selected = None;
+        ui.horizontal_wrapped(|ui| {
+            let response = ui.small_button("Today");
+            self.track(&response);
+            if response.clicked() {
+                self.reveal(today);
+                selected = Some(today);
+            }
+            for (label, delta) in [("‹", -1), ("›", 1)] {
+                let next = self.shifted_month(delta);
+                let response = ui
+                    .add_enabled(next.is_some(), egui::Button::new(label).small())
+                    .on_hover_text(if delta < 0 {
+                        "Previous month"
+                    } else {
+                        "Next month"
+                    });
+                self.track(&response);
+                if response.clicked() {
+                    self.month = next.unwrap();
+                }
+            }
+            ui.label(
+                RichText::new(self.month.format("%B %Y").to_string())
+                    .small()
+                    .color(colors.muted),
+            );
+        });
+        let width = ui.available_width().clamp(MONTH_MIN_WIDTH, MONTH_MAX_WIDTH);
+        let id = ui.id().with("calendar-date-band");
+        let mut focus_rect = None;
+        egui::ScrollArea::horizontal()
+            .id_salt("calendar-month-grid-scroll")
+            .max_width(MONTH_MAX_WIDTH)
+            .auto_shrink([true, true])
+            .show(ui, |ui| {
+                let cells = jig::calendar::month(self.month.year(), self.month.month())
+                    .unwrap_or_default();
+                let anchor = self.month.with_day(selected_date.day()).unwrap_or_else(|| {
+                    cells.iter().flatten().next_back().copied().unwrap_or(self.month)
+                });
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(width, MONTH_HEIGHT + 6.0 * MONTH_CELL_HEIGHT),
+                    egui::Sense::hover(),
+                );
+                let grid = egui::Rect::from_min_max(
+                    rect.left_top() + egui::vec2(0.0, MONTH_HEIGHT),
+                    rect.right_bottom(),
+                );
+                let response = ui.interact(grid, id, egui::Sense::click());
+                let requested_focus = self.focus_requested;
+                if requested_focus {
+                    response.request_focus();
+                    self.focus_requested = false;
+                    ui.ctx().request_repaint();
+                }
+                self.track(&response);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        format!(
+                            "Calendar month · {} · Arrows select dates · Page Up/Down browse months · Home today",
+                            selected_date.format("%A %d %B %Y")
+                        ),
+                    )
+                });
+                if response.gained_focus() || requested_focus {
+                    response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+                    focus_rect = Some(grid);
+                }
+                if response.clicked() && ui.input(|input| input.pointer.any_released()) {
+                    if let Some(pointer) = response.interact_pointer_pos().filter(|p| {
+                        grid.contains(*p) && p.x < grid.right() && p.y < grid.bottom()
+                    }) {
+                        let column = ((pointer.x - grid.left()) / (width / 7.0)).floor() as usize;
+                        let row = ((pointer.y - grid.top()) / MONTH_CELL_HEIGHT).floor() as usize;
+                        selected = cells.get(row * 7 + column).copied().flatten();
+                    }
+                }
+                if response.has_focus() {
+                    let (days, page, home, enter) = ui.input_mut(|input| {
+                        let none = egui::Modifiers::NONE;
+                        let days = if input.consume_key(none, egui::Key::ArrowLeft) { -1 }
+                            else if input.consume_key(none, egui::Key::ArrowRight) { 1 }
+                            else if input.consume_key(none, egui::Key::ArrowUp) { -7 }
+                            else if input.consume_key(none, egui::Key::ArrowDown) { 7 }
+                            else { 0 };
+                        let page = if input.consume_key(none, egui::Key::PageUp) { -1 }
+                            else if input.consume_key(none, egui::Key::PageDown) { 1 }
+                            else { 0 };
+                        (days, page, input.consume_key(none, egui::Key::Home),
+                            input.consume_key(none, egui::Key::Enter) || input.consume_key(none, egui::Key::Space))
+                    });
+                    if page != 0 {
+                        if let Some(month) = self.shifted_month(page) {
+                            self.month = month;
+                        }
+                    } else if home {
+                        self.reveal(today);
+                        selected = Some(today);
+                    } else if days != 0 {
+                        if let Some(date) = anchor.checked_add_signed(Duration::days(days))
+                            .filter(|date| (1..=9999).contains(&date.year()))
+                        {
+                            self.month = date.with_day(1).unwrap();
+                            selected = Some(date);
+                        }
+                    } else if enter {
+                        selected = Some(anchor);
+                    }
+                    if days != 0 || page != 0 || home || enter {
+                        ui.ctx().request_repaint();
+                    }
+                }
+                self.paint_month(ui, rect, state, today, selected.unwrap_or(selected_date), selected_lists);
+                if response.has_focus() {
+                    ui.painter().rect_stroke(grid, 0, Stroke::new(1.0_f32, colors.accent), egui::StrokeKind::Inside);
+                }
+                response.on_hover_text("Click a day · Arrows select dates · Page Up/Down browse months · Home today");
+            });
+        if let Some(rect) = focus_rect {
+            // The horizontal area consumes both scroll targets. Repeat this
+            // request on its parent so the dashboard can reveal the grid too.
+            ui.scroll_to_rect_animation(rect, None, egui::style::ScrollAnimation::none());
+        }
+        selected
+    }
+
+    fn paint_month(
+        &self,
+        ui: &Ui,
+        rect: egui::Rect,
+        state: &State,
+        today: NaiveDate,
+        selected: NaiveDate,
+        lists: &[u64],
+    ) {
+        let colors = web_theme::colors(ui.ctx());
+        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        painter.rect_filled(rect, 0, colors.bg);
+        let cell_width = rect.width() / 7.0;
+        for (column, name) in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            .into_iter()
+            .enumerate()
+        {
+            painter.text(
+                egui::pos2(
+                    rect.left() + (column as f32 + 0.5) * cell_width,
+                    rect.top() + 11.0,
+                ),
+                Align2::CENTER_CENTER,
+                name,
+                FontId::monospace(11.0),
+                colors.muted,
+            );
+        }
+        let mut deadlines = BTreeMap::<_, Vec<_>>::new();
+        for row in timeline::rows_for_lists(state, &Local, lists) {
+            if let Some(due) = row
+                .due
+                .filter(|due| due.year() == self.month.year() && due.month() == self.month.month())
+            {
+                deadlines.entry(due).or_default().push(row);
+            }
+        }
+        let cells = jig::calendar::month(self.month.year(), self.month.month()).unwrap_or_default();
+        let hover = ui.input(|input| input.pointer.hover_pos());
+        for (index, date) in cells.into_iter().enumerate() {
+            let column = index % 7;
+            let row = index / 7;
+            let cell = egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.left() + column as f32 * cell_width,
+                    rect.top() + MONTH_HEIGHT + row as f32 * MONTH_CELL_HEIGHT,
+                ),
+                egui::vec2(cell_width, MONTH_CELL_HEIGHT),
+            );
+            let fill = if date == Some(selected) {
+                colors.selected
+            } else if date.is_some() && hover.is_some_and(|point| cell.contains(point)) {
+                colors.hover
+            } else if column >= 5 {
+                colors.weekend
+            } else {
+                colors.bg
+            };
+            painter.rect_filled(cell.shrink(1.0), 0, fill);
+            painter.rect_stroke(
+                cell,
+                0,
+                Stroke::new(0.5_f32, colors.rule),
+                egui::StrokeKind::Inside,
+            );
+            if let Some(date) = date {
+                painter.text(
+                    egui::pos2(cell.center().x, cell.top() + 12.0),
+                    Align2::CENTER_CENTER,
+                    date.day(),
+                    FontId::monospace(14.0),
+                    if date == today {
+                        colors.accent
+                    } else {
+                        colors.text
+                    },
+                );
+                if date == today {
+                    painter.hline(
+                        (cell.left() + 8.0)..=(cell.right() - 8.0),
+                        cell.top() + 23.0,
+                        Stroke::new(1.0_f32, colors.accent),
+                    );
+                }
+                if let Some(items) = deadlines.get(&date) {
+                    paint_marks(&painter, cell, items, colors);
+                }
+            }
+        }
+    }
+
     fn track(&mut self, response: &egui::Response) {
         self.keyboard_ids.push(response.id);
         self.focused |= response.has_focus() || response.clicked() || response.dragged();
@@ -365,66 +623,86 @@ impl CalendarPanel {
                 );
             }
             if let Some(items) = deadlines.get(date) {
-                let capacity = ((self.view.day_width() - 16.0) / 7.0).floor().max(1.0) as usize;
-                let count = items.len().min(capacity);
-                // Give each color/completion combination a place before a
-                // repeated mark can use the remaining room in this date.
-                let mut marks = Vec::<usize>::with_capacity(count);
-                for (index, item) in items.iter().enumerate() {
-                    if marks.iter().all(|&shown| {
-                        items[shown].color != item.color || items[shown].complete != item.complete
-                    }) {
-                        marks.push(index);
-                        if marks.len() == count {
-                            break;
-                        }
-                    }
-                }
-                if marks.len() < count {
-                    for index in 0..items.len() {
-                        if !marks.contains(&index) {
-                            marks.push(index);
-                            if marks.len() == count {
-                                break;
-                            }
-                        }
-                    }
-                }
-                for (index, &item) in marks.iter().enumerate() {
-                    let item = &items[item];
-                    let center = egui::pos2(left + 6.0 + index as f32 * 7.0, body.bottom() - 10.0);
-                    let color = task_color(item.color, item.complete);
-                    if item.complete {
-                        painter.circle_stroke(center, 2.3, Stroke::new(1.0_f32, color));
-                    } else {
-                        painter.circle_filled(center, 2.3, color);
-                    }
-                }
-                if items.len() > count {
-                    let text = format!("+{}", items.len() - count);
-                    let label_left = left + 10.0 + (count - 1) as f32 * 7.0;
-                    let available = (right - 2.0 - label_left).max(1.0);
-                    let mut label =
-                        painter.layout_no_wrap(text.clone(), FontId::monospace(8.0), colors.muted);
-                    if label.size().x > available {
-                        label = painter.layout_no_wrap(
-                            text,
-                            FontId::monospace(8.0 * available / label.size().x),
-                            colors.muted,
-                        );
-                    }
-                    painter.galley(
-                        egui::pos2(label_left, body.bottom() - 10.0 - label.size().y * 0.5),
-                        label,
-                        colors.muted,
-                    );
-                }
+                paint_marks(
+                    &painter,
+                    egui::Rect::from_min_max(
+                        egui::pos2(left, body.top()),
+                        egui::pos2(right, body.bottom()),
+                    ),
+                    items,
+                    colors,
+                );
             }
         }
         painter.hline(
             rect.x_range(),
             rect.bottom(),
             Stroke::new(0.5_f32, colors.rule),
+        );
+    }
+}
+
+/// Keep color and completion marks identical in both calendar projections.
+fn paint_marks(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    items: &[timeline::TimelineRow<'_>],
+    colors: web_theme::Palette,
+) {
+    let left = rect.left();
+    let right = rect.right();
+    let body = rect;
+    let capacity = ((rect.width() - 16.0) / 7.0).floor().max(1.0) as usize;
+    let count = items.len().min(capacity);
+    // Give each color/completion combination a place before a
+    // repeated mark can use the remaining room in this date.
+    let mut marks = Vec::<usize>::with_capacity(count);
+    for (index, item) in items.iter().enumerate() {
+        if marks.iter().all(|&shown| {
+            items[shown].color != item.color || items[shown].complete != item.complete
+        }) {
+            marks.push(index);
+            if marks.len() == count {
+                break;
+            }
+        }
+    }
+    if marks.len() < count {
+        for index in 0..items.len() {
+            if !marks.contains(&index) {
+                marks.push(index);
+                if marks.len() == count {
+                    break;
+                }
+            }
+        }
+    }
+    for (index, &item) in marks.iter().enumerate() {
+        let item = &items[item];
+        let center = egui::pos2(left + 6.0 + index as f32 * 7.0, body.bottom() - 10.0);
+        let color = task_color(item.color, item.complete);
+        if item.complete {
+            painter.circle_stroke(center, 2.3, Stroke::new(1.0_f32, color));
+        } else {
+            painter.circle_filled(center, 2.3, color);
+        }
+    }
+    if items.len() > count {
+        let text = format!("+{}", items.len() - count);
+        let label_left = left + 10.0 + (count - 1) as f32 * 7.0;
+        let available = (right - 2.0 - label_left).max(1.0);
+        let mut label = painter.layout_no_wrap(text.clone(), FontId::monospace(8.0), colors.muted);
+        if label.size().x > available {
+            label = painter.layout_no_wrap(
+                text,
+                FontId::monospace(8.0 * available / label.size().x),
+                colors.muted,
+            );
+        }
+        painter.galley(
+            egui::pos2(label_left, body.bottom() - 10.0 - label.size().y * 0.5),
+            label,
+            colors.muted,
         );
     }
 }

@@ -217,6 +217,8 @@ pub struct State {
     pub tasks: Vec<Task>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Note>,
+    #[serde(default, skip_serializing_if = "crate::draft::Draft::is_empty")]
+    pub draft: crate::draft::Draft,
     pub deadlines: Vec<Deadline>,
     pub entries: Vec<Entry>,
     pub featured: Option<u64>,
@@ -232,6 +234,7 @@ impl Default for State {
             task_lists: default_task_lists(),
             tasks: vec![],
             notes: vec![],
+            draft: crate::draft::Draft::default(),
             deadlines: vec![],
             entries: vec![],
             featured: None,
@@ -355,6 +358,7 @@ impl State {
         if let Some(workbook) = &self.workbook {
             workbook.validate()?;
         }
+        self.draft.validate()?;
         if self.task_lists.is_empty() || self.task_lists.len() > MAX_TASK_LISTS {
             return Err("Jig needs between one and five task lists".into());
         }

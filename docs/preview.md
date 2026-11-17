@@ -1,10 +1,9 @@
 # Browser development preview
 
 The egui/eframe browser application opens Tasks by default and remembers the
-selected workspace. Data, Sheet, Tasks, Notes, Settings, the calculator, About and
-Help sit on the left; the date sits on the right. Undo/Redo and personal/local labels no
-longer occupy the header; explicit demos retain a quiet sample marker when space
-permits. The title and tagline no longer
+selected workspace. Data, Sheet, Tasks, Notes, Settings, About, Help and the
+calculator sit on the left; the date sits on the right. Undo/Redo and personal/local labels no
+longer occupy the header. The title and tagline no longer
 occupy header space. Sheet retains its named tabs, formulas,
 formatting and charts. An older saved Workbench preference opens Tasks.
 Tasks and task Gantt charts read the same records;
@@ -86,19 +85,15 @@ clock updates, imports and exports run on the device. There is no service worker
 or guaranteed offline asset cache. A local static server or the native binary is
 appropriate when dependable offline startup is needed.
 
-## Sample and personal data
+## Local data
 
-Fresh profiles start with an empty personal document; saved work opens on return.
-Choose **Sample mode** or append `?sample=1` for a clearly labelled demo. The synthetic
-sample constructor uses a supplied clock and labels every task, deadline and
-calendar note as a sample. Calculator examples also come from code. Demo edits
-are temporary and never write the saved personal dataset.
+Fresh profiles start with an empty document; saved work opens on return.
+Sample mode has been removed. Older `?sample=1` links open the same saved or
+empty document as the ordinary URL, without changing existing work.
 
 Open **Data** (or Ctrl-Alt-D) for the dataset controls. **Start empty** asks before
-creating or replacing personal data. **Open local
-data** returns to the saved personal dataset; **Sample mode** returns to a new
-temporary demo. Status messages identify temporary sample mode, with a quiet
-sample marker when header space permits. Personal/local labels are removed.
+creating or replacing personal data. **Open local data** returns to the saved
+document. Personal/local labels are removed.
 Successful personal edits save to localStorage key `jig.personal.v1` in this
 browser profile and origin. Another computer, browser or profile has independent
 storage.
@@ -108,9 +103,9 @@ Unfinished task/note text and date edits are backed up per tab in session storag
 after refresh; changed underlying records are recovered as new drafts rather than
 overwritten. Save/Ctrl-Enter commits a note, and Enter adds a task. Workspace
 preferences are stored separately in this browser.
-Commit a sheet editor with Enter before leaving. Existing sample-mode edits can
-be kept by exporting JSON and importing that file as personal data; Start empty
-deliberately starts an empty dataset.
+Commit a sheet editor with Enter before leaving. Start empty deliberately starts
+an empty dataset. Legacy temporary-demo drafts are ignored rather than restored
+over your document; existing saved records are preserved regardless of their names.
 
 **Import JSON** reads a local file, validates a complete Jig state, displays its
 item counts and asks for confirmation before replacing the personal dataset.
@@ -127,7 +122,7 @@ is rejected instead of overwriting that copy. Export current work, then reload
 the page to open the newer saved version; there is no automatic merge.
 
 **Clear saved data** requires inline confirmation, removes this preview's saved
-personal dataset, and returns to temporary samples. Browser site-data clearing
+document, and returns to an empty document. Browser site-data clearing
 can also remove it. JSON downloads are user-owned backups; localStorage is not a
 backup service.
 
@@ -135,7 +130,7 @@ backup service.
 
 Open **Settings** beside **Notes**, or press **Ctrl+,** by default. Settings uses
 the main view, with **Done** returning to the existing workspace. The header
-keeps Data, Sheet, Tasks, Notes, Settings, the calculator, About and Help together
+keeps Data, Sheet, Tasks, Notes, Settings, About, Help and the calculator together
 on the left, with the date on the right. About and Help use the main panel;
 Done or Esc returns to the existing workspace without changing its data.
 Application Undo/Redo remain available through
@@ -188,7 +183,7 @@ use **Reconnect folder** when needed, or **Disconnect folder** to stop using it.
 unique JSON filename and does not overwrite earlier backups. Automatic folder
 backups are opt-in and queue no sooner than five minutes after enabling, opening
 valid saved personal data, or eligible saved changes. Refresh restarts that wait.
-They run while Jig is open, ignore samples, and pause when the
+They run while Jig is open and pause when the
 current document is unsaved or browser data is corrupt/stale. Dataset resets
 cancel pending writes so an earlier document cannot be backed up afterward.
 Backup failures remain visible; there is no automatic retention or deletion.
@@ -376,7 +371,7 @@ Only `dist/` is uploaded as the Pages artifact. Trunk copies the intended static
 bootstrap assets and compiled application, not state files, home directories,
 local uploads or private files. The workflow grants `pages: write` and
 `id-token: write` only to the deployment job using the `github-pages` environment.
-The public sample dataset is assembled in code and contains no personal state.
+Automated tests use synthetic fixtures; personal state is never bundled.
 Weather is disabled by default; no personal location is embedded in the bundle.
 
 ## Follow-up work

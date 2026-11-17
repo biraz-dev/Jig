@@ -16,7 +16,7 @@
   let firstSync = true, applying = false, composing = false, invalidLocal = false;
   let historyPending = false, historyFocus = false, savedRange = null, pendingSize = null;
   let lastTyping = 0, lastTypingKind = "", plainPaste = false;
-  let recovered = [], storageProblem = "", recoveryBlocked = false, lastLayout = "";
+  let recovered = [], storageProblem = "", recoveryBlocked = false, lastLayout = "", lastPalette = "";
 
   function bytes(value) { return encoder.encode(value).length; }
   function safeLink(value) {
@@ -502,8 +502,10 @@
     editor.addEventListener("click", event => { const anchor = event.target.closest?.("a"); if (anchor) { event.preventDefault(); if (event.ctrlKey || event.metaKey) window.open(anchor.href, "_blank", "noopener,noreferrer"); } });
     panel.addEventListener("keydown", event => {
       event.stopPropagation();
+      if (event.defaultPrevented || event.isComposing || composing) return;
+      if (event.key === "Escape") { event.preventDefault(); captureRange(); publish(); resetGroup(); document.getElementById("jig_canvas")?.focus({ preventScroll: true }); return; }
       const editing = event.target === editor || editor.contains(event.target);
-      if (!editing || event.isComposing || composing) return;
+      if (!editing) return;
       const control = (event.ctrlKey || event.metaKey) && !event.altKey, key = event.key.toLowerCase();
       if (control && key === "z") { event.preventDefault(); requestHistory(event.shiftKey ? "redo" : "undo"); return; }
       if (control && key === "y") { event.preventDefault(); requestHistory("redo"); return; }
@@ -511,7 +513,6 @@
       if (control && key === "k") { event.preventDefault(); openLink(); return; }
       if (control && key === "s") { event.preventDefault(); publish(); return; }
       if (control && event.shiftKey && key === "v") plainPaste = true;
-      if (event.key === "Escape") { event.preventDefault(); captureRange(); publish(); resetGroup(); document.getElementById("jig_canvas")?.focus({ preventScroll: true }); return; }
       if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Tab"].includes(event.key) || control && key === "a") { resetGroup(); pendingSize = null; }
     });
     panel.addEventListener("keyup", event => event.stopPropagation());
@@ -547,7 +548,7 @@
       historyFocus = false; updateToolbar();
     } catch (error) { status(error.message ?? String(error), true); }
   };
-  window.jigDraftLayout = (x, y, width, height, dark, show) => {
+  window.jigDraftLayout = (x, y, width, height, dark, show, colors = "") => {
     setup();
     const next = !!show && width > 0 && height > 0;
     if (visible && !next) { captureRange(); resetGroup(); if (editor.contains(document.activeElement) || document.activeElement === editor) editor.blur(); }
@@ -555,6 +556,16 @@
     if (!next) return;
     const layout = [x, y, width, height, !!dark].join(",");
     if (layout !== lastLayout) { panel.style.left = `${x}px`; panel.style.top = `${y}px`; panel.style.width = `${width}px`; panel.style.height = `${height}px`; panel.dataset.theme = dark ? "dark" : "light"; lastLayout = layout; }
+    if (colors && colors !== lastPalette) {
+      const palette = JSON.parse(colors);
+      const names = ["bg", "surface", "text", "muted", "rule", "accent", "selected"];
+      if (Array.isArray(palette) && palette.length === names.length
+        && palette.every(color => Array.isArray(color) && color.length === 3
+          && color.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255))) {
+        palette.forEach((color, index) => panel.style.setProperty(`--draft-${names[index]}`, `rgb(${color.join(",")})`));
+        lastPalette = colors;
+      }
+    }
     if (focusRequested) { focusRequested = false; restoreRange(); }
   };
   window.jigDraftFocus = () => { setup(); if (visible) restoreRange(); else focusRequested = true; };

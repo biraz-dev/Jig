@@ -2,6 +2,9 @@
 #[path = "../browser_storage.rs"]
 mod browser_storage;
 #[cfg(target_arch = "wasm32")]
+#[path = "../draft_storage.rs"]
+mod draft_storage;
+#[cfg(target_arch = "wasm32")]
 #[path = "../settings_storage.rs"]
 mod settings_storage;
 #[cfg(target_arch = "wasm32")]

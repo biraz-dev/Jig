@@ -712,13 +712,12 @@ fn pie(scene: &mut ChartScene, items: &[Datum], theme: Theme, decimals: usize) {
     } else {
         66.0
     };
-    if compact {
-        scene.height = scene
-            .height
-            .max(legend_y + items.len() as f64 * 22.0 + 26.0);
-        if let Some(Primitive::Rect { height, .. }) = scene.primitives.first_mut() {
-            *height = scene.height;
-        }
+    scene.height = scene
+        .height
+        .max(center[1] + radius + 24.0)
+        .max(legend_y + items.len() as f64 * 22.0 + 26.0);
+    if let Some(Primitive::Rect { height, .. }) = scene.primitives.first_mut() {
+        *height = scene.height;
     }
     let mut angle = -std::f64::consts::FRAC_PI_2;
     for (index, item) in items.iter().enumerate() {

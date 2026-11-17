@@ -256,10 +256,9 @@ for (const rejectEarlier of [false, true]) {
 }
 {
   const context = bridge({ stored: new Map([["jig.personal.v1", personal]]) });
-  assert.throws(() => context.window.jigBackupWrite(personal, false, false), /Sample data/);
-  assert.throws(() => context.window.jigBackupWrite(personal, true, true), /unavailable/);
+  assert.throws(() => context.window.jigBackupWrite(personal, true), /unavailable/);
   assert.equal(context.downloads.length, 0);
-  context.window.jigBackupWrite(personal, false, true);
+  context.window.jigBackupWrite(personal, false);
   assert.match(context.downloads[0].name, /^jig-backup-.*\.json$/);
   assert.equal(await context.downloads[0].blob.text(), personal + "\n");
   assert.ok(context.status().last_backup);
@@ -267,7 +266,7 @@ for (const rejectEarlier of [false, true]) {
 }
 {
   const context = bridge({ supported: true }); await settle();
-  assert.throws(() => context.window.jigBackupWrite(personal, false, true), /Choose a backup folder/);
+  assert.throws(() => context.window.jigBackupWrite(personal, false), /Choose a backup folder/);
   assert.equal(context.downloads.length, 0);
   assert.equal(context.status().busy, false);
   checks++;
@@ -275,10 +274,10 @@ for (const rejectEarlier of [false, true]) {
 {
   const context = await connected();
   context.stored.set("jig.personal.v1", personal);
-  context.window.jigBackupWrite(personal, true, true); await settle();
+  context.window.jigBackupWrite(personal, true); await settle();
   const first = [...context.handle.files];
   assert.equal(first.length, 1); assert.equal(first[0][1], personal + "\n");
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.handle.files.size, 2);
   assert.equal(context.handle.files.get(first[0][0]), first[0][1]);
   assert.equal(context.handle.calls.request, 0);
@@ -289,7 +288,7 @@ for (const rejectEarlier of [false, true]) {
 }
 {
   const context = await connected(folder({ collisions: true }));
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.handle.calls.create, 0);
   assert.equal(context.handle.calls.close, 0);
   assert.match(context.status().message, /unique backup filename/);
@@ -301,12 +300,12 @@ for (const rejectEarlier of [false, true]) {
   const context = bridge({ supported: true, restored: handle }); await settle();
   assert.equal(context.status().permission, "prompt");
   assert.equal(handle.calls.request, 0, "Restoring a folder must never prompt for access");
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(handle.files.size, 0); assert.equal(handle.calls.request, 0);
   context.window.jigBackupAuthorizeFolder(); await settle();
   assert.equal(context.status().permission, "granted");
   assert.equal(handle.calls.request, 1);
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(handle.files.size, 1);
   checks++;
 }
@@ -324,13 +323,13 @@ for (const rejectEarlier of [false, true]) {
   context.window.jigBackupDisconnectFolder(); await settle();
   const restored = bridge({ supported: true, stored: context.stored, handles: context.handles }); await settle();
   assert.equal(restored.status().folder, null);
-  assert.throws(() => restored.window.jigBackupWrite(personal, false, true), /Choose/);
+  assert.throws(() => restored.window.jigBackupWrite(personal, false), /Choose/);
   checks++;
 }
 {
   const gate = deferred(), handle = folder({ writeGate: gate });
   const context = await connected(handle);
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.status().busy, true);
   context.window.jigBackupCancel(); gate.resolve(); await settle();
   assert.equal(handle.calls.close, 0); assert.ok(handle.calls.abort > 0);
@@ -342,7 +341,7 @@ for (const rejectEarlier of [false, true]) {
   const gate = deferred(), handle = folder({ writeGate: gate });
   const context = await connected(handle);
   context.stored.set("jig.personal.v1", personal);
-  context.window.jigBackupWrite(personal, true, true); await settle();
+  context.window.jigBackupWrite(personal, true); await settle();
   context.stored.set("jig.personal.v1", "newer document"); gate.resolve(); await settle();
   assert.equal(handle.calls.close, 0); assert.equal(handle.files.size, 0);
   assert.match(context.status().message, /Personal data changed/);
@@ -351,31 +350,31 @@ for (const rejectEarlier of [false, true]) {
 }
 {
   const context = await connected(folder({ writeError: new Error("Synthetic full disk") }));
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.handle.files.size, 0); assert.equal(context.handle.calls.close, 0);
   assert.match(context.status().message, /Synthetic full disk/);
   assert.equal(context.status().last_backup, null); assert.equal(context.status().busy, false);
-  assert.throws(() => context.window.jigBackupWrite("λ".repeat(1024 * 1024 + 1), false, true), /exceeds 2048 KiB/);
+  assert.throws(() => context.window.jigBackupWrite("λ".repeat(1024 * 1024 + 1), false), /exceeds 2048 KiB/);
   checks++;
 }
 {
   const context = await connected(folder(), { idbError: new Error("Synthetic handle storage failure") });
   assert.match(context.status().message, /connected for this session/);
   assert.equal(context.status().permission, "granted");
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.handle.files.size, 1, "The explicitly chosen folder remains usable for this session");
   checks++;
 }
 {
   const stored = new Map([["jig.backup.disconnected.v1", "1"]]);
   const context = await connected(folder(), { stored, idbError: new Error("Synthetic handle storage failure") });
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.handle.files.size, 1, "A newly selected session-only folder must clear an earlier disconnect marker");
   checks++;
 }
 {
   const context = await connected(folder({ writeError: namedError("NotAllowedError", "Permission revoked during write") }));
-  context.window.jigBackupWrite(personal, false, true); await settle();
+  context.window.jigBackupWrite(personal, false); await settle();
   assert.equal(context.status().permission, "prompt", "A revoked write permission must make Reconnect available");
   assert.equal(context.handle.files.size, 0);
   checks++;

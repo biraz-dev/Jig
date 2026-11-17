@@ -81,7 +81,7 @@ fn about(ui: &mut Ui) {
     section(
         ui,
         "Optional connections",
-        "Weather uses Open-Meteo when enabled. It requests a forecast for your chosen location. Sample mode is clearly marked and temporary; it does not replace your personal document.",
+        "Weather uses Open-Meteo when enabled. It requests a forecast for your chosen location.",
     );
     ui.add_space(12.0);
     ui.horizontal_wrapped(|ui| {
@@ -131,7 +131,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
     section(
         ui,
         "Saving and backups",
-        "Personal documents save automatically in this browser. Data → Export JSON creates a portable copy; Import JSON shows a review before replacing a document. Settings can choose a backup folder in supported browsers or download a backup. CSV, ODS and PDF exports use your browser's download location. Sample edits are temporary.",
+        "Your document saves automatically in this browser. Data → Export JSON creates a portable copy; Import JSON shows a review before replacing a document. Settings can choose a backup folder in supported browsers or download a backup. CSV, ODS and PDF exports use your browser's download location.",
     );
     section(
         ui,

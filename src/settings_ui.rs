@@ -61,7 +61,6 @@ impl SettingsPanel {
         ui: &mut Ui,
         settings: &mut AppSettings,
         backup: &BackupStatus,
-        personal: bool,
         saved: bool,
     ) -> SettingsResponse {
         let mut response = SettingsResponse::default();
@@ -91,14 +90,7 @@ impl SettingsPanel {
                 ui.separator();
                 self.history(ui, &mut next);
                 ui.separator();
-                self.backups(
-                    ui,
-                    &mut next,
-                    backup,
-                    personal,
-                    saved,
-                    &mut response.actions,
-                );
+                self.backups(ui, &mut next, backup, saved, &mut response.actions);
                 ui.separator();
                 self.shortcuts(ui, &mut next);
             });
@@ -185,7 +177,6 @@ impl SettingsPanel {
         ui: &mut Ui,
         settings: &mut AppSettings,
         backup: &BackupStatus,
-        personal: bool,
         saved: bool,
         actions: &mut Vec<SettingsAction>,
     ) {
@@ -229,16 +220,11 @@ impl SettingsPanel {
         }
         let ready = backup.supported && backup.folder.is_some() && backup.permission == "granted";
         ui.add_enabled(
-            ready && personal && saved || settings.auto_backup,
+            ready && saved || settings.auto_backup,
             egui::Checkbox::new(&mut settings.auto_backup, "Automatic folder backups"),
         );
         quiet(ui, "After saved changes, at most once every five minutes. Folder access is requested only when you choose or reconnect it.");
-        if !personal {
-            quiet(
-                ui,
-                "Sample data is temporary. Open local data to create a backup.",
-            );
-        } else if !saved {
+        if !saved {
             quiet(ui, "Folder backups resume after your changes save. Download a backup to keep the current work.");
         } else if settings.auto_backup && !ready {
             quiet(ui, "Automatic backups are waiting for folder access.");
@@ -247,7 +233,7 @@ impl SettingsPanel {
             if backup.supported
                 && ui
                     .add_enabled(
-                        ready && personal && saved && !backup.busy,
+                        ready && saved && !backup.busy,
                         egui::Button::new("Back up now"),
                     )
                     .clicked()
@@ -255,10 +241,7 @@ impl SettingsPanel {
                 actions.push(SettingsAction::BackupNow);
             }
             if ui
-                .add_enabled(
-                    personal && !backup.busy,
-                    egui::Button::new("Download backup"),
-                )
+                .add_enabled(!backup.busy, egui::Button::new("Download backup"))
                 .clicked()
             {
                 actions.push(SettingsAction::DownloadBackup);

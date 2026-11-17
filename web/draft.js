@@ -570,7 +570,7 @@
   };
   window.jigDraftFocus = () => { setup(); if (visible) restoreRange(); else focusRequested = true; };
   window.jigDraftTake = () => { const next = events; events = []; return JSON.stringify(next); };
-  window.jigDraftPending = () => events.length > 0 || currentJSON !== durableJSON || invalidLocal || !!storageProblem;
+  window.jigDraftPending = () => events.length > 0 || currentJSON !== durableJSON || recovered.length > 0 || invalidLocal || !!storageProblem;
   window.jigDraftError = error => { setup(); status(String(error), true); };
   window.jigDraftResetRecovery = () => {
     try { sessionStorage.removeItem(recoveryKey); }

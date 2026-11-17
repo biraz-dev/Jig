@@ -33,7 +33,7 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = jigBackupDisconnectFolder)]
     fn disconnect_folder_js() -> Result<(), JsValue>;
     #[wasm_bindgen(catch, js_name = jigBackupWrite)]
-    fn write_backup(text: &str, automatic: bool, personal: bool) -> Result<(), JsValue>;
+    fn write_backup(text: &str, automatic: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = jigBackupCancel)]
     fn cancel_backup();
 }
@@ -122,13 +122,10 @@ pub fn disconnect_folder() -> Result<(), String> {
     disconnect_folder_js().map_err(error)
 }
 
-pub fn backup(state: &State, automatic: bool, personal: bool) -> Result<(), String> {
-    if !personal {
-        return Err("Sample data is not backed up. Open your local data first.".into());
-    }
+pub fn backup(state: &State, automatic: bool) -> Result<(), String> {
     state.validate()?;
     let text = serde_json::to_string_pretty(state).map_err(|error| error.to_string())?;
-    write_backup(&text, automatic, personal).map_err(error)
+    write_backup(&text, automatic).map_err(error)
 }
 
 pub fn cancel_pending() {

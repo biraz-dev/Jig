@@ -202,12 +202,12 @@ async function waitButtonFocus(page, clip, name) {
 async function closeSettings(scene) { if (scene.settingsOpen) { await key(scene.page, "Control+Comma"); scene.settingsOpen = false; } }
 async function openSettings(scene, header = false) {
   await closeSettings(scene); await resetFocus(scene.page);
-  if (header) { await tab(scene.page, 2); await key(scene.page, "Space"); }
+  if (header) { await tab(scene.page, 3); await key(scene.page, "Space"); }
   else await key(scene.page, "Control+Comma");
   scene.settingsOpen = true; await waitDoneFocus(scene.page);
 }
 async function tapSettings(scene) {
-  await closeSettings(scene); await resetFocus(scene.page); await tab(scene.page, 2);
+  await closeSettings(scene); await resetFocus(scene.page); await tab(scene.page, 3);
   const png = await scene.page.screenshot({ clip: { x: 0, y: 0, width: scene.page.viewportSize().width, height: 31 }, timeout: 10000, animations: "disabled", caret: "hide" });
   const point = await scene.page.evaluate(async encoded => {
     const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
@@ -236,7 +236,7 @@ async function tapSettings(scene) {
     }
     bitmap.close(); return null;
   }, png.toString("base64"));
-  assert.ok(point, "The focused Settings button must be visible beside Notes in the phone header");
+  assert.ok(point, "The focused Settings button must be visible after Sheets in the phone header");
   await scene.page.touchscreen.tap(point.x, point.y); await paint(scene.page); scene.settingsOpen = true;
   await waitDoneFocus(scene.page);
 }
@@ -455,7 +455,7 @@ try {
   progress("settings header and persistent Graphite, Light and System themes");
   current = await open("settings-theme"); const dark = await waitBrightness(current.page, false);
   await capture(current.page, "settings-header-desktop");
-  await checkInfoPage(current, 3, "About"); await checkInfoPage(current, 4, "Help");
+  await checkInfoPage(current, 1, "About"); await checkInfoPage(current, 4, "Help");
   await chooseTheme(current, "light"); await closeSettings(current); const light = await waitBrightness(current.page, true);
   assert.ok(light > dark + 100); assert.equal(await raw(current.page), taskRaw);
   await capture(current.page, "settings-light"); await boot(current, true); await waitBrightness(current.page, true);
@@ -468,7 +468,7 @@ try {
 
   progress("phone Settings touch target and persistent theme selection");
   current = await open("settings-mobile", { phone: true });
-  await checkInfoPage(current, 3, "About"); await checkInfoPage(current, 4, "Help");
+  await checkInfoPage(current, 1, "About"); await checkInfoPage(current, 4, "Help");
   await tapSettings(current);
   // A real tap must open Settings and focus Done. The overflowing phone
   // ScrollArea contributes one Tab stop before its Theme control.

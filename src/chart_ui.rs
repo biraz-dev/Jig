@@ -8,6 +8,7 @@ use eframe::egui::{self, Color32, FontId, RichText, Stroke, TextEdit, Ui};
 use jig::{
     charts::{self, ChartKind, ChartScene, ChartSource, ChartSpec, Primitive, TextAnchor},
     model::State,
+    palette::ThemePalette,
     sheet_controls::{ControlKind, ControlTarget},
     spreadsheet::{CellAddr, CellRange, Evaluation, Workbook},
 };
@@ -109,7 +110,7 @@ pub struct ChartPanel {
     values: Option<Evaluation>,
     scenes: BTreeMap<u64, (f64, Result<ChartScene, String>)>,
     scenes_day: Option<NaiveDate>,
-    scenes_dark: Option<bool>,
+    scenes_palette: Option<ThemePalette>,
 }
 
 impl ChartPanel {
@@ -209,11 +210,14 @@ impl ChartPanel {
     pub fn ui(&mut self, ui: &mut Ui, state: &State) -> Vec<ChartAction> {
         let colors = web_theme::colors(ui.ctx());
         let today = Local::now().date_naive();
-        let dark = ui.visuals().dark_mode;
-        if self.scenes_day != Some(today) || self.scenes_dark != Some(dark) {
+        let chart_palette = web_theme::resolved(ui.ctx());
+        if self.scenes_day != Some(today) {
             self.invalidate();
             self.scenes_day = Some(today);
-            self.scenes_dark = Some(dark);
+        }
+        if self.scenes_palette != Some(chart_palette) {
+            self.scenes.clear();
+            self.scenes_palette = Some(chart_palette);
         }
         if self.has_draft()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -330,7 +334,7 @@ impl ChartPanel {
                 }
                 for chart in &book.charts {
                     ui.push_id(("chart-card", chart.id), |ui| {
-                        self.chart_card(ui, state, book, chart, dark, &mut actions)
+                        self.chart_card(ui, state, book, chart, chart_palette, &mut actions)
                     });
                     ui.add_space(10.0);
                 }
@@ -443,7 +447,7 @@ impl ChartPanel {
         state: &State,
         book: &Workbook,
         chart: &ChartSpec,
-        dark: bool,
+        chart_palette: ThemePalette,
         actions: &mut Vec<ChartAction>,
     ) {
         let colors = web_theme::colors(ui.ctx());
@@ -492,11 +496,14 @@ impl ChartPanel {
                 self.rename_ui(ui, chart.id, actions);
                 let width = f64::from(ui.available_width().clamp(280.0, 2000.0));
                 let scene = || {
-                    if dark {
-                        charts::scene(state, chart, width, 280.0)
-                    } else {
-                        charts::scene_light(state, chart, width, 280.0)
-                    }
+                    charts::scene_themed_with_values(
+                        state,
+                        chart,
+                        width,
+                        280.0,
+                        chart_palette,
+                        self.values.as_ref().unwrap(),
+                    )
                 };
                 let cached = self
                     .scenes

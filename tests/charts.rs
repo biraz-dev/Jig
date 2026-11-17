@@ -1,6 +1,6 @@
 use chrono::{FixedOffset, NaiveDate, Utc};
 use jig::{
-    charts::{self, ChartData, ChartKind, ChartSource, ChartSpec, Primitive},
+    charts::{self, ChartData, ChartKind, ChartScene, ChartSource, ChartSpec, Primitive},
     model::{State, TaskColor},
     spreadsheet::{CellAddr, CellRange, Workbook},
 };
@@ -32,6 +32,233 @@ fn table(rows: &[&[&str]]) -> State {
         workbook: Some(book),
         ..State::default()
     }
+}
+
+fn line_points(scene: &ChartScene) -> Vec<[f64; 2]> {
+    scene
+        .primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Rect {
+                x,
+                y,
+                width: 6.0,
+                height: 6.0,
+                fill: Some([109, 185, 238]),
+                ..
+            } => Some([x + 3.0, y + 3.0]),
+            _ => None,
+        })
+        .collect()
+}
+
+fn data_segments(scene: &ChartScene) -> usize {
+    scene.primitives.iter().filter(|primitive| matches!(primitive,
+        Primitive::Line { stroke, .. } if stroke.color == [109, 185, 238] && stroke.width == 2.0
+    )).count()
+}
+
+#[test]
+fn line_charts_keep_sheet_order_and_recalculate_formula_values() {
+    let mut state = table(&[
+        &["Label", "Value"],
+        &["Third", "3"],
+        &["First", "=B2*2"],
+        &["", ""],
+        &["Second", "-1"],
+    ]);
+    let spec = chart(
+        ChartKind::Line,
+        ChartSource::Range {
+            sheet: 1,
+            range: range("A1", "B5"),
+        },
+    );
+    let ChartData::Series(items) = charts::chart_data(&state, &spec, &Utc).unwrap() else {
+        panic!("Expected a line series");
+    };
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Third", "First", "Second"]
+    );
+    assert_eq!(
+        items.iter().map(|item| item.value).collect::<Vec<_>>(),
+        [3.0, 6.0, -1.0]
+    );
+    state
+        .workbook
+        .as_mut()
+        .unwrap()
+        .set_cell(1, CellAddr::parse("B2").unwrap(), "4")
+        .unwrap();
+    let ChartData::Series(updated) = charts::chart_data(&state, &spec, &Utc).unwrap() else {
+        panic!("Expected updated values");
+    };
+    assert_eq!(updated[1].value, 8.0);
+    let scene = charts::scene_light(&state, &spec, 720.0, 300.0).unwrap();
+    let points = line_points(&scene);
+    assert_eq!(points.len(), 3);
+    assert_eq!(data_segments(&scene), 2);
+    assert!(points.windows(2).all(|pair| pair[0][0] < pair[1][0]));
+    assert!(points[1][1] < points[0][1] && points[0][1] < points[2][1]);
+    let svg = charts::to_svg(&scene);
+    assert!(svg.contains("stroke=\"#6db9ee\" stroke-width=\"2\""));
+    assert!(
+        !svg.contains("<polygon"),
+        "A line series must remain an open path"
+    );
+    state
+        .workbook
+        .as_mut()
+        .unwrap()
+        .set_cell(1, CellAddr::parse("B3").unwrap(), "=1/0")
+        .unwrap();
+    assert!(charts::chart_data(&state, &spec, &Utc)
+        .unwrap_err()
+        .contains("needs a number"));
+}
+
+#[test]
+fn line_scenes_handle_single_constant_zero_tiny_and_extreme_values() {
+    for values in [
+        &["42"][..],
+        &["0", "0", "0"],
+        &["7", "7", "7"],
+        &["-7", "-7", "-7"],
+        &["-1e-300", "0", "2e-300"],
+        &["-1e308", "0", "1e308"],
+    ] {
+        let rows = values
+            .iter()
+            .map(|value| ["Point", *value])
+            .collect::<Vec<_>>();
+        let refs = rows.iter().map(|row| row.as_slice()).collect::<Vec<_>>();
+        let state = table(&refs);
+        let spec = chart(
+            ChartKind::Line,
+            ChartSource::Range {
+                sheet: 1,
+                range: CellRange::new(CellAddr::new(0, 0), CellAddr::new(values.len() - 1, 1)),
+            },
+        );
+        let scene = charts::scene(&state, &spec, 280.0, 180.0).unwrap();
+        let points = line_points(&scene);
+        assert_eq!(points.len(), values.len(), "{values:?}");
+        assert_eq!(data_segments(&scene), values.len() - 1, "{values:?}");
+        assert!(
+            points.iter().all(|[x, y]| x.is_finite()
+                && y.is_finite()
+                && *x > 0.0
+                && *x < scene.width
+                && *y > 0.0
+                && *y < scene.height),
+            "{values:?}"
+        );
+        if values.len() == 1 {
+            assert!((scene.width * 0.25..scene.width * 0.75).contains(&points[0][0]));
+        } else if values.iter().all(|value| *value == values[0]) {
+            assert!(points.iter().all(|point| point[1] == points[0][1]));
+        } else {
+            assert!(points[0][1] > points[1][1] && points[1][1] > points[2][1]);
+        }
+        let svg = charts::to_svg(&scene);
+        assert!(!svg.contains("NaN") && !svg.contains("inf"), "{values:?}");
+        if values[0] == "-1e308" {
+            assert!((points[1][1] - (points[0][1] + points[2][1]) * 0.5).abs() < 1e-10);
+            assert!(svg.contains("e308"));
+        }
+        if values[0] == "-1e-300" {
+            assert!(svg.contains("e-300"));
+        }
+    }
+}
+
+#[test]
+fn line_scenes_stay_compact_and_show_sparse_endpoint_labels() {
+    let mut book = Workbook::default();
+    for index in 0..200 {
+        book.sheets[0]
+            .cells
+            .insert(format!("A{}", index + 1), format!("Point {index:03}"));
+        book.sheets[0]
+            .cells
+            .insert(format!("B{}", index + 1), index.to_string());
+    }
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let spec = chart(
+        ChartKind::Line,
+        ChartSource::Range {
+            sheet: 1,
+            range: range("A1", "B200"),
+        },
+    );
+    let scene = charts::scene(&state, &spec, 720.0, 300.0).unwrap();
+    assert_eq!(scene.height, 300.0);
+    assert_eq!(line_points(&scene).len(), 200);
+    assert_eq!(data_segments(&scene), 199);
+    let labels = scene
+        .primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Text { text, .. } if text.starts_with("Point ") => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(labels.len() <= 8);
+    assert_eq!(labels.first(), Some(&"Point 000"));
+    assert_eq!(labels.last(), Some(&"Point 199"));
+}
+
+#[test]
+fn line_chart_metadata_serializes_and_tracks_axis_edits() {
+    let mut state = table(&[&["Label", "Value"], &["A", "2"], &["B", "4"]]);
+    let book = state.workbook.as_mut().unwrap();
+    let id = book
+        .add_chart(
+            ChartKind::Line,
+            ChartSource::Range {
+                sheet: 1,
+                range: range("A1", "B3"),
+            },
+            "Line report",
+        )
+        .unwrap();
+    let encoded = serde_json::to_string(&state).unwrap();
+    assert!(encoded.contains("\"kind\":\"line\""));
+    let mut restored = State::from_json(&encoded).unwrap();
+    let book = restored.workbook.as_mut().unwrap();
+    assert_eq!(book.charts[0].kind.label(), "Line");
+    assert_eq!(book.charts[0].id, id);
+    book.insert_rows(1, 1, 1).unwrap();
+    book.insert_columns(1, 0, 1).unwrap();
+    assert_eq!(
+        book.charts[0].source,
+        ChartSource::Range {
+            sheet: 1,
+            range: range("B1", "C4")
+        }
+    );
+    book.delete_rows(1, 1, 1).unwrap();
+    assert_eq!(
+        book.charts[0].source,
+        ChartSource::Range {
+            sheet: 1,
+            range: range("B1", "C3")
+        }
+    );
+    let invalid = chart(ChartKind::Line, ChartSource::Tasks);
+    assert!(invalid.validate(book).is_err());
+    book.delete_columns(1, 2, 1).unwrap();
+    assert!(
+        book.charts.is_empty(),
+        "Deleting the value column removes an unusable chart source"
+    );
 }
 
 #[test]

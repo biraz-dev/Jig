@@ -25,6 +25,7 @@ const PALETTE: [Color; 6] = [
 pub enum ChartKind {
     Pie,
     Bar,
+    Line,
     Gantt,
 }
 
@@ -33,6 +34,7 @@ impl ChartKind {
         match self {
             Self::Pie => "Pie",
             Self::Bar => "Bar",
+            Self::Line => "Line",
             Self::Gantt => "Gantt",
         }
     }
@@ -399,6 +401,7 @@ pub fn scene_at<Tz: TimeZone>(
     };
     let needed = match spec.kind {
         ChartKind::Pie => rows as f64 * 22.0 + 92.0,
+        ChartKind::Line => 264.0,
         _ => rows as f64 * 30.0 + 110.0,
     };
     let mut scene = ChartScene {
@@ -427,6 +430,9 @@ pub fn scene_at<Tz: TimeZone>(
     match data {
         ChartData::Series(items) if spec.kind == ChartKind::Pie => {
             pie(&mut scene, &items, theme, state.preferences.decimals)
+        }
+        ChartData::Series(items) if spec.kind == ChartKind::Line => {
+            lines(&mut scene, &items, theme, state.preferences.decimals)
         }
         ChartData::Series(items) => bars(&mut scene, &items, theme, state.preferences.decimals),
         ChartData::Schedule(items) => gantt(&mut scene, &items, theme)?,
@@ -530,6 +536,155 @@ fn bars(scene: &mut ChartScene, items: &[Datum], theme: Theme, decimals: usize) 
             12.0,
             theme.text,
             TextAnchor::End,
+        );
+    }
+}
+
+fn lines(scene: &mut ChartScene, items: &[Datum], theme: Theme, decimals: usize) {
+    let left = 82.0;
+    let right = scene.width - 26.0;
+    let top = 58.0;
+    let bottom = scene.height - 70.0;
+    let extent = items
+        .iter()
+        .map(|item| item.value.abs())
+        .fold(0.0_f64, f64::max);
+    let extent = if extent == 0.0 { 1.0 } else { extent };
+    // Normalize before subtracting bounds: finite values such as ±1e308 have
+    // an infinite raw difference, while their normalized span is at most two.
+    let mut low = items
+        .iter()
+        .map(|item| item.value / extent)
+        .fold(0.0_f64, f64::min);
+    let mut high = items
+        .iter()
+        .map(|item| item.value / extent)
+        .fold(0.0_f64, f64::max);
+    if low == high {
+        low = -1.0;
+        high = 1.0;
+    }
+    let y_for = |value: f64| bottom - (value - low) / (high - low) * (bottom - top);
+    let x_for = |index: usize| {
+        if items.len() == 1 {
+            (left + right) * 0.5
+        } else {
+            left + index as f64 / (items.len() - 1) as f64 * (right - left)
+        }
+    };
+    for index in 0..=4 {
+        let normalized = (low + (high - low) * index as f64 / 4.0).clamp(low, high);
+        let y = y_for(normalized);
+        scene.primitives.push(Primitive::Line {
+            x1: left,
+            y1: y,
+            x2: right,
+            y2: y,
+            stroke: Stroke {
+                color: theme.rule,
+                width: 0.6,
+            },
+        });
+        let value = normalized * extent;
+        let precision = decimals.clamp(2, 4);
+        let label = if value != 0.0 && (value.abs() >= 1e6 || value.abs() < 0.01) {
+            format!("{value:.precision$e}")
+        } else {
+            format!("{value:.precision$}")
+        };
+        text(
+            scene,
+            left - 10.0,
+            y + 3.5,
+            &label,
+            10.0,
+            theme.muted,
+            TextAnchor::End,
+        );
+    }
+    for (x1, y1, x2, y2) in [(left, top, left, bottom), (left, bottom, right, bottom)] {
+        scene.primitives.push(Primitive::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            stroke: Stroke {
+                color: theme.muted,
+                width: 1.0,
+            },
+        });
+    }
+    if low < 0.0 && high > 0.0 {
+        let y = y_for(0.0);
+        scene.primitives.push(Primitive::Line {
+            x1: left,
+            y1: y,
+            x2: right,
+            y2: y,
+            stroke: Stroke {
+                color: theme.muted,
+                width: 1.0,
+            },
+        });
+    }
+    let points: Vec<_> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| [x_for(index), y_for(item.value / extent)])
+        .collect();
+    for pair in points.windows(2) {
+        scene.primitives.push(Primitive::Line {
+            x1: pair[0][0],
+            y1: pair[0][1],
+            x2: pair[1][0],
+            y2: pair[1][1],
+            stroke: Stroke {
+                color: PALETTE[3],
+                width: 2.0,
+            },
+        });
+    }
+    for [x, y] in points {
+        scene.primitives.push(Primitive::Rect {
+            x: x - 3.0,
+            y: y - 3.0,
+            width: 6.0,
+            height: 6.0,
+            fill: Some(PALETTE[3]),
+            stroke: Some(Stroke {
+                color: theme.background,
+                width: 1.0,
+            }),
+        });
+    }
+    let capacity = (((right - left) / 140.0).floor() as usize + 1).clamp(2, 8);
+    let count = items.len().min(capacity);
+    let spacing = (right - left) / count.saturating_sub(1).max(1) as f64;
+    for label in 0..count {
+        let index = if count == 1 {
+            0
+        } else {
+            label * (items.len() - 1) / (count - 1)
+        };
+        let edge = count > 1 && (label == 0 || label == count - 1);
+        let columns = (spacing * if edge { 0.45 } else { 0.9 } / 6.4).floor() as usize;
+        let anchor = if count == 1 {
+            TextAnchor::Middle
+        } else if label == 0 {
+            TextAnchor::Start
+        } else if label == count - 1 {
+            TextAnchor::End
+        } else {
+            TextAnchor::Middle
+        };
+        text(
+            scene,
+            x_for(index),
+            bottom + 22.0,
+            &short(&items[index].label, columns.clamp(3, 40)),
+            10.0,
+            theme.text,
+            anchor,
         );
     }
 }

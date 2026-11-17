@@ -242,8 +242,16 @@ try {
   await current.page.waitForFunction(() => localStorage.getItem("jig.workspace.v1") === "notes");
   await key(current.page, "Control+z");
   await saved(current.page, value => value.tasks.length === 1 && value.notes.length === 2, "Undo from Notes must share the same history");
-  await showDraft(current.page, header); await editor.press("Control+Shift+z");
+  await key(current.page, "Control+Alt+r");
+  await current.page.locator("#jig-draft-editor").waitFor({ state: "visible" });
+  await current.page.waitForFunction(() => localStorage.getItem("jig.workspace.v1") === "draft");
+  await editor.press("Control+Shift+z");
   await expectState(current.page, transferred, "Returning to Draft must preserve its exact document and shared Redo");
+  await current.page.getByRole("button", { name: "Copy", exact: true }).focus();
+  await current.page.keyboard.press("Escape");
+  await current.page.waitForFunction(() => document.activeElement?.id === "jig_canvas");
+  await key(current.page, "Control+Alt+r");
+  await current.page.waitForFunction(() => document.activeElement?.id === "jig-draft-editor");
   await selectAll(current.page); await current.page.keyboard.press("ArrowRight"); await capture(current.page, "draft-desktop");
 
   progress("restore Draft through refresh, JSON and a real Jig ODS file");

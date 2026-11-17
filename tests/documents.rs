@@ -563,6 +563,56 @@ fn externally_edited_standard_cells_override_old_metadata_without_losing_tasks()
 }
 
 #[test]
+fn external_ods_preserves_self_closing_empty_sheets_and_cross_sheet_references() {
+    let content = r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Empty"/><table:table table:name="Values"><table:table-row><table:table-cell table:formula="of:=['Empty'.A1]+1" office:value-type="float" office:value="1"/></table:table-row></table:table><table:table table:name="Also empty"/></office:spreadsheet></office:body></office:document-content>"#;
+    let book = read_ods(&package(content, None)).unwrap().workbook;
+    assert_eq!(
+        book.sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Empty", "Values", "Also empty"]
+    );
+    assert_eq!(
+        book.recalculate().value(2, addr("A1")),
+        CellValue::Number(1.0)
+    );
+    let state = State {
+        workbook: Some(book.clone()),
+        ..State::default()
+    };
+    assert_eq!(read_ods(&save_ods(&state).unwrap()).unwrap().workbook, book);
+}
+
+#[test]
+fn external_ods_self_closing_sheets_obey_workbook_limits_and_names() {
+    let tables = |count| {
+        (0..count)
+            .map(|index| format!(r#"<table:table table:name="Empty {index}"/>"#))
+            .collect::<String>()
+    };
+    let content = |tables| format!(r#"<d xmlns:table="t">{tables}</d>"#);
+    let maximum = jig::spreadsheet::MAX_SHEETS;
+    assert_eq!(
+        read_ods(&package(&content(tables(maximum)), None))
+            .unwrap()
+            .workbook
+            .sheets
+            .len(),
+        maximum
+    );
+    assert!(read_ods(&package(&content(tables(maximum + 1)), None))
+        .unwrap_err()
+        .contains("too many sheets"));
+    for invalid in [
+        r#"<table:table table:name=" Empty "/>"#,
+        r#"<table:table table:name="Same"/><table:table table:name="Same"/>"#,
+    ] {
+        assert!(read_ods(&package(&content(invalid.into()), None)).is_err());
+    }
+}
+
+#[test]
 fn malformed_or_oversized_ods_is_rejected_without_allocating_repeats() {
     assert!(read_ods(b"not a zip file").is_err());
     let malformed = package("<office:document-content>", None);

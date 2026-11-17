@@ -142,6 +142,7 @@ enum Confirm {
 #[derive(Clone, Copy)]
 enum DeferredView {
     Sheet,
+    Charts(Option<(u64, spreadsheet::CellRange)>),
     Calculator,
     Settings,
     Info(InfoPage),
@@ -245,6 +246,7 @@ pub struct BrowserApp {
     notes_workspace: bool,
     notes: NotesPanel,
     pending_note_input: bool,
+    pending_chart_input: bool,
     ordered_input: crate::text_input::OrderedInput,
     pending_task_input: Option<egui::Id>,
     deferred_task_list: Option<(u64, bool)>,
@@ -308,7 +310,7 @@ impl BrowserApp {
         let undo_baseline = state.clone();
         let undo_baseline_json = serde_json::to_vec(&state).unwrap_or_default();
         let preferred = browser_storage::preferred_workspace();
-        let workspace = if matches!(preferred.as_str(), "sheet" | "notes") {
+        let workspace = if matches!(preferred.as_str(), "sheet" | "charts" | "notes") {
             preferred
         } else {
             "tasks".into()
@@ -379,13 +381,14 @@ impl BrowserApp {
             task_split_draft: None,
             timeline: TimelinePanel::new(today),
             sheet: SheetPanel::new(),
-            sheet_workspace: workspace == "sheet",
+            sheet_workspace: matches!(workspace.as_str(), "sheet" | "charts"),
             pending_csv_target: None,
             pending_paste_target: None,
-            tasks_workspace: workspace != "sheet" && workspace != "notes",
+            tasks_workspace: workspace == "tasks",
             notes_workspace: workspace == "notes",
             notes: NotesPanel::new(),
             pending_note_input: false,
+            pending_chart_input: false,
             ordered_input: crate::text_input::OrderedInput::default(),
             pending_task_input: None,
             deferred_task_list: None,
@@ -394,7 +397,7 @@ impl BrowserApp {
             draft_backup_payload: None,
             draft_backup_error: None,
             draft_backup_blocked: false,
-            charts_view: false,
+            charts_view: workspace == "charts",
             charts: ChartPanel::new(),
             pdf_target: None,
             pdf_preview: None,
@@ -784,6 +787,7 @@ impl BrowserApp {
         self.notes.reset();
         self.deferred_view = None;
         self.pending_note_input = false;
+        self.pending_chart_input = false;
         self.pending_task_input = None;
         self.deferred_task_edit = None;
         self.deferred_task_list = None;
@@ -810,8 +814,14 @@ impl BrowserApp {
     }
 
     fn step_history(&mut self, ctx: &egui::Context, redo: bool) {
+        self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         let action = if redo { "Redo" } else { "Undo" };
+        if self.pending_chart_input || self.charts.has_draft() {
+            self.status =
+                format!("Save or cancel chart/interface edits in Charts before using {action}.");
+            return;
+        }
         if self.notes.has_draft() {
             self.status = format!("Save or cancel the note edit before using {action}.");
             return;
@@ -880,10 +890,11 @@ impl BrowserApp {
         self.notes.reset();
         self.deferred_view = None;
         self.pending_note_input = false;
+        self.pending_chart_input = false;
         self.pending_task_input = None;
         self.deferred_task_edit = None;
         self.deferred_task_list = None;
-        self.charts.invalidate();
+        self.charts.reset();
         self.task_edit = None;
         self.task_edit_original = None;
         self.focus_task_input = false;
@@ -1008,6 +1019,7 @@ impl BrowserApp {
                 }
                 self.pdf_target = Some((*id, origin));
                 self.charts_view = false;
+                browser_storage::set_workspace("sheet");
                 if let Err(error) = browser_storage::request_pdf() {
                     self.pdf_target = None;
                     self.status = error;
@@ -1040,8 +1052,10 @@ impl BrowserApp {
                 return true;
             }
             SheetAction::ShowCharts => {
-                self.charts_view = true;
-                return true;
+                return self.show_charts(&self.ctx.clone(), None);
+            }
+            SheetAction::SendToCharts { sheet, range } => {
+                return self.show_charts(&self.ctx.clone(), Some((*sheet, *range)));
             }
             SheetAction::Decimals(decimals) => {
                 if *decimals <= 10 && self.state.preferences.decimals != *decimals {
@@ -1097,7 +1111,7 @@ impl BrowserApp {
                     self.state.workbook = Some(book);
                     self.changed();
                     if matches!(action, SheetAction::AddChart { .. }) {
-                        self.charts_view = true;
+                        self.show_charts(&self.ctx.clone(), None);
                     }
                 }
                 true
@@ -1170,13 +1184,14 @@ impl BrowserApp {
     }
 
     fn show_notes(&mut self, ctx: &egui::Context) -> bool {
-        if self.pending_note_input || self.pending_task_input.is_some() {
+        if self.has_pending_editor_input() {
             self.deferred_view = Some(DeferredView::Notes);
             return false;
         }
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
+        self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
         ctx.memory_mut(|memory| memory.close_popup());
@@ -1200,33 +1215,62 @@ impl BrowserApp {
         true
     }
 
+    fn has_pending_editor_input(&self) -> bool {
+        self.pending_note_input || self.pending_task_input.is_some() || self.pending_chart_input
+    }
+
     fn set_workspace(&mut self, sheet: bool, ctx: &egui::Context) -> bool {
         if !sheet {
             return self.show_tasks(ctx);
         }
-        if self.sheet_workspace {
-            self.close_settings();
-            self.info_page = None;
-            return true;
+        self.show_sheet_workspace(ctx, false)
+    }
+
+    fn show_charts(
+        &mut self,
+        ctx: &egui::Context,
+        source: Option<(u64, spreadsheet::CellRange)>,
+    ) -> bool {
+        if self.has_pending_editor_input() {
+            self.deferred_view = Some(DeferredView::Charts(source));
+            return false;
         }
-        if self.pending_note_input || self.pending_task_input.is_some() {
-            self.deferred_view = Some(DeferredView::Sheet);
+        if !self.show_sheet_workspace(ctx, true) {
+            return false;
+        }
+        self.charts
+            .set_selection_context(self.sheet.active_sheet(), self.sheet.selection());
+        if let Some((sheet, range)) = source {
+            self.charts.prefill_from_selection(sheet, range);
+        }
+        true
+    }
+
+    fn show_sheet_workspace(&mut self, ctx: &egui::Context, charts: bool) -> bool {
+        if self.has_pending_editor_input() {
+            self.deferred_view = Some(if charts {
+                DeferredView::Charts(None)
+            } else {
+                DeferredView::Sheet
+            });
             return false;
         }
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
+        self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
         ctx.memory_mut(|memory| memory.close_popup());
         self.close_settings();
         self.info_page = None;
         self.sheet_workspace = true;
+        self.charts_view = charts;
         self.tasks_workspace = false;
         self.notes_workspace = false;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
-        browser_storage::set_workspace("sheet");
+        browser_storage::set_workspace(if charts { "charts" } else { "sheet" });
         self.focus_calculator = false;
         self.focus_task_date = false;
         ctx.memory_mut(|memory| {
@@ -1234,7 +1278,9 @@ impl BrowserApp {
                 memory.surrender_focus(id);
             }
         });
-        self.sheet.request_focus();
+        if !charts {
+            self.sheet.request_focus();
+        }
         ctx.request_repaint();
         true
     }
@@ -1248,13 +1294,18 @@ impl BrowserApp {
                 if ui.button("Save .ods").clicked() {
                     self.apply_sheet_action(SheetAction::SaveOds);
                 }
-                if ui.button("Export PDF").clicked() {
+                if ui
+                    .button("Export sheet PDF")
+                    .on_hover_text("Export the active sheet and its linked charts")
+                    .clicked()
+                {
                     self.apply_sheet_action(SheetAction::ExportPdf(self.sheet.active_sheet()));
                 }
             });
             for action in self.charts.ui(ui, &self.state) {
                 self.apply_chart_action(action);
             }
+            self.pending_chart_input = false;
             return;
         }
         let empty = Workbook::default();
@@ -1281,13 +1332,14 @@ impl BrowserApp {
     }
 
     fn show_tasks(&mut self, ctx: &egui::Context) -> bool {
-        if self.pending_note_input || self.pending_task_input.is_some() {
+        if self.has_pending_editor_input() {
             self.deferred_view = Some(DeferredView::Tasks);
             return false;
         }
         if !self.flush_sheet_edit() || !self.flush_notes_edit() {
             return false;
         }
+        self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
         ctx.memory_mut(|memory| memory.close_popup());
@@ -1350,7 +1402,10 @@ impl BrowserApp {
             .add(
                 egui::Button::new("Sheets")
                     .selected(
-                        self.sheet_workspace && !self.settings_open && self.info_page.is_none(),
+                        self.sheet_workspace
+                            && !self.charts_view
+                            && !self.settings_open
+                            && self.info_page.is_none(),
                     )
                     .sense(sense),
             )
@@ -1361,6 +1416,22 @@ impl BrowserApp {
             .clicked()
         {
             self.set_workspace(true, ui.ctx());
+        }
+        if ui
+            .add(
+                egui::Button::new("Charts")
+                    .selected(
+                        self.sheet_workspace
+                            && self.charts_view
+                            && !self.settings_open
+                            && self.info_page.is_none(),
+                    )
+                    .sense(sense),
+            )
+            .on_hover_text("Charts and cell-linked interfaces")
+            .clicked()
+        {
+            self.show_charts(ui.ctx(), None);
         }
     }
 
@@ -1752,7 +1823,7 @@ impl BrowserApp {
                         title: "Task plan".into(),
                     };
                     if self.apply_sheet_action(action) {
-                        self.set_workspace(true, ui.ctx());
+                        self.show_charts(ui.ctx(), None);
                     }
                 }
                 if ui.button("Save .ods").clicked() {
@@ -1989,18 +2060,37 @@ impl BrowserApp {
 
     fn apply_chart_action(&mut self, action: ChartAction) {
         if matches!(action, ChartAction::BackToGrid) {
-            self.charts_view = false;
-            self.sheet.request_focus();
+            self.set_workspace(true, &self.ctx.clone());
             return;
         }
         let mut book = self.state.workbook.clone().unwrap_or_default();
         let result = match &action {
+            ChartAction::Add {
+                kind,
+                source,
+                title,
+            } => book.add_chart(*kind, *source, title).map(|_| true),
             ChartAction::Rename { id, title } => book.rename_chart(*id, title),
             ChartAction::Remove(id) => book.remove_chart(*id),
+            ChartAction::ControlAdd {
+                label,
+                target,
+                kind,
+            } => book.add_control(label, *target, *kind).map(|_| true),
+            ChartAction::ControlEdit {
+                id,
+                label,
+                target,
+                kind,
+            } => book.update_control(*id, label, *target, *kind),
+            ChartAction::ControlRemove(id) => book.remove_control(*id),
+            ChartAction::ControlMove { id, delta } => book.move_control(*id, *delta),
+            ChartAction::ControlValue { id, value } => book.set_control_value(*id, *value),
             ChartAction::BackToGrid => Ok(false),
         };
         match result {
             Ok(changed) => {
+                self.charts.accept_action(&action);
                 if changed {
                     self.state.workbook = Some(book);
                     self.changed();
@@ -2338,6 +2428,11 @@ impl BrowserApp {
     }
 
     fn open_local(&mut self) {
+        if self.pending_chart_input || self.charts.has_draft() {
+            self.status =
+                "Save or cancel chart/interface edits in Charts before opening data.".into();
+            return;
+        }
         if self.pending_task_input.is_some() || self.has_task_draft() || self.has_schedule_draft() {
             self.status = "Save or clear task edits before opening another dataset.".into();
             return;
@@ -2577,7 +2672,7 @@ impl BrowserApp {
     }
 
     fn show_calendar(&mut self, ctx: &egui::Context, month: bool) {
-        if self.pending_task_input.is_some() || self.pending_note_input {
+        if self.has_pending_editor_input() {
             self.deferred_view = Some(DeferredView::CalendarMonth(month));
             ctx.request_repaint();
             return;
@@ -2596,7 +2691,7 @@ impl BrowserApp {
     }
 
     fn toggle_calendar(&mut self, ctx: &egui::Context) {
-        if self.pending_task_input.is_some() || self.pending_note_input {
+        if self.has_pending_editor_input() {
             self.deferred_view = Some(DeferredView::Calendar);
             ctx.request_repaint();
             return;
@@ -4294,15 +4389,25 @@ impl eframe::App for BrowserApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         let schedule = self.task_date_edit.or(self.task_date_legacy);
         let sheet_input = self.sheet_workspace
+            && !self.charts_view
             && !self.settings_open
             && self.info_page.is_none()
             && self.sheet.owns_text_input(ctx);
         let sheet_commands = sheet_input
             || (self.sheet_workspace
+                && !self.charts_view
                 && !self.settings_open
                 && self.info_page.is_none()
                 && self.sheet.owns_grid_input(ctx));
+        let chart_input = self.sheet_workspace
+            && self.charts_view
+            && !self.settings_open
+            && self.info_page.is_none()
+            && ctx
+                .memory(|memory| memory.focused())
+                .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
         let protect = sheet_input
+            || chart_input
             || self.settings_open
             || ctx.memory(|memory| memory.focused()).is_some_and(|id| {
                 id == egui::Id::new("task-input")
@@ -4360,6 +4465,12 @@ impl eframe::App for BrowserApp {
         };
         self.pending_note_input =
             self.notes.has_draft() && self.notes.owns_keyboard(ctx) && text_input;
+        self.pending_chart_input = self.sheet_workspace
+            && self.charts_view
+            && !self.settings_open
+            && self.info_page.is_none()
+            && text_input
+            && focused.is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
         self.sanitize_task_lists();
         ctx.request_repaint_after(Duration::from_secs(1));
         self.process_document_events();
@@ -4670,12 +4781,16 @@ impl eframe::App for BrowserApp {
                 DeferredView::Sheet => {
                     self.set_workspace(true, ctx);
                 }
+                DeferredView::Charts(source) => {
+                    self.show_charts(ctx, source);
+                }
                 DeferredView::Calendar => self.toggle_calendar(ctx),
                 DeferredView::CalendarMonth(month) => self.show_calendar(ctx, month),
                 DeferredView::Calculator => {
+                    self.charts.cancel_gesture();
                     self.settings_panel.cancel_capture();
                     crate::settings_storage::set_capture(false);
-                    if self.pending_task_input.is_some() || self.pending_note_input {
+                    if self.has_pending_editor_input() {
                         self.open_calculator(ctx);
                     } else {
                         ctx.memory_mut(|memory| {
@@ -4686,9 +4801,10 @@ impl eframe::App for BrowserApp {
                     }
                 }
                 DeferredView::Settings => {
-                    if self.pending_task_input.is_some() || self.pending_note_input {
+                    if self.has_pending_editor_input() {
                         self.toggle_settings(ctx);
                     } else if self.flush_sheet_edit() {
+                        self.charts.cancel_gesture();
                         self.cancel_task_note_drag(ctx);
                         self.timeline.cancel_gesture();
                         ctx.memory_mut(|memory| memory.close_popup());
@@ -4702,9 +4818,10 @@ impl eframe::App for BrowserApp {
                     }
                 }
                 DeferredView::Info(page) => {
-                    if self.pending_task_input.is_some() || self.pending_note_input {
+                    if self.has_pending_editor_input() {
                         self.deferred_view = Some(DeferredView::Info(page));
                     } else if self.flush_sheet_edit() {
+                        self.charts.cancel_gesture();
                         self.cancel_task_note_drag(ctx);
                         self.timeline.cancel_gesture();
                         self.close_settings();
@@ -4726,6 +4843,7 @@ impl eframe::App for BrowserApp {
         let task_draft = self.backup_working_drafts();
         browser_storage::set_unsaved(
             self.dirty
+                || self.charts.has_draft()
                 || self.notes.has_unsaved_changes()
                 || task_draft
                 || (self.draft_backup_blocked && self.draft_backup_payload.is_some()),

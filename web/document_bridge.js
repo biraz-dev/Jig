@@ -9,7 +9,7 @@
   let reading = false;
   let paste = null, pasteError = null;
   const workspaceKey = "jig.workspace.v1";
-  const workspaces = ["sheet", "tasks", "notes", "workbench"];
+  const workspaces = ["sheet", "charts", "tasks", "notes", "workbench"];
   window.jigPreferredWorkspace = () => {
     try {
       const saved = localStorage.getItem(workspaceKey);
@@ -103,7 +103,7 @@
     // egui owns both text-edit undo and Jig's shared Undo. Native historyUndo
     // can refocus the hidden IME input and replay text from a previous editor.
     if (control && event.key.toLowerCase() === "z") event.preventDefault();
-    if (!["sheet", "tasks"].includes(workspace)) return;
+    if (!["sheet", "charts", "tasks"].includes(workspace)) return;
     if ((control && ["s", "o", "p"].includes(event.key.toLowerCase()))
       || (workspace === "sheet" && ((control && event.key.toLowerCase() === "g")
         || (event.shiftKey && event.key === "F11")

@@ -9,7 +9,7 @@
   let reading = false;
   let paste = null, pasteError = null;
   const workspaceKey = "jig.workspace.v1";
-  const workspaces = ["sheet", "charts", "tasks", "notes", "workbench"];
+  const workspaces = ["sheet", "charts", "tasks", "notes", "draft", "workbench"];
   window.jigPreferredWorkspace = () => {
     try {
       const saved = localStorage.getItem(workspaceKey);

@@ -129,7 +129,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
         "Draft",
         "Gather text in one document next to Notes. Select text to set its size, bold, italic, underline, link, alignment, bullets or numbering. Copy keeps formatting where supported, with plain text as a fallback. To note and To task copy the selection, or the whole Draft, without removing the original; transfers use the existing 16 KiB text limit.",
     );
-    ui.label("Draft saves as you type and travels in JSON and Jig ODS backups. Older files open an empty Draft. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z use the shared Undo/Redo; consecutive typing is grouped. Esc returns keyboard focus to the main app. Draft allows up to 512 KiB of text within the browser document limit.");
+    ui.label("Draft saves as you type and travels in JSON and Jig ODS backups. Older files open an empty Draft. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z use the shared Undo/Redo; consecutive typing is grouped. Esc returns keyboard focus to the main app; Ctrl+Alt+R opens Draft by default. Draft allows up to 512 KiB of text within the browser document limit.");
     section(
         ui,
         "Sheets and Charts",
@@ -147,6 +147,12 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
         "Your document saves automatically in this browser. Data → Export JSON creates a portable copy; Import JSON shows a review before replacing a document. Settings can choose a backup folder in supported browsers or download a backup. CSV, ODS and PDF exports use your browser's download location.",
     );
     ui.label("If a folder backup fails, Retry backup and Download backup appear in the workspace and at the top of Settings. Reconnect the folder if access is needed. Retry uses your current document; unfinished text stays in its editor. Existing backup files are kept.");
+    section(
+        ui,
+        "Themes",
+        "Settings offers Ember (the original warm look), Paper, neutral Graphite, Nord, Dracula, System and Custom. System follows the browser's light/dark preference. Expand Customize colors at the end of Settings to set background, surface, text and accent with hex values or a color picker. Choose Custom to use them; selecting a preset keeps your custom palette.",
+    );
+    ui.label("Optional system accent uses the browser's CSS AccentColor when available, with your chosen accent as the fallback. Manual controls remain available; browsers cannot read a full desktop theme. Themes apply to all browser workspaces, including Draft, without changing stored task/list, chart series or cell colors. PDF pages stay white. Settings export carries your theme separately from document data.");
     section(
         ui,
         "Undo and text editing",

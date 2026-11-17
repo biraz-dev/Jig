@@ -10,21 +10,69 @@ pub const MAX_SETTINGS_BYTES: usize = 32 * 1024;
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
     #[default]
-    Graphite,
-    Light,
+    Ember,
+    #[serde(alias = "light")]
+    Paper,
     System,
+    Nord,
+    Dracula,
+    Graphite,
+    Custom,
 }
 
 impl Theme {
-    pub const ALL: [Self; 3] = [Self::Graphite, Self::Light, Self::System];
+    pub const ALL: [Self; 7] = [
+        Self::Ember,
+        Self::Paper,
+        Self::System,
+        Self::Nord,
+        Self::Dracula,
+        Self::Graphite,
+        Self::Custom,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Graphite => "Graphite",
-            Self::Light => "Light",
+            Self::Ember => "Ember",
+            Self::Paper => "Paper",
             Self::System => "System",
+            Self::Nord => "Nord",
+            Self::Dracula => "Dracula",
+            Self::Graphite => "Graphite",
+            Self::Custom => "Custom",
         }
     }
+}
+
+/// The four user-chosen colors; other interface roles are derived from these.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomTheme {
+    pub background: [u8; 3],
+    pub surface: [u8; 3],
+    pub text: [u8; 3],
+    pub accent: [u8; 3],
+}
+
+impl Default for CustomTheme {
+    fn default() -> Self {
+        Self {
+            background: crate::palette::BACKGROUND,
+            surface: crate::palette::SURFACE,
+            text: crate::palette::TEXT,
+            accent: crate::palette::ACCENT,
+        }
+    }
+}
+
+impl CustomTheme {
+    pub fn is_dark(self) -> bool {
+        crate::palette::luminance(self.background) < 0.4
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// Canonical names also understood by egui's `Key::from_name`.
@@ -444,10 +492,11 @@ pub enum Action {
     Maximize,
     RenameTaskList,
     OpenLocal,
+    Draft,
 }
 
 impl Action {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::ToggleWorkspace,
         Self::Tasks,
         Self::Notes,
@@ -460,6 +509,7 @@ impl Action {
         Self::Maximize,
         Self::RenameTaskList,
         Self::OpenLocal,
+        Self::Draft,
     ];
 
     pub fn label(self) -> &'static str {
@@ -476,6 +526,7 @@ impl Action {
             Self::Maximize => "Maximize panel",
             Self::RenameTaskList => "Rename list / expand panel",
             Self::OpenLocal => "Open local data",
+            Self::Draft => "Draft",
         }
     }
 
@@ -488,8 +539,12 @@ impl Action {
             Self::Calendar => "Switch between the calendar and timeline.",
             Self::Data => "Show or hide data import, export and dataset controls.",
             Self::Settings => "Show or hide application settings.",
-            Self::Undo => "Undo the last committed change; text editors keep their own Undo.",
-            Self::Redo => "Redo the last undone change; text editors keep their own Redo.",
+            Self::Undo => {
+                "Undo the last committed change, including Draft; other text editors keep local Undo."
+            }
+            Self::Redo => {
+                "Redo the last undone change, including Draft; other text editors keep local Redo."
+            }
             Self::Maximize => {
                 "Expand or restore the focused Tasks or calendar panel outside text editors."
             }
@@ -497,6 +552,7 @@ impl Action {
                 "Rename a focused task-list tab, otherwise expand or restore its panel."
             }
             Self::OpenLocal => "Reload the saved document from this browser.",
+            Self::Draft => "Open the Draft workspace.",
         }
     }
 
@@ -514,6 +570,7 @@ impl Action {
             Self::Maximize => Chord::ctrl(ShortcutKey::M),
             Self::RenameTaskList => Chord::new(ShortcutKey::F2),
             Self::OpenLocal => Chord::ctrl_alt(ShortcutKey::O),
+            Self::Draft => Chord::ctrl_alt(ShortcutKey::R),
         }
     }
 }
@@ -542,7 +599,7 @@ pub const FIXED_SHORTCUTS: &[(&str, &str)] = &[
     ),
     (
         "Ctrl+Z / Ctrl+Shift+Z",
-        "Local text Undo and Redo while editing text.",
+        "Shared Undo/Redo in Draft; local text Undo/Redo in other text editors.",
     ),
     (
         "Ctrl+S / O / P",
@@ -584,6 +641,10 @@ pub const FIXED_SHORTCUTS: &[(&str, &str)] = &[
 pub struct AppSettings {
     pub version: u8,
     pub theme: Theme,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_theme: Option<CustomTheme>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub system_accent: bool,
     pub undo_levels: usize,
     pub auto_backup: bool,
     /// Missing means the default binding; an explicit null disables an action.
@@ -594,8 +655,10 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            version: 1,
-            theme: Theme::Graphite,
+            version: 2,
+            theme: Theme::Ember,
+            custom_theme: None,
+            system_accent: false,
             undo_levels: 20,
             auto_backup: false,
             shortcuts: BTreeMap::new(),
@@ -612,7 +675,7 @@ impl AppSettings {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.version != 1 {
+        if self.version != 2 {
             return Err("Unsupported application settings version".into());
         }
         if self.undo_levels > MAX_UNDO_LEVELS {
@@ -640,7 +703,33 @@ impl AppSettings {
         if text.len() > MAX_SETTINGS_BYTES {
             return Err("Application settings exceed the 32 KiB limit".into());
         }
-        let settings: Self = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if !text.trim_start().starts_with('{') {
+            return Err("Application settings must be a JSON object".into());
+        }
+        #[derive(Deserialize)]
+        struct Version {
+            version: Option<u8>,
+        }
+        let version: Version = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        // Decode the original text, retaining strict unknown/duplicate field
+        // checks instead of silently collapsing keys through a JSON Value.
+        let mut settings: Self = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if version.version.unwrap_or(1) == 1 {
+            settings.version = 2;
+            // Version 1 called the warm palette Graphite; its look stays Ember.
+            if settings.theme == Theme::Graphite {
+                settings.theme = Theme::Ember;
+            }
+            if !settings.shortcuts.contains_key(&Action::Draft)
+                && settings
+                    .shortcuts
+                    .values()
+                    .any(|binding| *binding == Some(Action::Draft.default_binding()))
+            {
+                // A new default must not steal a valid legacy custom binding.
+                settings.shortcuts.insert(Action::Draft, None);
+            }
+        }
         settings.validate()?;
         Ok(settings)
     }

@@ -66,7 +66,7 @@ jobs:
       fail-fast: false
       max-parallel: 6
       matrix:
-        suite: [settings_browser, spreadsheet_browser, ocr_browser, timeline_browser, task_lists_browser, notes_browser, browser_smoke, undo_browser]
+        suite: [charts_browser, settings_browser, spreadsheet_browser, ocr_browser, timeline_browser, task_lists_browser, notes_browser, browser_smoke, undo_browser]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
@@ -79,7 +79,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the real browser app
         env:
-          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'sheet-desktop,sheet-mobile,sheet-edit,sheet-chart,sheet-formats,sheet-import,sheet-failure,undo-desktop,redo-desktop,undo-failure,timeline-desktop,timeline-dashboard,timeline-mobile,timeline-edit,timeline-failure,task-lists-desktop,task-lists-combined,task-lists-mobile,task-lists-failure,notes-desktop,notes-tasks,notes-mobile,notes-cap,notes-failure,calendar-weather-unselected,calendar-weather-selected,calendar-month-desktop,calendar-month-mobile,calendar-month-date-picking,consolidated-empty,consolidated-data-open,calculator-popup-desktop,task-date-time-popup,task-date-time-picker,calendar-task-picking,consolidated-mobile,consolidated-medium,calendar-mobile,settings-header-desktop,settings-about,settings-help,settings-about-mobile,settings-help-mobile,settings-light,settings-mobile,settings-shortcuts,settings-cheatsheet,settings-download-fallback,settings-folder,settings-backup-failed,settings-backup-retrying,settings-backup-recovered,settings-backup-failed-mobile,settings-backup-recovered-mobile,settings-failure' || '' }}
+          JIG_RENDER_LOGS: ${{ contains(github.event.head_commit.message, '[render]') && 'charts-desktop,charts-controls,charts-mobile,charts-failure,sheet-desktop,sheet-mobile,sheet-edit,sheet-chart,sheet-formats,sheet-import,sheet-failure,undo-desktop,redo-desktop,undo-failure,timeline-desktop,timeline-dashboard,timeline-mobile,timeline-edit,timeline-failure,task-lists-desktop,task-lists-combined,task-lists-mobile,task-lists-failure,notes-desktop,notes-tasks,notes-mobile,notes-cap,notes-failure,calendar-weather-unselected,calendar-weather-selected,calendar-month-desktop,calendar-month-mobile,calendar-month-date-picking,consolidated-empty,consolidated-data-open,calculator-popup-desktop,task-date-time-popup,task-date-time-picker,calendar-task-picking,consolidated-mobile,consolidated-medium,calendar-mobile,settings-header-desktop,settings-about,settings-help,settings-about-mobile,settings-help-mobile,settings-light,settings-mobile,settings-shortcuts,settings-cheatsheet,settings-download-fallback,settings-folder,settings-backup-failed,settings-backup-retrying,settings-backup-recovered,settings-backup-failed-mobile,settings-backup-recovered-mobile,settings-failure' || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/jig-site/Jig"
           cp -R dist/. "$RUNNER_TEMP/jig-site/Jig/"

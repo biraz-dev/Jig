@@ -9,7 +9,7 @@ import "./import_bridges.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
-const sampleUrl = new URL(base); sampleUrl.searchParams.set("sample", "1"); sampleUrl.hash = "";
+const legacySampleUrl = new URL(base); legacySampleUrl.searchParams.set("sample", "1"); legacySampleUrl.hash = "";
 const key = "jig.personal.v1";
 const weatherSettingsKey = "jig.weather.settings.v1", weatherCacheKey = "jig.weather.cache.v1";
 const weatherOrigins = ["https://api.open-meteo.com", "https://geocoding-api.open-meteo.com"];
@@ -194,7 +194,7 @@ async function expectCalculation(page, expression, result, length, unit) {
 }
 async function openTaskDates(page) {
   await resetFocus(page); await navigateKey(page, "Control+Alt+2");
-  // Data/Settings/Calculator/About/Help/Source, Tasks/+, Gantt/Save, then row date.
+  // Data/Settings/About/Help/Calculator/Source, Tasks/+, Gantt/Save, then row date.
   await tab(page, 14); await navigateKey(page, "Space");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
 }
@@ -295,8 +295,8 @@ async function selectedDay(page) {
 }
 async function clickCalculatorIcon(page, touch = false) {
   await resetFocus(page);
-  // Header order is stable: Data, Settings, Calculator; tabs are pointer controls.
-  await tab(page, 3);
+  // The calculator follows About and Help; workspace tabs are pointer controls.
+  await tab(page, 5);
   const regions = await filledRegions(page, [77, 49, 39], 0, 90);
   const icon = regions.find(r => r.count > 200 && r.width >= 24 && r.width <= 34 && r.height >= 22 && r.height <= 32);
   assert.ok(icon, "The focused Calculator icon must be visible in the header");
@@ -355,12 +355,27 @@ function checkWeather(cache, config, at) {
   })));
 }
 try {
-  const demo = await newPage("sample-desktop");
-  await boot(demo.page, false, `${sampleUrl.href}#weather=Sample%20Harbor`);
-  assert.equal(await saved(demo.page), null, "Explicit sample data must remain temporary");
-  await capture(demo.page, "consolidated-sample"); await clickCalculatorIcon(demo.page); await typeCalculation(demo.page, "1 / 3"); await demo.page.waitForTimeout(800);
-  assert.equal(await saved(demo.page), null, "Sample calculator edits must not create personal state");
-  await release(demo.context, "sample-desktop");
+  const empty = await newPage("legacy-sample-query-empty");
+  await boot(empty.page, false, legacySampleUrl.href);
+  assert.equal(await saved(empty.page), null, "An old sample query must start empty without creating synthetic data");
+  await capture(empty.page, "consolidated-empty"); await clickCalculatorIcon(empty.page); await typeCalculation(empty.page, "1 / 3");
+  await expectCalculation(empty.page, "1 / 3", 1 / 3, 1);
+  const firstSaved = JSON.parse(await saved(empty.page));
+  for (const field of ["tasks", "deadlines", "entries", "notes"]) assert.deepEqual(firstSaved[field] ?? [], [], `First use must not add sample ${field}`);
+  assert.equal(firstSaved.featured, null);
+  await boot(empty.page, true);
+  assert.deepEqual(JSON.parse(await saved(empty.page)), firstSaved, "First-use work must survive reload even with an obsolete sample query");
+  await release(empty.context, "legacy-sample-query-empty");
+
+  const obsoleteQuery = await newPage("legacy-sample-query-saved", { raw: fixtureRaw });
+  await boot(obsoleteQuery.page, false, legacySampleUrl.href);
+  assert.equal(await saved(obsoleteQuery.page), fixtureRaw, "An obsolete sample query must open the existing personal document unchanged");
+  await calculate(obsoleteQuery.page, "10 + 5"); await expectCalculation(obsoleteQuery.page, "10 + 5", 15, 2);
+  const querySaved = JSON.parse(await saved(obsoleteQuery.page));
+  for (const field of ["tasks", "deadlines", "entries", "notes", "featured"]) assert.deepEqual(querySaved[field], fixture[field], `An obsolete sample query must preserve personal ${field}`);
+  await boot(obsoleteQuery.page, true);
+  assert.deepEqual(JSON.parse(await saved(obsoleteQuery.page)), querySaved);
+  await release(obsoleteQuery.context, "legacy-sample-query-saved");
 
   const legacyWorkspace = await newPage("legacy-workspace", { raw: fixtureRaw, workspace: "workbench" });
   await boot(legacyWorkspace.page);
@@ -502,9 +517,9 @@ try {
   assert.match(conflict, /Another tab changed/); assert.equal(await saved(shared.page), fixtureRaw);
   const clearConflict = await second.evaluate(() => { try { window.jigClear(); return null; } catch (error) { return String(error); } });
   assert.match(clearConflict, /Another tab changed/); assert.equal(await saved(shared.page), fixtureRaw);
-  const independent = await newPage("independent-sample"); await boot(independent.page, false, sampleUrl.href);
+  const independent = await newPage("independent-empty"); await boot(independent.page, false, legacySampleUrl.href);
   assert.equal(await saved(independent.page), null); assert.equal(await saved(shared.page), fixtureRaw);
-  await release(shared.context, "cross-tab pair"); await release(independent.context, "independent-sample");
+  await release(shared.context, "cross-tab pair"); await release(independent.context, "independent-empty");
 
   const celsius = { name: "Sample Harbor", latitude: 51.5, longitude: -0.12, unit: "celsius" };
   const weatherFixture = { ...fixture, preferences: { ...fixture.preferences, weather: celsius } }, weatherDate = "2026-10-30T12:00:00Z";
@@ -551,7 +566,7 @@ try {
   assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache);
   await release(outage.context, "weather-stale-outage");
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: 19 bridge-race scenarios, Tasks startup, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, temporary samples, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, continuous calendar keyboard/touch/pan/zoom, and mocked local weather/cache/offline recovery.");
+  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, continuous calendar keyboard/touch/pan/zoom, and mocked local weather/cache/offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`, error);
   for (const { page, label } of pages.slice(-2)) if (!page.isClosed()) await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});

@@ -234,22 +234,23 @@ impl SheetPanel {
         self.active
     }
 
-    pub fn activate(&mut self, sheet: u64) {
-        self.active = sheet;
-        self.cursor = CellAddr::new(0, 0);
-        self.anchor = self.cursor;
-        self.expanded_selection = CellRange::new(self.cursor, self.cursor);
-        self.address = "A1".into();
-        self.draft.clear();
-        self.original.clear();
-        self.restore_data();
-        self.invalidate();
-        self.reveal = true;
-        self.tab_reveal = true;
-    }
-
     pub fn selection(&self) -> CellRange {
         self.expanded_selection
+    }
+
+    pub fn owns_text_input(&self, ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| {
+            memory.focused().is_some_and(|id| {
+                id == self.editor_id()
+                    || id == self.formula_id()
+                    || id == egui::Id::new("spreadsheet-address-input")
+                    || id == egui::Id::new("spreadsheet-sheet-name")
+            })
+        })
+    }
+
+    pub fn owns_grid_input(&self, ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| memory.has_focus(self.grid_id()))
     }
 
     pub fn commit_pending(&mut self) -> Option<SheetAction> {
@@ -294,6 +295,10 @@ impl SheetPanel {
 
     fn editor_id(&self) -> egui::Id {
         egui::Id::new(("spreadsheet-cell-input", self.active, self.cursor))
+    }
+
+    fn formula_id(&self) -> egui::Id {
+        egui::Id::new(("spreadsheet-formula-input", self.active, self.cursor))
     }
 
     fn begin_edit(&mut self, book: &Workbook, origin: EditOrigin, replacement: Option<String>) {
@@ -1392,7 +1397,7 @@ impl SheetPanel {
                 }
             }
             ui.label(RichText::new("fx").color(colors.accent));
-            let field = egui::Id::new(("spreadsheet-formula-input", self.active, self.cursor));
+            let field = self.formula_id();
             let width = (ui.available_width() - 58.0).max(60.0);
             if self.editing == Some(EditOrigin::Cell) {
                 let mut text = self.draft.clone();

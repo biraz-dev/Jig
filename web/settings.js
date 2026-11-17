@@ -293,8 +293,7 @@
     status.last_backup = new Date().toISOString();
     try { localStorage.setItem(lastBackupKey, status.last_backup); } catch { /* File was saved successfully. */ }
   }
-  window.jigBackupWrite = (text, automatic, personal) => {
-    if (!personal) throw new Error("Sample data is not backed up. Open your local data first.");
+  window.jigBackupWrite = (text, automatic) => {
     bounded(text, backupLimit, "Backup");
     if (automatic && localStorage.getItem("jig.personal.v1") !== text) {
       throw new Error("Automatic backup requires the current successfully saved personal data.");

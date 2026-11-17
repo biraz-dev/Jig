@@ -1,7 +1,9 @@
 # Browser development preview
 
-The egui/eframe browser application opens Tasks by default and remembers the
-selected workspace. About, Data, Tasks, Notes, Sheets, Settings and Help sit on
+Jig provides local tools for thinking, planning and working things out. Its
+egui/eframe browser application opens Tasks by default and remembers the selected
+workspace. About, Data, Tasks,
+Notes, Sheets, Charts, Settings and Help sit on
 the left; the calculator button sits at the far right. Undo/Redo and personal/local labels no
 longer occupy the header. The title and tagline no longer
 occupy header space. Sheet retains its named tabs, formulas,
@@ -34,10 +36,27 @@ calculations, with cell references and full calculation precision. See the
 [conversion examples](../README.md#conversion-formulas) for measurements and
 cost formulas. Invalid units and mixed dimensions remain visible errors.
 
+**Charts**, beside Sheets in the header, holds pie, line, bar and Gantt charts
+and cell-linked Number input, Slider and Calculated result cards. Sheets'
+**Insert → Send selection to Charts…** prefills a live source range; **Create**
+also starts a chart or control form directly. Chart sources retain the original
+sheet/range, rather than copying evaluated values. Existing task Gantt charts
+continue to read the same task records.
+
+Choose a source sheet and range or cell, then Create chart or Add control.
+Cancel or Esc discards an open draft. Number inputs commit with Apply or Enter;
+sliders commit on release using their min/max/step. Result cards display the
+linked cell's current formatted value, including formula results. Input controls
+protect formulas. Edit layout exposes control editing, up/down ordering and
+deletion; Save control commits configuration changes. Shared Undo/Redo covers
+committed chart, control and input changes. JSON and Jig ODS preserve chart and
+control definitions and their cell links; ordinary ODS chart output is an SVG
+snapshot with Jig metadata, not a native editable ODS chart or form control.
+
 The Tasks board uses the same Rust task, deadline and calendar records as the
 CLI and Ratatui dashboard. Its checklist and Gantt share a resizable panel, with
 notes below and a compact featured countdown above. The separate Workbench tab
-is removed. A calculator icon beside the workspace tabs opens the shared arithmetic/conversion
+is removed. A calculator icon at the far right opens the shared arithmetic/conversion
 input, result, precision control and history without leaving the workspace.
 Click outside or press Esc to close the popover. There is no application backend,
 account or telemetry. Optional weather uses Open-Meteo; only the chosen location
@@ -128,9 +147,9 @@ backup service.
 
 ## Application settings
 
-Open **Settings** between **Sheets** and **Help**, or press **Ctrl+,** by default.
+Open **Settings** between **Charts** and **Help**, or press **Ctrl+,** by default.
 Settings uses the main view, with **Done** returning to the existing workspace. The header
-keeps About, Data, Tasks, Notes, Sheets, Settings and Help together on the left,
+keeps About, Data, Tasks, Notes, Sheets, Charts, Settings and Help together on the left,
 with the calculator button at the far right. About and Help use the main panel;
 Done or Esc returns to the existing workspace without changing its data.
 Application Undo/Redo remain available through
@@ -350,7 +369,7 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The eight browser suites run against the same built artifact in separate jobs,
+The nine browser suites run against the same built artifact in separate jobs,
 with at most six runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
@@ -404,7 +423,7 @@ browsers and devices. The egui canvas has limited screen-reader accessibility;
 improving that is a priority before calling the preview broadly accessible.
 Background tabs may throttle countdown redraws, so the display derives its value
 from the current clock when it runs again. Improve narrow layouts and resolve
-observed issues before adding more utilities. A native graphical interface,
+observed issues within the existing tools. A native graphical interface,
 service worker, synchronization service and additional tools are not part of
 this preview.
 

@@ -8,6 +8,8 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
+    #[wasm_bindgen(js_name = jigSystemAccent)]
+    fn system_accent_js() -> String;
     #[wasm_bindgen(catch, js_name = jigSettingsLoad)]
     fn load_text() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = jigSettingsSave)]
@@ -36,6 +38,20 @@ extern "C" {
     fn write_backup(text: &str, automatic: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = jigBackupCancel)]
     fn cancel_backup(reset_failure: bool);
+}
+
+/// Browsers may withhold the OS accent. The selected preset remains the fallback.
+pub fn system_accent(enabled: bool) -> Option<[u8; 3]> {
+    if !enabled {
+        return None;
+    }
+    let color = system_accent_js();
+    let color = color.strip_prefix('#').filter(|value| value.len() == 6)?;
+    Some([
+        u8::from_str_radix(color.get(0..2)?, 16).ok()?,
+        u8::from_str_radix(color.get(2..4)?, 16).ok()?,
+        u8::from_str_radix(color.get(4..6)?, 16).ok()?,
+    ])
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

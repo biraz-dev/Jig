@@ -195,6 +195,23 @@ and confirms before replacement. A backup folder controls only these JSON
 backups; CSV, ODS and PDF exports continue to use the browser's configured
 download location. No document or folder contents are sent to a backend.
 
+Folder-write failures have a separate, bounded error record, so normal save
+messages and preference changes cannot hide them. A recovery strip appears in
+the workspace footer; Settings keeps detailed recovery controls above its scroll
+area. **Retry backup** snapshots the current document after this frame's edits
+and actions have completed. Unfinished text stays in its editor. Each attempt
+uses a new unique filename, with duplicate actions disabled while a write runs.
+
+**Reconnect folder** requests permission only from a user action.
+**Download backup** starts a recovery download, including current document changes
+that could not save locally. A download leaves the folder error visible until
+the folder works again. Error text is remembered locally under
+`jig.backup.error.v1`, separately from document JSON and settings exports;
+failure to remember that text does not block recovery. Successful writes clear
+the record. Document replacement/clearing and folder disconnection cancel old
+writes and clear their recovery state. Normal automatic backups retain their
+existing schedule; no separate failure-retry loop is added.
+
 ## Browser controls
 
 Task-list add/remove controls sit beside their tabs, with a small gap before the

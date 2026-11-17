@@ -6,6 +6,31 @@ pub fn has_edit_events(ctx: &Context) -> bool {
     ctx.input(|input| input.events.iter().any(edits_text))
 }
 
+/// A key that opens a control must not type into the editor it just focused.
+/// eframe pairs Space with a text event, before or after its key event.
+pub fn consume_opening_keys(ctx: &Context) {
+    ctx.input_mut(|input| {
+        let space = input.events.iter().position(|event| {
+            matches!(event, Event::Key { key: Key::Space, pressed: true, modifiers, .. }
+                if modifiers.is_none())
+        });
+        let paired_text = space.and_then(|index| {
+            [Some(index + 1), index.checked_sub(1)]
+                .into_iter()
+                .flatten()
+                .find(|&index| matches!(input.events.get(index), Some(Event::Text(text)) if text == " "))
+        });
+        let mut index = 0;
+        input.events.retain(|event| {
+            let keep = paired_text != Some(index)
+                && !matches!(event, Event::Key { key: Key::Enter | Key::Space, pressed: true, modifiers, .. }
+                    if modifiers.is_none());
+            index += 1;
+            keep
+        });
+    });
+}
+
 fn edits_text(event: &Event) -> bool {
     match event {
         Event::Text(_) | Event::Paste(_) | Event::Cut | Event::Ime(_) => true,

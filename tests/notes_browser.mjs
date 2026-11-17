@@ -34,7 +34,7 @@ const taskFixture = {
 };
 delete taskFixture.notes;
 const issues = [], contexts = [];
-const headerTargets = 6; // Data, Settings, Calculator, About, Help, Source.
+const headerTargets = 6; // Data, Settings, About, Help, Calculator, Source.
 let current, phase = "launch Chromium";
 const timer = setTimeout(() => { console.error(`Notes browser exceeded 360 seconds during: ${phase}`); process.exit(1); }, 360000);
 function progress(message) { phase = message; console.log(`Notes browser phase: ${message}`); }
@@ -149,11 +149,11 @@ async function expectEditorText(page, text) {
   await key(page, "Control+a"); await key(page, "Control+c");
   await expectClipboard(page, text);
 }
-async function attemptSample(scene) {
+async function attemptOpenLocal(scene) {
   // Data is fixed at the top left of this known desktop viewport.
   // Clicking it transfers focus without cancelling the working Task editor.
   await scene.page.mouse.click(25, 14); await paint(scene.page);
-  await tab(scene.page, 7); // Settings, Calculator, About, Help, Start empty, Open local, Sample mode.
+  await tab(scene.page, 6); // Settings, About, Help, Calculator, Start empty, Open local.
   await key(scene.page, "Space"); await key(scene.page, "Control+Alt+d");
 }
 async function focusedButtonRect(page) {
@@ -239,7 +239,7 @@ async function undo(scene, expected) {
   await expectState(scene.page, expected, "One Undo must restore the complete note/task operation");
 }
 async function exportData(scene) {
-  await notes(scene); await key(scene.page, "Control+Alt+d"); await tab(scene.page, 10);
+  await notes(scene); await key(scene.page, "Control+Alt+d"); await tab(scene.page, 9);
   const event = scene.page.waitForEvent("download"); await key(scene.page, "Space");
   const download = await event; assert.equal(download.suggestedFilename(), "jig.json");
   const result = JSON.parse(await readFile(await download.path(), "utf8"));
@@ -329,7 +329,7 @@ try {
   await typeBody(current.page, "Sample: plan exhibition"); await key(current.page, "Enter");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key))?.tasks.length === 1, storageKey);
   const firstTask = (await state(current.page)).tasks[0];
-  assert.equal(firstTask.text, "Sample: plan exhibition", "First-use work must save as personal data, rather than disappear into sample mode");
+  assert.equal(firstTask.text, "Sample: plan exhibition", "First-use work must save as personal data");
   await canvasFocus(current.page);
   await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
   await tab(current.page, headerTargets + 7); // Header, tabs2, commands2, star/checkbox/date.
@@ -368,6 +368,37 @@ try {
       await undo(current, plan);
     }
   }
+
+  progress("recover unfinished dates after a local color save but reject an externally changed task");
+  const firstUse = current;
+  current = await open("notes-date-metadata-recovery", plan, false, false);
+  await canvasFocus(current.page); await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
+  await tab(current.page, headerTargets + 8); await key(current.page, "Space");
+  await typeBody(current.page, "2026-11-06");
+  // The color control stays available while the row's date form is open.
+  for (let index = 0; index < 4; index++) await key(current.page, "Shift+Tab"); // del, edit, date, color.
+  await key(current.page, "Space");
+  await tab(current.page, 5); await key(current.page, "Space"); // date, edit, del, None, Rose.
+  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "rose", storageKey);
+  const recolored = structuredClone(plan); recolored.tasks[0].color = "rose";
+  await expectState(current.page, recolored, "Saving a color must preserve the committed dates while the new due date remains a draft");
+  await current.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule?.due === "2026-11-06");
+  await boot(current, true, false);
+  await expectEditorText(current.page, "2026-11-06");
+  await expectState(current.page, recolored, "Refresh must restore unfinished dates after this tab saved task metadata");
+
+  const external = structuredClone(recolored);
+  external.tasks[0].text += " (changed elsewhere)";
+  external.deadlines[0].title = external.tasks[0].text;
+  const preservedDraft = await current.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1"));
+  await current.page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key: storageKey, raw: JSON.stringify(external) });
+  await boot(current, true, false);
+  assert.notEqual(await current.page.evaluate(() => document.activeElement?.tagName), "INPUT",
+    "A date draft belonging to an externally changed task must not reopen against the new record");
+  await expectState(current.page, external, "Draft recovery must leave the externally updated task and deadline intact");
+  assert.equal(await current.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1")), preservedDraft,
+    "A conflicting date draft must remain available for recovery without overwriting its raw backup");
+  await current.context.close(); current = firstUse; await current.page.bringToFront();
 
   await key(current.page, "Control+Alt+n"); await tab(current.page, headerTargets + 1); await key(current.page, "Space");
   await typeBody(current.page, "Sample: installation reminder\nBring measuring tape");
@@ -411,11 +442,11 @@ try {
   await expectState(current.page, recoveredNotes, "Typing a new task must not create a partial checklist record");
   await key(current.page, "Control+Alt+o");
   await expectEditorText(current.page, unsent);
-  await attemptSample(current);
+  await attemptOpenLocal(current);
   const guardedInput = await taskGanttButtonPoint(current.page, "input");
   await current.page.mouse.click(guardedInput.x, guardedInput.y); await paint(current.page);
   await expectEditorText(current.page, unsent);
-  await expectState(current.page, recoveredNotes, "Open local and Sample mode must preserve unsent personal task text and saved records");
+  await expectState(current.page, recoveredNotes, "Keyboard and Data-menu Open local must preserve unsent task text and saved records");
   assert.equal(await current.page.evaluate(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1")).task.text), unsent);
   await boot(current, true, false);
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
@@ -429,6 +460,24 @@ try {
   assert.deepEqual(kept.deadlines, plan.deadlines);
   await capture(current.page, "notes-recovered");
   assert.deepEqual(await exportData(current), kept, "A portable JSON backup must contain the recovered tasks, dates and notes");
+  await current.context.close();
+
+  progress("ignore legacy temporary drafts without changing the saved personal notes");
+  current = await open("notes-legacy-temporary-draft");
+  await tab(current.page, headerTargets + 1); await key(current.page, "Space");
+  await typeBody(current.page, "Sample: legacy temporary draft must remain separate");
+  await current.page.waitForFunction(() => sessionStorage.getItem("jig.drafts.v1")?.includes("legacy temporary draft"));
+  await current.page.evaluate(() => {
+    const draft = JSON.parse(sessionStorage.getItem("jig.drafts.v1"));
+    draft.kind = "demo";
+    sessionStorage.setItem("jig.drafts.v1", JSON.stringify(draft));
+  });
+  await boot(current, true, false);
+  assert.notEqual(await current.page.evaluate(() => document.activeElement?.tagName), "INPUT",
+    "An old temporary draft must not reopen as a personal editor");
+  await expectState(current.page, fixture, "Ignoring a legacy temporary draft must preserve every saved personal record");
+  assert.equal(await current.page.evaluate(key => localStorage.getItem(key), storageKey), JSON.stringify(fixture),
+    "Loading an obsolete temporary draft must not rewrite the personal file");
   await current.context.close();
 
   progress("create and edit multiline text without a separate title or premature save");
@@ -507,7 +556,7 @@ try {
   const imported = structuredClone(edited); imported.notes[1].text += "\nImported locally";
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-notes.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
   await current.page.waitForTimeout(1200); await expectState(current.page, edited, "Import must wait for confirmation");
-  await notes(current); await tab(current.page, 6); await key(current.page, "Space"); // Data, Settings, Calculator, About, Help, Confirm import.
+  await notes(current); await tab(current.page, 6); await key(current.page, "Space"); // Data, Settings, About, Help, Calculator, Confirm import.
   await expectState(current.page, imported, "Confirmed JSON import must preserve complete note text and identities");
   await boot(current, true); await expectState(current.page, imported);
   await current.context.close();
@@ -563,7 +612,7 @@ try {
   await expectState(current.page, race, "Cross-field input must remain a working edit until explicit Save");
 
   await key(current.page, "Control+Alt+o"); await expectEditorText(current.page, reviewedBody);
-  await attemptSample(current);
+  await attemptOpenLocal(current);
   const guardedDetails = await taskGanttButtonPoint(current.page, "details");
   await current.page.mouse.click(guardedDetails.x, guardedDetails.y); await paint(current.page);
   await expectEditorText(current.page, reviewedBody);

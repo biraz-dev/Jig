@@ -306,6 +306,18 @@
     }
     throw new Error("Could not create a unique backup filename. Try again.");
   }
+  async function removeIncompleteBackup(handle, name) {
+    // Native file locks can outlive abort briefly. Retry only this attempt's file.
+    const delays = [25, 75, 150];
+    for (let attempt = 0; ; attempt++) {
+      try { await handle.removeEntry(name); return; }
+      catch (error) {
+        if (error?.name === "NotFoundError") return;
+        if (attempt === delays.length) throw error;
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      }
+    }
+  }
   function rememberBackup() {
     status.last_backup = new Date().toISOString();
     try { localStorage.setItem(lastBackupKey, status.last_backup); } catch { /* File was saved successfully. */ }
@@ -334,7 +346,7 @@
     };
     phase = "writing"; status.busy = true; status.message = "Saving backup…";
     (async () => {
-      let stream, name, committed = false;
+      let stream, name, failure, committed = false;
       try {
         const access = await permission(handle);
         current(); status.permission = access;
@@ -354,11 +366,20 @@
         if (token === writeGeneration) {
           if (error?.name === "NotAllowedError" || error?.name === "SecurityError") status.permission = "prompt";
           backupFailure(error);
+          failure = status.error;
         }
       } finally {
         if (!committed) {
           if (stream) { try { await stream.abort(); } catch { /* Already aborted or closed. */ } }
-          if (name) { try { await handle.removeEntry(name); } catch { /* Reported failure remains visible. */ } }
+          if (name) {
+            try { await removeIncompleteBackup(handle, name); }
+            catch (error) {
+              if (token === writeGeneration) {
+                status.message = `${failure.slice(0, 1024)} Could not remove incomplete backup ${name}: ${String(error?.message ?? error).slice(0, 512)}. Remove that file manually.`;
+                setBackupError(status.message);
+              }
+            }
+          }
         }
         if (token === writeGeneration) { activeWriter = null; phase = "idle"; status.busy = false; }
       }

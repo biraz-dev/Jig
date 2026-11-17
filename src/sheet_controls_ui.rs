@@ -466,7 +466,7 @@ impl ControlsPanel {
                             target.cell.label()
                         ));
                     }
-                    if editing && ui.small_button("Edit").clicked() {
+                    if editing && reveal_on_focus(ui.small_button("Edit")).clicked() {
                         if let Some(draft) = &mut self.editor {
                             draft.focus = true;
                             self.error =
@@ -478,10 +478,11 @@ impl ControlsPanel {
                         self.cancel_gesture();
                     }
                     if editing
-                        && ui
-                            .add_enabled(index > 0, egui::Button::new("↑").small())
-                            .on_hover_text("Move control up")
-                            .clicked()
+                        && reveal_on_focus(
+                            ui.add_enabled(index > 0, egui::Button::new("↑").small())
+                                .on_hover_text("Move control up"),
+                        )
+                        .clicked()
                     {
                         actions.push(ChartAction::ControlMove {
                             id: control.id,
@@ -489,13 +490,14 @@ impl ControlsPanel {
                         });
                     }
                     if editing
-                        && ui
-                            .add_enabled(
+                        && reveal_on_focus(
+                            ui.add_enabled(
                                 index + 1 < book.controls.len(),
                                 egui::Button::new("↓").small(),
                             )
-                            .on_hover_text("Move control down")
-                            .clicked()
+                            .on_hover_text("Move control down"),
+                        )
+                        .clicked()
                     {
                         actions.push(ChartAction::ControlMove {
                             id: control.id,
@@ -503,10 +505,11 @@ impl ControlsPanel {
                         });
                     }
                     if editing
-                        && ui
-                            .small_button("del")
-                            .on_hover_text("Remove control; Undo restores it")
-                            .clicked()
+                        && reveal_on_focus(
+                            ui.small_button("del")
+                                .on_hover_text("Remove control; Undo restores it"),
+                        )
+                        .clicked()
                     {
                         actions.push(ChartAction::ControlRemove(control.id));
                     }
@@ -616,24 +619,25 @@ impl ControlsPanel {
         let conflicted = draft.dirty && draft.source != source;
         let mut apply = false;
         ui.horizontal_wrapped(|ui| {
-            let response = ui.add(
-                TextEdit::singleline(&mut draft.text)
-                    .id(egui::Id::new(("control-number-value", control.id)))
-                    .return_key(None)
-                    .char_limit(64)
-                    .hint_text("Value")
-                    .desired_width(150.0_f32.min(ui.available_width())),
+            let response = reveal_on_focus(
+                ui.add(
+                    TextEdit::singleline(&mut draft.text)
+                        .id(egui::Id::new(("control-number-value", control.id)))
+                        .return_key(None)
+                        .char_limit(64)
+                        .hint_text("Value")
+                        .desired_width(150.0_f32.min(ui.available_width())),
+                ),
             );
             if response.changed() {
                 draft.dirty = true;
                 draft.error = None;
             }
             let submitted = enter(ui, &response);
-            apply = ui
-                .add_enabled(!conflicted, egui::Button::new("Apply"))
+            apply = reveal_on_focus(ui.add_enabled(!conflicted, egui::Button::new("Apply")))
                 .clicked()
                 || (!conflicted && submitted);
-            if draft.dirty && ui.small_button("Reset").clicked() {
+            if draft.dirty && reveal_on_focus(ui.small_button("Reset")).clicked() {
                 draft.text = value.csv_value();
                 draft.source = source.into();
                 draft.dirty = false;
@@ -702,8 +706,8 @@ impl ControlsPanel {
         } else {
             ((value - min) / step).round().clamp(0.0, last)
         };
-        let response = ui
-            .horizontal(|ui| {
+        let response = reveal_on_focus(
+            ui.horizontal(|ui| {
                 let response = ui.add(
                     egui::Slider::new(&mut position, 0.0..=last)
                         .step_by(1.0)
@@ -723,7 +727,8 @@ impl ControlsPanel {
                 ui.label(RichText::new(format!("{value:.*}", decimals.min(10))).monospace());
                 response
             })
-            .inner;
+            .inner,
+        );
         let pointer_down = ui.input(|input| input.pointer.any_down());
         if !pointer_down {
             self.active_slider = None;
@@ -759,6 +764,13 @@ impl ControlsPanel {
             actions.push(ChartAction::ControlValue { id, value });
         }
     }
+}
+
+fn reveal_on_focus(response: egui::Response) -> egui::Response {
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
+    response
 }
 
 pub fn sheet_choice(ui: &mut Ui, id: &'static str, book: &Workbook, sheet: &mut u64) {

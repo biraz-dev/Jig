@@ -349,7 +349,19 @@ impl CalendarPanel {
                     rect.right_bottom(),
                 );
                 let response = ui.interact(grid, id, egui::Sense::click());
-                let requested_focus = self.focus_requested;
+                let pointer_click = if response.clicked_by(egui::PointerButton::Primary)
+                    && ui.input(|input| input.pointer.any_released())
+                {
+                    response.interact_pointer_pos().filter(|p| {
+                        grid.contains(*p) && p.x < grid.right() && p.y < grid.bottom()
+                    })
+                } else {
+                    None
+                };
+                // TouchEnd removes the pointer before egui handles focus.
+                // A blank cell still belongs to the grid's keyboard field.
+                let requested_focus = self.focus_requested
+                    || (pointer_click.is_some() && !response.has_focus());
                 if requested_focus {
                     response.request_focus();
                     self.focus_requested = false;
@@ -376,14 +388,10 @@ impl CalendarPanel {
                     focus_rect = Some(grid);
                     ui.ctx().request_repaint();
                 }
-                if response.clicked() && ui.input(|input| input.pointer.any_released()) {
-                    if let Some(pointer) = response.interact_pointer_pos().filter(|p| {
-                        grid.contains(*p) && p.x < grid.right() && p.y < grid.bottom()
-                    }) {
-                        let column = ((pointer.x - grid.left()) / (width / 7.0)).floor() as usize;
-                        let row = ((pointer.y - grid.top()) / MONTH_CELL_HEIGHT).floor() as usize;
-                        selected = cells.get(row * 7 + column).copied().flatten();
-                    }
+                if let Some(pointer) = pointer_click {
+                    let column = ((pointer.x - grid.left()) / (width / 7.0)).floor() as usize;
+                    let row = ((pointer.y - grid.top()) / MONTH_CELL_HEIGHT).floor() as usize;
+                    selected = cells.get(row * 7 + column).copied().flatten();
                 }
                 if response.has_focus() {
                     ui.memory_mut(|memory| {

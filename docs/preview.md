@@ -13,12 +13,13 @@ they are never copied into a second task store. ODS is the portable document,
 CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 [spreadsheet guide](../README.md#spreadsheet) for controls and limits.
 
-The default Graphite palette keeps charcoal surfaces, soft warm white text and a
-blood-orange red focus color. Settings also offers warm Light and System
-appearance; System follows the browser/OS preference. Graphite retains the
-existing browser and terminal palette. Task and chart category colors, explicit
-cell formatting and document exports retain their own colors. The matching SVG
-favicon has an opaque charcoal interior.
+The default Ember palette keeps the original charcoal surfaces, warm white text
+and blood-orange accent. Settings also offers Nord, Dracula, neutral dark
+Graphite, Paper, System and Custom. Themes cover all browser workspaces,
+including Draft and chart backgrounds, text and controls; task/list colors,
+chart series colors and explicit cell formatting retain their data values.
+Printed PDF pages keep a white background. The matching SVG favicon has an
+opaque charcoal interior.
 
 Sheet formatting includes left, center and right alignment, an Auto reset,
 strikeout and range-aware border presets. Row/column headers have insert/delete
@@ -172,14 +173,24 @@ Done or Esc returns to the existing workspace without changing its data.
 Application Undo/Redo remain available through
 their shortcuts; there are no header Undo/Redo buttons or personal/local labels.
 
-**Appearance** offers Graphite, Light and System. Graphite is the existing warm
-dark palette, Light uses warm light surfaces and graphite text, and System
-follows the browser/OS appearance. Explicit sheet cell formatting and task/chart
-category colors retain their own values.
+**Appearance** offers Ember, Paper, Nord, Dracula, neutral dark Graphite, System
+and Custom. Ember preserves Jig's original warm look. System follows the
+browser's light/dark preference, rather than reading a desktop or GTK palette.
+Themes and customization do not require a network connection.
+
+**Customize colors** is collapsed at the end of Settings. Its background,
+surface, text and accent controls accept hex values or a color picker. Select
+Custom to activate the saved palette; switching to a preset retains its values.
+Customize this theme starts a custom palette from the selected preset.
+Optional system accent uses CSS `AccentColor` only when the browser exposes it;
+otherwise the chosen accent remains in use. Manual editing is always available.
 
 Application preferences use localStorage key `jig.settings.v1`, independently of
 `jig.personal.v1`. Theme, shortcut overrides, Undo levels and the automatic-backup
-option are version-1 settings, not document edits or document Undo entries.
+option are version-2 settings, not document edits or document Undo entries. The
+storage key is retained for existing profiles. Version-1 files and files with no
+version migrate without resetting their other preferences: old Graphite maps to
+Ember and Light to Paper so their appearance stays the same.
 **Export settings** downloads `jig-settings.json`; **Import settings** accepts up
 to 32 KiB, validates it, and presents a review before **Apply imported settings**.
 Invalid or conflicting files leave the current settings and task document
@@ -187,7 +198,7 @@ unchanged. Settings imports never replace tasks, notes, dates or sheets. Task
 JSON and Jig ODS preserve document preferences such as decimal places and panel
 widths; application settings travel through their separate export.
 
-The twelve application actions have editable bindings: Sheet/Tasks, Tasks,
+The thirteen application actions have editable bindings: Sheet/Tasks, Tasks,
 Notes, Calculator, Calendar/Timeline, Data, Settings, Undo, Redo, Maximize panel,
 Rename list/expand panel and Open local data. Select a binding and press its new
 combination; Esc cancels capture. Each action can be reset or unassigned, and
@@ -387,7 +398,7 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The ten browser suites run against the same built artifact in separate jobs,
+The eleven browser suites run against the same built artifact in separate jobs,
 with at most six runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
@@ -395,8 +406,8 @@ contains `[render]` also prints allowlisted synthetic screenshots as
 bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
 locally to request named scenes; personal application data is never used.
 
-The deployment gates cover spreadsheets, Charts, Draft, local OCR, the timeline,
-task lists, notes, general browser flows, Undo/Redo and Settings. The Settings browser suite
+The deployment gates cover spreadsheets, Charts, Draft, themes, local OCR, the
+timeline, task lists, notes, general browser flows, Undo/Redo and Settings. The Settings browser suite
 also runs `tests/settings_bridge.mjs`, which covers settings and backup bridge
 races with synthetic files and handles. The four STL-only browser suites are
 not deployment gates while that interface is hidden. Native geometry, scale,

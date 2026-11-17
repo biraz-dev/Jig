@@ -541,6 +541,87 @@ fn calendar_task_colors_show_every_due_task_without_changing_the_star() {
 }
 
 #[test]
+fn calendar_projection_preserves_deadline_order_and_mixed_owners() {
+    let mut state = State::default();
+    let default_list = state.default_list_id();
+    let other_list = state.add_task_list("Other work").unwrap();
+    let first = state.add_task("Photograph sculptures").unwrap();
+    let completed = state.add_task_to_list(other_list, "Pack prints").unwrap();
+    let elsewhere = state.add_task("Later work").unwrap();
+    for (task, at) in [
+        (first, "2030-01-16T02:00:00Z"),
+        (completed, "2030-01-16T03:00:00Z"),
+        (elsewhere, "2030-01-17T02:00:00Z"),
+    ] {
+        state.set_task_deadline(task, Some(at)).unwrap();
+    }
+    state.set_task_color(first, Some(TaskColor::Rose)).unwrap();
+    state
+        .set_task_color(completed, Some(TaskColor::Sage))
+        .unwrap();
+    state.toggle_task(completed).unwrap();
+    state.feature_task(first).unwrap();
+    let featured = state.task_deadline(first).unwrap().id;
+    let completed_deadline = state.task_deadline(completed).unwrap().id;
+    let legacy = state
+        .set_deadline(None, "Legacy deadline", "2030-01-16T04:00:00Z")
+        .unwrap();
+    // Display order comes from deadlines, independently of checklist ordering.
+    state.tasks.reverse();
+    state.deadlines.rotate_right(1);
+    state.validate().unwrap();
+    let before = serde_json::to_string(&state).unwrap();
+    let local = chrono::FixedOffset::west_opt(5 * 3600).unwrap();
+    let date = chrono::NaiveDate::from_ymd_opt(2030, 1, 15).unwrap();
+    let rows = state.tasks_on_date(date, &local);
+    let visible: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.deadline_id,
+                row.task_id,
+                row.list_id,
+                row.title,
+                row.complete,
+                row.color,
+            )
+        })
+        .collect();
+    assert_eq!(
+        visible,
+        vec![
+            (legacy, None, default_list, "Legacy deadline", false, None),
+            (
+                featured,
+                Some(first),
+                default_list,
+                "Photograph sculptures",
+                false,
+                Some(TaskColor::Rose)
+            ),
+            (
+                completed_deadline,
+                Some(completed),
+                other_list,
+                "Pack prints",
+                true,
+                Some(TaskColor::Sage)
+            ),
+        ]
+    );
+    assert!(state.tasks_on_date(date, &Utc).is_empty());
+    let single = state.tasks_on_date(date.succ_opt().unwrap(), &local);
+    assert_eq!(single.len(), 1);
+    assert_eq!(single[0].task_id, Some(elsewhere));
+    assert_eq!(single[0].title, "Later work");
+    assert!(state
+        .tasks_on_date(date.pred_opt().unwrap(), &local)
+        .is_empty());
+    assert_eq!(serde_json::to_string(&state).unwrap(), before);
+    assert_eq!(state.featured, Some(featured));
+}
+
+#[test]
 fn calendar_task_colors_follow_date_edits_completion_and_local_dates() {
     let mut state = State::default();
     let task = state.add_task("Install work").unwrap();

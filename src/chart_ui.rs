@@ -345,7 +345,8 @@ impl ChartPanel {
         let colors = web_theme::colors(ui.ctx());
         let mut create = false;
         let mut cancel = false;
-        egui::Frame::default()
+        let opening = draft.focus;
+        let frame = egui::Frame::default()
             .fill(colors.bg)
             .stroke(Stroke::new(0.6_f32, colors.rule))
             .inner_margin(egui::Margin::same(9))
@@ -385,6 +386,9 @@ impl ChartPanel {
                             .char_limit(120)
                             .desired_width(260.0_f32.min(ui.available_width())),
                     );
+                    if opening {
+                        response.request_focus();
+                    }
                     create |= sheet_controls_ui::enter(ui, &response);
                 });
                 if draft.kind == ChartKind::Gantt {
@@ -415,6 +419,9 @@ impl ChartPanel {
                     cancel = ui.small_button("Cancel").clicked();
                 });
             });
+        if opening {
+            frame.response.scroll_to_me(Some(egui::Align::Min));
+        }
         ui.add_space(8.0);
         if cancel {
             self.creation = None;

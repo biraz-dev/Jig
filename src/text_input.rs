@@ -139,6 +139,21 @@ impl OrderedInput {
         let mut sheet_edit_pending = false;
         let mut press_origin = None;
         for (index, event) in input.events.iter().enumerate() {
+            if finish_before_press
+                && matches!(
+                    event,
+                    Event::Key {
+                        key: Key::Tab,
+                        pressed: true,
+                        ..
+                    }
+                )
+            {
+                // Finish earlier text before Tab moves focus to another field.
+                self.deferred = input.events.split_off(index);
+                ctx.request_repaint();
+                break;
+            }
             if sheet_edit_pending && commits_sheet_edit(event, sheet_navigation) {
                 // Sheet navigation and file commands commit before TextEdit
                 // runs. Let earlier text reach the current draft first.

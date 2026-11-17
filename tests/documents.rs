@@ -4,8 +4,8 @@ use jig::{
     documents::{export_pdf, read_ods, save_ods},
     model::State,
     spreadsheet::{
-        CellAddr, CellAlignment, CellBorders, CellFont, CellRange, CellStyle, CellValue,
-        NumberFormat, Workbook,
+        BorderPreset, CellAddr, CellAlignment, CellBorders, CellFont, CellRange, CellStyle,
+        CellValue, NumberFormat, Workbook,
     },
 };
 use std::io::{Cursor, Read, Write};
@@ -153,6 +153,142 @@ fn ods_is_standard_zip_with_formulas_styles_merges_and_exact_jig_roundtrip() {
         serde_json::to_value(state).unwrap()
     );
     std::fs::write("/tmp/jig-document-review.ods", &bytes).unwrap();
+}
+
+#[test]
+fn ods_sparse_sheets_compact_empty_space_and_reopen_within_xml_limits() {
+    let mut book = Workbook::default();
+    for index in 0..6 {
+        let sheet = if index == 0 {
+            1
+        } else {
+            book.add_sheet(&format!("Sparse {index}")).unwrap()
+        };
+        book.set_style(
+            sheet,
+            range("AZ1000", "AZ1000"),
+            CellStyle {
+                bold: true,
+                ..CellStyle::default()
+            },
+        )
+        .unwrap();
+    }
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let bytes = save_ods(&state).unwrap();
+    let content = entry(&bytes, "content.xml");
+    assert!(
+        content.len() < 20_000,
+        "Sparse sheets must remain sparse in ODF"
+    );
+    assert!(content.contains("table:number-rows-repeated=\"999\""));
+    assert!(content.contains("table:number-columns-repeated=\"51\""));
+    let imported = read_ods(&bytes).unwrap();
+    assert_eq!(
+        serde_json::to_value(imported.embedded_state.unwrap()).unwrap(),
+        serde_json::to_value(&state).unwrap()
+    );
+    // The standard grid also preserves the distant style without Jig metadata.
+    let standard = read_ods(&package(&content, None)).unwrap().workbook;
+    for sheet in &standard.sheets {
+        assert_eq!(
+            standard.used_range(sheet.id),
+            Some(range("AZ1000", "AZ1000"))
+        );
+        assert!(standard.style(sheet.id, addr("AZ1000")).bold);
+        assert_eq!(
+            standard.recalculate().value(sheet.id, addr("A1")),
+            CellValue::Blank
+        );
+    }
+}
+
+#[test]
+fn ods_standard_sparse_grid_preserves_merged_borders_and_covered_cell_styles() {
+    let mut book = Workbook::default();
+    book.set_cell(1, addr("A1"), "5").unwrap();
+    book.set_cell(1, addr("A2"), "7").unwrap();
+    book.set_cell(1, addr("H6"), "=SUM(A1,A2)").unwrap();
+    book.set_cell(1, addr("C3"), "Merged heading").unwrap();
+    let merged = range("C3", "E4");
+    book.merge(1, merged).unwrap();
+    book.set_borders(1, merged, BorderPreset::Outer).unwrap();
+    let mut covered = book.style(1, addr("D4"));
+    covered.bold = true;
+    covered.fill_color = Some([220, 230, 240]);
+    book.set_style(1, range("D4", "D4"), covered.clone())
+        .unwrap();
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let bytes = save_ods(&state).unwrap();
+    let content = entry(&bytes, "content.xml");
+    let mut imported = read_ods(&package(&content, None)).unwrap().workbook;
+    assert_eq!(imported.sheet(1).unwrap().merges, vec![merged]);
+    assert_eq!(imported.used_range(1), Some(range("A1", "H6")));
+    assert_eq!(
+        imported.recalculate().value(1, addr("H6")),
+        CellValue::Number(12.0)
+    );
+    assert_eq!(
+        imported.rendered_style(1, addr("C3")).borders,
+        CellBorders::all()
+    );
+    assert_eq!(imported.style(1, addr("D4")), covered);
+    imported.unmerge(1, merged).unwrap();
+    assert_eq!(imported.style(1, addr("D4")), covered);
+}
+
+#[test]
+fn ods_large_empty_merges_compact_covered_cells_and_reopen() {
+    let mut book = Workbook::default();
+    let merged = range("A1", "AZ1000");
+    for index in 0..10 {
+        let sheet = if index == 0 {
+            1
+        } else {
+            book.add_sheet(&format!("Merged {index}")).unwrap()
+        };
+        book.merge(sheet, merged).unwrap();
+    }
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    let bytes = save_ods(&state).unwrap();
+    let content = entry(&bytes, "content.xml");
+    assert!(content.contains("<table:covered-table-cell table:number-columns-repeated=\"52\"/>"));
+    assert_eq!(read_ods(&bytes).unwrap().workbook, state.workbook.unwrap());
+}
+
+#[test]
+fn ods_export_rejects_text_that_would_exceed_the_import_xml_event_limit() {
+    let mut book = Workbook::default();
+    for row in 0..256 {
+        book.sheets[0]
+            .cells
+            .insert(CellAddr::new(row, 0).label(), "x ".repeat(2048));
+    }
+    let state = State {
+        workbook: Some(book),
+        ..State::default()
+    };
+    state.validate().unwrap();
+    assert!(save_ods(&state).unwrap_err().contains("event limit"));
+}
+
+#[test]
+fn external_ods_merged_anchor_borders_reach_the_rendered_perimeter() {
+    let content = r##"<d xmlns:table="t" xmlns:style="s" xmlns:fo="f"><style:style style:name="box" style:family="table-cell"><style:table-cell-properties fo:border="0.5pt solid #000000"/></style:style><table:table table:name="Merged"><table:table-row><table:table-cell table:style-name="box" table:number-columns-spanned="2" table:number-rows-spanned="2"/><table:covered-table-cell/></table:table-row><table:table-row><table:covered-table-cell table:number-columns-repeated="2"/></table:table-row></table:table></d>"##;
+    let book = read_ods(&package(content, None)).unwrap().workbook;
+    assert_eq!(
+        book.rendered_style(1, addr("A1")).borders,
+        CellBorders::all()
+    );
 }
 
 #[test]

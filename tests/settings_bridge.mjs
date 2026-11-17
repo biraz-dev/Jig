@@ -14,8 +14,8 @@ const namedError = (name, message = name) => Object.assign(new Error(message), {
 const personal = '{"version":1,"tasks":[],"deadlines":[]}';
 let checks = 0;
 
-function folder({ access = "granted", writeGate, writeError, closeError, collisions = false } = {}) {
-  const files = new Map(), calls = { query: 0, request: 0, close: 0, abort: 0, create: 0 };
+function folder({ access = "granted", writeGate, writeError, closeError, removeGate, removeError, collisions = false } = {}) {
+  const files = new Map(), calls = { query: 0, request: 0, close: 0, abort: 0, create: 0, remove: 0 };
   const handle = {
     kind: "directory", name: "Sample backups", files, calls,
     queryPermission: async () => { calls.query++; return access; },
@@ -49,13 +49,20 @@ function folder({ access = "granted", writeGate, writeError, closeError, collisi
         },
       };
     },
-    async removeEntry(name) { files.delete(name); },
+    async removeEntry(name) {
+      calls.remove++;
+      const gate = typeof removeGate === "function" ? removeGate(name, calls.remove) : removeGate;
+      if (gate) await gate.promise;
+      const error = typeof removeError === "function" ? removeError(name, calls.remove) : removeError;
+      if (error) throw error;
+      files.delete(name);
+    },
   };
   return handle;
 }
 
-function closingFolder(gates) {
-  const handle = folder();
+function closingFolder(gates, options) {
+  const handle = folder(options);
   let next = 0;
   handle.calls.closing = 0;
   handle.getFileHandle = async (name, options) => {
@@ -493,6 +500,73 @@ for (const rejectEarlier of [false, true]) {
   checks++;
 }
 {
+  const cleanup = deferred(), removed = [];
+  const handle = folder({
+    writeError: new Error("Synthetic write failure before cleanup"),
+    removeGate: (_name, attempt) => attempt === 3 ? cleanup : null,
+    removeError: (name, attempt) => {
+      removed.push(name);
+      return attempt < 3 ? namedError("NoModificationAllowedError", "Native file lock is still releasing") : null;
+    },
+  });
+  const previousTime = "2020-01-01T00:00:00.000Z";
+  const context = await connected(handle, { stored: new Map([["jig.backup.last.v1", previousTime]]) });
+  handle.files.set("jig-backup-existing.json", personal);
+  handle.files.set("user-owned.txt", "Keep this file");
+  const existing = [...handle.files];
+  context.window.jigBackupWrite(personal, false); await settle();
+  assert.equal(handle.calls.remove, 3, "A transient deletion lock must get bounded cleanup retries");
+  assert.equal(context.status().busy, true, "The current write stays busy until cleanup finishes");
+  assert.match(context.status().error, /Synthetic write failure before cleanup/);
+  assert.equal(context.status().last_backup, previousTime);
+  assert.equal(handle.calls.create, 1, "Cleanup must never retry writing the document");
+  cleanup.resolve(); await settle();
+  assert.equal(context.status().busy, false);
+  assert.equal(context.status().last_backup, previousTime);
+  assert.deepEqual([...handle.files], existing);
+  assert.equal(new Set(removed).size, 1, "All removal attempts must target only this attempt's new file");
+  assert.ok(removed.every(name => !existing.some(([previous]) => previous === name)));
+  assert.equal(context.stored.get("jig.backup.error.v1"), context.status().error);
+  checks++;
+}
+{
+  const handle = folder({
+    writeError: new Error("Synthetic write failure with missing placeholder"),
+    removeError: name => { handle.files.delete(name); return namedError("NotFoundError"); },
+  });
+  const context = await connected(handle);
+  context.window.jigBackupWrite(personal, false); await settle();
+  assert.equal(handle.calls.remove, 1, "An already removed placeholder needs no cleanup retry");
+  assert.equal(handle.files.size, 0);
+  assert.equal(context.status().busy, false);
+  assert.equal(context.status().error, "Backup failed: Synthetic write failure with missing placeholder");
+  checks++;
+}
+{
+  const handle = folder({
+    writeError: new Error("Synthetic original write failure"),
+    removeError: namedError("NoModificationAllowedError", "Synthetic permanent cleanup lock"),
+  });
+  const previousTime = "2020-01-01T00:00:00.000Z";
+  const context = await connected(handle, { stored: new Map([["jig.backup.last.v1", previousTime]]) });
+  handle.files.set("jig-backup-existing.json", personal);
+  handle.files.set("user-owned.txt", "Keep this file");
+  context.window.jigBackupWrite(personal, false); await settle();
+  assert.equal(handle.calls.remove, 4, "Permanent cleanup failure must stop after a small fixed number of attempts");
+  assert.equal(handle.calls.create, 1);
+  assert.equal(context.status().busy, false);
+  assert.equal(context.status().last_backup, previousTime);
+  assert.match(context.status().error, /Synthetic original write failure/);
+  assert.match(context.status().error, /Could not remove incomplete backup jig-backup-.*Synthetic permanent cleanup lock/);
+  assert.match(context.status().error, /Remove that file manually/);
+  assert.ok(context.status().error.length <= 2048);
+  assert.equal(context.stored.get("jig.backup.error.v1"), context.status().error);
+  assert.equal(handle.files.get("jig-backup-existing.json"), personal);
+  assert.equal(handle.files.get("user-owned.txt"), "Keep this file");
+  assert.equal([...handle.files.values()].filter(value => value === "").length, 1);
+  checks++;
+}
+{
   const latest = '{"version":1,"tasks":[{"id":2,"text":"Newer saved work","complete":false}],"deadlines":[]}';
   const context = await connected(folder(), { stored: new Map([["jig.personal.v1", latest]]) });
   assert.throws(() => context.window.jigBackupWrite(personal, true), /current successfully saved/);
@@ -576,6 +650,38 @@ for (const resetFailure of [false, true]) {
   assert.equal(added.length, 1);
   assert.equal(added[0][1], latest + "\n");
   for (const [name, text] of existing) assert.equal(handle.files.get(name), text);
+  checks++;
+}
+for (const permanent of [false, true]) {
+  const oldClose = deferred(), newClose = deferred(), cleanup = deferred();
+  const handle = closingFolder([oldClose, newClose], {
+    removeGate: (_name, attempt) => attempt === 2 ? cleanup : null,
+    removeError: (_name, attempt) => permanent || attempt === 1 ? namedError("NoModificationAllowedError", "Old file cleanup lock") : null,
+  });
+  const context = await connected(handle);
+  handle.files.set("user-owned.txt", "Keep this file");
+  context.window.jigBackupWrite(personal, false); await settle();
+  const oldName = [...handle.files.keys()].find(name => name !== "user-owned.txt");
+  context.window.jigBackupCancel(true);
+  const latest = '{"version":1,"tasks":[],"deadlines":[],"notes":[]}';
+  context.window.jigBackupWrite(latest, false); await settle();
+  oldClose.resolve(); await settle();
+  assert.equal(handle.calls.remove, 2);
+  assert.equal(context.status().busy, true, "Old cleanup retries must not unlock the current writer");
+  assert.equal(context.status().error, null);
+  newClose.resolve(); await settle();
+  const successfulTime = context.status().last_backup;
+  assert.ok(successfulTime);
+  assert.equal(context.status().busy, false);
+  cleanup.resolve(); await settle();
+  assert.equal(handle.calls.remove, permanent ? 4 : 2);
+  assert.equal(handle.files.has(oldName), permanent);
+  assert.equal(context.status().error, null, "Old cleanup failure must not become the new document's error");
+  assert.equal(context.stored.has("jig.backup.error.v1"), false);
+  assert.equal(context.status().last_backup, successfulTime);
+  assert.equal(context.status().busy, false);
+  assert.equal(handle.files.get("user-owned.txt"), "Keep this file");
+  assert.equal([...handle.files.values()].filter(text => text === latest + "\n").length, 1);
   checks++;
 }
 {

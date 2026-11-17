@@ -1,4 +1,4 @@
-//! History replacement must cancel pointer gestures before they can write cells.
+//! Native regressions for chart/control focus and history-safe pointer gestures.
 extern crate self as eframe;
 pub use egui;
 #[allow(dead_code)]
@@ -17,9 +17,10 @@ mod web_theme;
 use chart_ui::{ChartAction, ChartPanel};
 use egui::{Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect};
 use jig::{
+    charts::{ChartKind, ChartSource},
     model::State,
     sheet_controls::{ControlKind, ControlTarget},
-    spreadsheet::{CellAddr, Workbook},
+    spreadsheet::{CellAddr, CellRange, Workbook},
 };
 
 struct Harness {
@@ -100,24 +101,35 @@ impl Harness {
         self.frame(vec![], false);
         // Follow the actual Number field, Apply button, Slider focus order.
         for _ in 0..2 {
-            self.frame(
-                [true, false]
-                    .into_iter()
-                    .map(|pressed| Event::Key {
-                        key: Key::Tab,
-                        physical_key: None,
-                        pressed,
-                        repeat: false,
-                        modifiers: Modifiers::NONE,
-                    })
-                    .collect(),
-                false,
-            );
+            assert!(self.tab().is_empty());
         }
         let focused = self.ctx.memory(|memory| memory.focused()).unwrap();
         let rect = self.ctx.read_response(focused).unwrap().rect;
         assert!(rect.width() > 80.0 && rect.height() < 40.0);
         rect
+    }
+
+    fn tab(&mut self) -> Vec<ChartAction> {
+        self.frame(
+            [true, false]
+                .into_iter()
+                .map(|pressed| Event::Key {
+                    key: Key::Tab,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                })
+                .collect(),
+            false,
+        )
+    }
+
+    fn settle(&mut self) {
+        // egui animates the scroll position over several repaint passes.
+        for _ in 0..30 {
+            assert!(self.frame(vec![], false).is_empty());
+        }
     }
 
     fn pointer(pos: Pos2, pressed: bool) -> Vec<Event> {
@@ -201,4 +213,78 @@ fn history_reset_while_held_cancels_the_slider_until_release() {
 #[test]
 fn history_reset_in_the_pointer_release_frame_cannot_write_a_stale_value() {
     reset_drag(true);
+}
+
+#[test]
+fn tabbing_into_an_existing_offscreen_number_input_reveals_it_without_writing() {
+    let mut h = Harness::new();
+    let workbook = h.state.workbook.as_mut().unwrap();
+    workbook.controls[0].kind = ControlKind::Number;
+    for (row, col, text) in [
+        (0, 1, "Material"),
+        (0, 2, "Amount"),
+        (1, 1, "Clay"),
+        (1, 2, "3"),
+        (2, 1, "Glaze"),
+        (2, 2, "7"),
+    ] {
+        workbook.set_cell(1, CellAddr::new(row, col), text).unwrap();
+    }
+    for kind in [ChartKind::Bar, ChartKind::Pie, ChartKind::Line] {
+        workbook
+            .add_chart(
+                kind,
+                ChartSource::Range {
+                    sheet: 1,
+                    range: CellRange::new(CellAddr::new(0, 1), CellAddr::new(2, 2)),
+                },
+                "Materials",
+            )
+            .unwrap();
+    }
+    h.settle();
+    assert!(h
+        .frame(
+            vec![
+                Event::PointerMoved(Pos2::new(300.0, 600.0)),
+                Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -10_000.0),
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+            false,
+        )
+        .is_empty());
+    h.settle();
+    let field = Id::new(("control-number-value", 1_u64));
+    assert!(h.ctx.read_response(field).unwrap().rect.bottom() < 0.0);
+    h.ctx.memory_mut(|memory| {
+        if let Some(id) = memory.focused() {
+            memory.surrender_focus(id);
+        }
+    });
+    // Traverse the toolbar and the overflowing gallery's own focus stop.
+    for _ in 0..8 {
+        assert!(h.tab().is_empty());
+        if h.ctx.memory(|memory| memory.focused()) == Some(field) {
+            break;
+        }
+    }
+    assert_eq!(h.ctx.memory(|memory| memory.focused()), Some(field));
+    h.settle();
+    let response = h.ctx.read_response(field).unwrap();
+    assert!(
+        h.ctx.screen_rect().contains_rect(response.rect)
+            && response.interact_rect.contains_rect(response.rect),
+        "Keyboard focus must reveal the whole input: {response:?}"
+    );
+    assert_eq!(
+        h.state
+            .workbook
+            .as_ref()
+            .unwrap()
+            .raw(1, CellAddr::new(0, 0)),
+        "50"
+    );
 }

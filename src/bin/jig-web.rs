@@ -48,6 +48,10 @@ mod spreadsheet_ui;
 mod chart_ui;
 
 #[cfg(target_arch = "wasm32")]
+#[path = "../sheet_controls_ui.rs"]
+mod sheet_controls_ui;
+
+#[cfg(target_arch = "wasm32")]
 #[path = "../pdf_import_ui.rs"]
 mod pdf_import_ui;
 

@@ -67,11 +67,11 @@ fn about(ui: &mut Ui) {
             .strong()
             .color(web_theme::colors(ui.ctx()).accent),
     );
-    ui.label("A small artist's workbench, written in Rust.");
+    ui.label("A local place to work things out, written in Rust.");
     section(
         ui,
         "Your work stays on your device",
-        "Tasks, dates, notes and sheets save in this browser profile for this site's address. Refreshing restores saved work. There are no accounts, telemetry or backend storage. Imported documents are processed on your device.",
+        "Tasks, dates, notes, sheets and charts save in this browser profile for this site's address. Refreshing restores saved work. There are no accounts, telemetry or backend storage. Imported documents are processed on your device.",
     );
     section(
         ui,
@@ -124,6 +124,12 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
         "Keep up to 81 plain-text cards. Add note, type or paste, then Save or Ctrl+Enter. Enter adds a line; Esc cancels. Click text to edit it, copy to copy all of it, and pin to keep it first. Drag handles to reorder cards within their pinned or unpinned group.",
     );
     ui.label("On Tasks, drag a note's handle onto the task list to turn it into a task at the highlighted position. The note's task button also lets you choose its list. To note in the task editor converts it back. Conversion moves the record and retains its full text; a converted scheduled task keeps its dates for restoration.");
+    section(
+        ui,
+        "Sheets and Charts",
+        "Charts sits beside Sheets in the header. Select cells in Sheets and choose Insert → Send selection to Charts… to prefill a live range. Charts' Create menu adds pie, line, bar or Gantt charts, Number input, Slider and Calculated result cards linked to your cells. Create chart or Add control saves the draft; Cancel or Esc discards it.",
+    );
+    ui.label("Number inputs apply with Apply or Enter. Sliders commit on release within their min/max/step; result cards display a cell or formula result without changing it. Input controls protect formula cells. Edit layout reveals control editing, up/down ordering and deletion; Save control commits configuration changes. Changes use the shared Undo/Redo. JSON and Jig ODS retain links and definitions; ODS chart images are snapshots, not native editable ODS charts.");
     section(
         ui,
         "Calculator",

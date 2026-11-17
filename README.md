@@ -366,17 +366,23 @@ Arrows outside text fields move panel selection; **Esc** leaves an editor or
 closes a popup. Narrow screens stack the panels and scroll. **Ctrl-Alt-D** opens
 Data controls.
 
-The calculator icon beside the workspace tabs, or **Ctrl-Alt-4** by default, opens a compact popover
-without leaving the current workspace. Its input accepts `125 * 1.15`,
+The calculator icon at the far right, or **Ctrl-Alt-4** by default, opens a compact
+popover without leaving the current workspace. Its input accepts `125 * 1.15`,
 `72 in mm`, `72in to mm` and `1 1/2 in cm`. Decimal places and Copy stay inside;
 click a history result to reuse its full precision and conversion unit. Click
 outside or press Esc to close it.
 
-The calendar is a continuous strip of days with month boundaries. Widen the
-panel to see more dates, drag or use horizontal/Shift-wheel scrolling to pan, and
+Choose **Calendar** for a continuous strip of days with month boundaries. Widen
+the panel to see more dates, drag or use horizontal/Shift-wheel scrolling to pan, and
 use **+ / −**, Ctrl-wheel or a pinch to zoom. Today returns to the current day.
 With the strip focused, Left/Right select a day, Page Up/Down move a page, Home
 returns to today and +/− zoom. These view changes do not move any deadlines.
+
+Choose **Month** beside Calendar and Timeline for a classic Monday-first month
+grid. Previous/next arrows browse months, and Today returns to the current day.
+The grid shares the strip's selected date, due-date colors, task details and
+weather. Picking a task's Start or Due date also works in this view; browsing
+months and selecting dates leave the starred countdown unchanged.
 
 Dated tasks have optional Rose, Amber, Sage, Blue or Lilac colors. Their due day
 gets the same mark in the calendar; several tasks show separate marks and dense
@@ -413,8 +419,9 @@ stored precision, and nonexistent local times are rejected. Removing a due date
 clears its start. The starred task stays independent of calendar/timeline
 selection. Legacy standalone deadlines remain usable.
 
-You can also pick on the main Calendar strip: keep the date editor open, choose
-Calendar, then click or focus Start or Due. The calendar labels the active field;
+You can also pick on the main Calendar strip or Month grid: keep the date editor
+open, choose Calendar or Month, then click or focus Start or Due. The calendar
+labels the active field;
 selecting a day fills that draft and retains its time. **Save date** commits the
 range. **Done picking** or Esc exits picking without discarding the draft.
 Panning and zooming do not assign dates or change the featured countdown.

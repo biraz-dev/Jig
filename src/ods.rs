@@ -17,7 +17,7 @@ use quick_xml::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     io::{Cursor, Read, Write},
 };
@@ -428,6 +428,12 @@ pub fn save_ods(state: &State) -> Result<Vec<u8>> {
                 styles.push(style.clone());
             }
         }
+        for merge in &sheet.merges {
+            let style = book.rendered_style(sheet.id, merge.start);
+            if !styles.contains(&style) {
+                styles.push(style);
+            }
+        }
     }
     let mut content=format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content {NS} office:version=\"1.3\">{FONT_FACES}<office:automatic-styles>");
     for (index, style) in styles.iter().enumerate() {
@@ -445,18 +451,16 @@ pub fn save_ods(state: &State) -> Result<Vec<u8>> {
             escape(&sheet.name),
             sheet.id
         );
-        let mut end = book
+        let end = book
             .used_range(sheet.id)
             .map(|range| range.end)
             .unwrap_or(CellAddr::new(0, 0));
-        for address in sheet.styles.keys() {
-            let addr = CellAddr::parse(address)?;
-            end.row = end.row.max(addr.row);
-            end.col = end.col.max(addr.col);
+        let mut occupied_rows = BTreeSet::new();
+        for address in sheet.cells.keys().chain(sheet.styles.keys()) {
+            occupied_rows.insert(CellAddr::parse(address)?.row);
         }
         for merge in &sheet.merges {
-            end.row = end.row.max(merge.end.row);
-            end.col = end.col.max(merge.end.col);
+            occupied_rows.extend(merge.start.row..=merge.end.row);
         }
         let mut shapes = String::new();
         let mut chart_offset = 0.0;
@@ -488,20 +492,91 @@ pub fn save_ods(state: &State) -> Result<Vec<u8>> {
             content.push_str("</table:shapes>");
         }
         content.push_str("<table:table-column table:number-columns-repeated=\"52\"/>");
-        for row in 0..=end.row {
+        let mut row = 0;
+        while row <= end.row {
+            if !occupied_rows.contains(&row) {
+                let next = occupied_rows
+                    .range(row..)
+                    .next()
+                    .copied()
+                    .unwrap_or(end.row + 1);
+                let _ = write!(content, "<table:table-row table:number-rows-repeated=\"{}\"><table:table-cell table:number-columns-repeated=\"{}\"/></table:table-row>", next - row, end.col + 1);
+                row = next;
+                continue;
+            }
             content.push_str("<table:table-row>");
-            for col in 0..=end.col {
+            let mut col = 0;
+            while col <= end.col {
                 let addr = CellAddr::new(row, col);
                 let merge = sheet.merges.iter().find(|range| range.contains(addr));
                 if merge.is_some_and(|range| range.start != addr) {
-                    content.push_str("<table:covered-table-cell/>");
+                    let first = col;
+                    let stored = sheet.styles.get(&addr.label());
+                    col += 1;
+                    if stored.is_none() {
+                        while col <= end.col {
+                            let next = CellAddr::new(row, col);
+                            if sheet.styles.contains_key(&next.label())
+                                || !sheet
+                                    .merges
+                                    .iter()
+                                    .any(|range| range.start != next && range.contains(next))
+                            {
+                                break;
+                            }
+                            col += 1;
+                        }
+                    }
+                    content.push_str("<table:covered-table-cell");
+                    if let Some(index) =
+                        stored.and_then(|value| styles.iter().position(|style| style == value))
+                    {
+                        let _ = write!(content, " table:style-name=\"c{index}\"");
+                    }
+                    if col - first > 1 {
+                        let _ = write!(
+                            content,
+                            " table:number-columns-repeated=\"{}\"",
+                            col - first
+                        );
+                    }
+                    content.push_str("/>");
                     continue;
                 }
-                let style = book.style(sheet.id, addr);
-                let style_index = sheet
-                    .styles
-                    .get(&addr.label())
-                    .and_then(|value| styles.iter().position(|style| style == value));
+                if merge.is_none()
+                    && book.raw(sheet.id, addr).is_empty()
+                    && !sheet.styles.contains_key(&addr.label())
+                {
+                    let first = col;
+                    col += 1;
+                    while col <= end.col {
+                        let next = CellAddr::new(row, col);
+                        if !book.raw(sheet.id, next).is_empty()
+                            || sheet.styles.contains_key(&next.label())
+                            || sheet.merges.iter().any(|range| range.contains(next))
+                        {
+                            break;
+                        }
+                        col += 1;
+                    }
+                    let _ = write!(
+                        content,
+                        "<table:table-cell table:number-columns-repeated=\"{}\"/>",
+                        col - first
+                    );
+                    continue;
+                }
+                let stored = sheet.styles.get(&addr.label());
+                let style = if merge.is_some() {
+                    book.rendered_style(sheet.id, addr)
+                } else {
+                    stored.cloned().unwrap_or_default()
+                };
+                let style_index = if merge.is_some() || stored.is_some() {
+                    styles.iter().position(|value| value == &style)
+                } else {
+                    None
+                };
                 cell_xml(
                     &mut content,
                     book.raw(sheet.id, addr),
@@ -511,8 +586,10 @@ pub fn save_ods(state: &State) -> Result<Vec<u8>> {
                     merge.copied(),
                     state.preferences.decimals,
                 );
+                col += 1;
             }
             content.push_str("</table:table-row>");
+            row += 1;
         }
         content.push_str("</table:table>");
     }
@@ -520,6 +597,9 @@ pub fn save_ods(state: &State) -> Result<Vec<u8>> {
     if content.len() > MAX_ENTRY_BYTES as usize {
         return Err("ODS document exceeds the supported export size".into());
     }
+    // Text space runs can exceed the event budget before reaching the byte
+    // limit. Keep generated XML within the same budget as imported XML.
+    validate_xml(content.as_bytes())?;
     let metadata = serde_json::to_vec(&JigMetadata {
         version: 1,
         content_hash: hash(content.as_bytes()),
@@ -1010,6 +1090,17 @@ struct ParsedCell {
     paragraph: bool,
 }
 impl ParsedCell {
+    fn covered(mut attrs: BTreeMap<String, String>) -> Self {
+        // Covered cells can retain formatting for later unmerging, but their
+        // hidden values are not part of the visible workbook.
+        attrs.retain(|key, _| key == "style-name");
+        Self {
+            attrs,
+            text: String::new(),
+            paragraph: false,
+        }
+    }
+
     fn push(&mut self, text: &str) -> Result<()> {
         if self.text.len() + text.len() > MAX_CELL_BYTES {
             return Err("ODS cell exceeds its text limit".into());
@@ -1083,6 +1174,47 @@ fn raw_cell(cell: &ParsedCell) -> Result<String> {
     })
 }
 
+fn restore_merged_borders(sheet: &mut Sheet) {
+    for range in &sheet.merges {
+        let borders = sheet
+            .styles
+            .get(&range.start.label())
+            .map_or(CellBorders::none(), |style| style.borders);
+        // Standard ODF stores the visible merged border on its anchor. Jig
+        // renders perimeter edges, including any retained covered-cell styles.
+        if borders.bottom
+            && !(range.start.col..=range.end.col).any(|col| {
+                sheet
+                    .styles
+                    .get(&CellAddr::new(range.end.row, col).label())
+                    .is_some_and(|style| style.borders.bottom)
+            })
+        {
+            sheet
+                .styles
+                .entry(CellAddr::new(range.end.row, range.start.col).label())
+                .or_default()
+                .borders
+                .bottom = true;
+        }
+        if borders.right
+            && !(range.start.row..=range.end.row).any(|row| {
+                sheet
+                    .styles
+                    .get(&CellAddr::new(row, range.end.col).label())
+                    .is_some_and(|style| style.borders.right)
+            })
+        {
+            sheet
+                .styles
+                .entry(CellAddr::new(range.start.row, range.end.col).label())
+                .or_default()
+                .borders
+                .right = true;
+        }
+    }
+}
+
 fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
     let mut reader = Reader::from_reader(bytes);
     let mut book = Workbook::default();
@@ -1140,9 +1272,9 @@ fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
                         });
                     }
                     b"covered-table-cell" if sheet.is_some() => {
-                        col = col
-                            .checked_add(repeat(&a, "number-columns-repeated")?)
-                            .ok_or("ODS column count overflow")?;
+                        let count = repeat(&a, "number-columns-repeated")?;
+                        row_cells.push((col, count, ParsedCell::covered(a)));
+                        col = col.checked_add(count).ok_or("ODS column count overflow")?;
                     }
                     b"p" if cell.is_some() => {
                         cell.as_mut().unwrap().paragraph()?;
@@ -1189,9 +1321,9 @@ fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
                         col = col.checked_add(repeat).ok_or("ODS column count overflow")?;
                     }
                     b"covered-table-cell" if sheet.is_some() => {
-                        col = col
-                            .checked_add(repeat(&a, "number-columns-repeated")?)
-                            .ok_or("ODS column count overflow")?
+                        let count = repeat(&a, "number-columns-repeated")?;
+                        row_cells.push((col, count, ParsedCell::covered(a)));
+                        col = col.checked_add(count).ok_or("ODS column count overflow")?
                     }
                     b"s" if cell.is_some() => {
                         let count = a
@@ -1366,7 +1498,8 @@ fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
                             .ok_or("ODS row count overflow")?;
                     }
                     b"table" => {
-                        if let Some(sheet) = sheet.take() {
+                        if let Some(mut sheet) = sheet.take() {
+                            restore_merged_borders(&mut sheet);
                             book.sheets.push(sheet);
                         }
                     }

@@ -2583,10 +2583,7 @@ impl BrowserApp {
             return;
         }
         // The key that opens this view must not also choose a task date.
-        ctx.input_mut(|input| {
-            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-            input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
-        });
+        crate::text_input::consume_opening_keys(ctx);
         if self.timeline_view {
             self.toggle_calendar(ctx);
         }
@@ -3782,10 +3779,7 @@ impl BrowserApp {
             if self.focus_task_date {
                 // Opening an editor with Enter/Space must not also submit its
                 // newly focused field in this same frame.
-                ui.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
-                });
+                crate::text_input::consume_opening_keys(ui.ctx());
             }
             let owner = if self.task_date_timeline { 2 } else { 1 };
             let field = egui::Id::new(("task-date-input", id));

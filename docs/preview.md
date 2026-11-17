@@ -1,8 +1,8 @@
 # Browser development preview
 
 The egui/eframe browser application opens Tasks by default and remembers the
-selected workspace. About, Data, Tasks, Notes, Sheets, Settings, Help and the
-calculator sit on the left; the date sits on the right. Undo/Redo and personal/local labels no
+selected workspace. About, Data, Tasks, Notes, Sheets, Settings and Help sit on
+the left; the calculator button sits at the far right. Undo/Redo and personal/local labels no
 longer occupy the header. The title and tagline no longer
 occupy header space. Sheet retains its named tabs, formulas,
 formatting and charts. An older saved Workbench preference opens Tasks.
@@ -130,8 +130,8 @@ backup service.
 
 Open **Settings** between **Sheets** and **Help**, or press **Ctrl+,** by default.
 Settings uses the main view, with **Done** returning to the existing workspace. The header
-keeps About, Data, Tasks, Notes, Sheets, Settings, Help and the calculator together
-on the left, with the date on the right. About and Help use the main panel;
+keeps About, Data, Tasks, Notes, Sheets, Settings and Help together on the left,
+with the calculator button at the far right. About and Help use the main panel;
 Done or Esc returns to the existing workspace without changing its data.
 Application Undo/Redo remain available through
 their shortcuts; there are no header Undo/Redo buttons or personal/local labels.

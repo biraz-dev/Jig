@@ -12,10 +12,125 @@ pub enum SettingsAction {
     AuthorizeFolder,
     DisconnectFolder,
     BackupNow,
+    RetryBackup,
     DownloadBackup,
     RestoreBackup,
+    OpenBackupSettings,
     ImportSettings,
     ExportSettings,
+}
+
+/// Recovery stays visible until the folder backup succeeds or its document is reset.
+/// The compact version fits the main footer; Settings keeps the details above its scroll area.
+pub fn backup_recovery(
+    ui: &mut Ui,
+    backup: &BackupStatus,
+    saved: bool,
+    compact: bool,
+) -> Option<SettingsAction> {
+    let error = backup.error.as_deref()?;
+    let colors = web_theme::colors(ui.ctx());
+    ui.push_id(("backup-recovery", compact), |ui| {
+        if compact {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Folder backup failed")
+                        .small()
+                        .color(colors.error),
+                );
+                if backup.busy {
+                    ui.label(RichText::new("Working…").small().color(colors.muted));
+                }
+                recovery_buttons(ui, backup, saved, true)
+            })
+            .inner
+        } else {
+            egui::Frame::default()
+                .fill(colors.surface)
+                .stroke(egui::Stroke::new(1.0_f32, colors.error))
+                .corner_radius(0.0)
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width().min(900.0));
+                    ui.label(
+                        RichText::new("Folder backup failed")
+                            .strong()
+                            .color(colors.error),
+                    );
+                    ui.label(error);
+                    if backup.busy {
+                        quiet(ui, "Working…");
+                    } else if !saved {
+                        quiet(ui, "Save your changes before retrying, or download a copy of the current work.");
+                    } else if backup.folder.is_some() && backup.permission != "granted" {
+                        quiet(ui, "Reconnect the folder, then retry. You can also download a copy.");
+                    }
+                    recovery_buttons(ui, backup, saved, false)
+                })
+                .inner
+        }
+    })
+    .inner
+}
+
+fn recovery_buttons(
+    ui: &mut Ui,
+    backup: &BackupStatus,
+    saved: bool,
+    compact: bool,
+) -> Option<SettingsAction> {
+    let ready = backup.supported && backup.folder.is_some() && backup.permission == "granted";
+    let mut action = None;
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(
+                ready && saved && !backup.busy,
+                egui::Button::new("Retry backup").min_size(egui::vec2(0.0, 24.0)),
+            )
+            .on_hover_text("Back up the current document. Unfinished text stays in its editor.")
+            .clicked()
+        {
+            action = Some(SettingsAction::RetryBackup);
+        }
+        if backup.supported {
+            let access = if backup.folder.is_none() {
+                Some(("Choose folder", SettingsAction::ChooseFolder))
+            } else if backup.permission != "granted" {
+                Some(("Reconnect folder", SettingsAction::AuthorizeFolder))
+            } else {
+                None
+            };
+            if let Some((label, next)) = access {
+                if ui
+                    .add_enabled(
+                        !backup.busy,
+                        egui::Button::new(label).min_size(egui::vec2(0.0, 24.0)),
+                    )
+                    .clicked()
+                {
+                    action = Some(next);
+                }
+            }
+        }
+        if ui
+            .add_enabled(
+                !backup.busy,
+                egui::Button::new("Download backup").min_size(egui::vec2(0.0, 24.0)),
+            )
+            .on_hover_text("Download the current document, including changes that could not save in this browser.")
+            .clicked()
+        {
+            action = Some(SettingsAction::DownloadBackup);
+        }
+        if compact
+            && ui
+                .add(egui::Button::new("Settings").min_size(egui::vec2(0.0, 24.0)))
+                .clicked()
+        {
+            action = Some(SettingsAction::OpenBackupSettings);
+        }
+    });
+    action
 }
 
 #[derive(Default)]
@@ -81,6 +196,9 @@ impl SettingsPanel {
                 response.actions.push(SettingsAction::Done);
             }
         });
+        if let Some(action) = backup_recovery(ui, backup, saved, false) {
+            response.actions.push(action);
+        }
         egui::ScrollArea::vertical()
             .id_salt("application-settings")
             .auto_shrink([false, false])
@@ -257,7 +375,7 @@ impl SettingsPanel {
         if let Some(time) = &backup.last_backup {
             quiet(ui, &format!("Last backup: {time}"));
         }
-        if !backup.message.is_empty() {
+        if !backup.message.is_empty() && backup.error.as_deref() != Some(backup.message.as_str()) {
             ui.label(&backup.message);
         }
     }

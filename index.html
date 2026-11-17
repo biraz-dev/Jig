@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Jig: local tools for thinking, planning and working things out. Notes, tasks, spreadsheets and charts. No account or backend.">
+  <meta name="description" content="Jig: local tools for thinking, planning and working things out. Notes, drafts, tasks, spreadsheets and charts. No account or backend.">
   <meta name="referrer" content="no-referrer">
   <title>Jig</title>
   <link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg">
@@ -12,6 +12,8 @@
   <link data-trunk rel="copy-file" href="web/bridge.js">
   <link data-trunk rel="copy-file" href="web/settings.js">
   <link data-trunk rel="copy-file" href="web/document_bridge.js">
+  <link data-trunk rel="copy-file" href="web/draft.js">
+  <link data-trunk rel="copy-file" href="web/draft.css">
   <link data-trunk rel="copy-file" href="web/ocr_bridge.js">
   <link data-trunk rel="copy-dir" href="web/vendor">
   <link data-trunk rel="copy-file" href="web/font-license.txt">
@@ -19,21 +21,23 @@
   <link data-trunk rel="copy-file" href="web/stl.js">
   <link data-trunk rel="copy-file" href="web/preview.css">
   <link rel="stylesheet" href="preview.css">
+  <link rel="stylesheet" href="draft.css">
   <script src="bridge.js"></script>
   <script src="settings.js"></script>
   <script src="document_bridge.js"></script>
+  <script src="draft.js"></script>
   <script src="ocr_bridge.js"></script>
   <script src="weather.js"></script>
   <script src="stl.js"></script>
 </head>
 <body>
   <main id="loading" role="status">
-    <p>Local tasks, notes, spreadsheets and charts</p>
+    <p>Local tasks, notes, drafts, spreadsheets and charts</p>
     <p id="load-message">Starting Jig…</p>
     <p>Everything runs in this browser. No account, backend or telemetry.</p>
     <p><a href="https://github.com/biraz-dev/Jig">Source and build instructions</a></p>
   </main>
-  <canvas id="jig_canvas" aria-label="Jig local tasks, notes, spreadsheets and charts"></canvas>
+  <canvas id="jig_canvas" aria-label="Jig local tasks, notes, drafts, spreadsheets and charts"></canvas>
   <input id="jig-import" type="file" accept=".json,application/json" hidden aria-label="Import Jig JSON state">
   <input id="jig-csv-import" type="file" accept=".csv,text/csv,text/plain" hidden aria-label="Import CSV at the selected cell">
   <input id="jig-ods-import" type="file" accept=".ods,application/vnd.oasis.opendocument.spreadsheet" hidden aria-label="Open an OpenDocument spreadsheet">

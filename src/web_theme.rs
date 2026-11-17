@@ -1,6 +1,9 @@
 //! Browser colors; the shared RGB palette also drives the terminal and charts.
 use eframe::egui::{self, Color32, FontId, Stroke};
-use jig::palette;
+use jig::{
+    app_settings::{AppSettings, Theme},
+    palette::{self, ThemePalette},
+};
 
 pub const fn rgb([r, g, b]: [u8; 3]) -> Color32 {
     Color32::from_rgb(r, g, b)
@@ -21,7 +24,7 @@ pub const WEEKEND: Color32 = rgb(palette::WEEKEND);
 
 /// Colors belong to the egui context, so independent app views do not share
 /// mutable theme state. Explicit document and task colors are not rewritten.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Palette {
     pub bg: Color32,
     pub surface: Color32,
@@ -39,7 +42,7 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub const GRAPHITE: Self = Self {
+    pub const EMBER: Self = Self {
         bg: BG,
         surface: SURFACE,
         text: TEXT,
@@ -70,23 +73,79 @@ impl Palette {
         weekend: rgb([240, 234, 226]),
         pinned: rgb([239, 226, 203]),
     };
-}
 
-pub fn colors(ctx: &egui::Context) -> Palette {
-    if ctx.style().visuals.dark_mode {
-        Palette::GRAPHITE
-    } else {
-        Palette::LIGHT
+    fn from_theme(colors: ThemePalette) -> Self {
+        if colors == ThemePalette::EMBER {
+            return Self::EMBER;
+        }
+        if colors == ThemePalette::PAPER {
+            return Self::LIGHT;
+        }
+        Self {
+            bg: rgb(colors.background),
+            surface: rgb(colors.surface),
+            text: rgb(colors.text),
+            muted: rgb(colors.muted),
+            rule: rgb(colors.border),
+            grid: rgb(colors.grid),
+            accent: rgb(colors.accent),
+            selected: rgb(colors.selected),
+            hover: rgb(colors.hover),
+            active: rgb(colors.active),
+            error: rgb(colors.error),
+            weekend: rgb(colors.weekend),
+            pinned: rgb(colors.pinned),
+        }
     }
 }
 
-/// Install both palettes once. egui then follows OS changes in System mode.
-pub fn apply(ctx: &egui::Context, theme: jig::app_settings::Theme) {
+pub fn colors(ctx: &egui::Context) -> Palette {
+    Palette::from_theme(resolved(ctx))
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ThemeStyles {
+    dark: ThemePalette,
+    light: ThemePalette,
+}
+
+/// Read the palette selected by egui, including live OS changes in System mode.
+pub fn resolved(ctx: &egui::Context) -> ThemePalette {
     let installed = egui::Id::new("jig-theme-styles");
-    if !ctx.data(|data| data.get_temp::<bool>(installed).unwrap_or(false)) {
+    let dark = ctx.theme() == egui::Theme::Dark;
+    ctx.data(|data| data.get_temp::<ThemeStyles>(installed))
+        .map_or_else(
+            || {
+                if dark {
+                    ThemePalette::EMBER
+                } else {
+                    ThemePalette::PAPER
+                }
+            },
+            |styles| if dark { styles.dark } else { styles.light },
+        )
+}
+
+pub fn system_accent_available(ctx: &egui::Context) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<bool>(egui::Id::new("jig-system-accent"))
+            .unwrap_or(false)
+    })
+}
+
+/// Rebuild styles only when colors change. System mode installs both palettes
+/// so an OS appearance change does not need an application preference write.
+pub fn apply(ctx: &egui::Context, settings: &AppSettings, system_accent: Option<[u8; 3]>) {
+    let installed = egui::Id::new("jig-theme-styles");
+    let accent = system_accent.filter(|_| settings.system_accent);
+    let styles = ThemeStyles {
+        dark: ThemePalette::resolve(settings.theme, settings.custom_theme, true, accent),
+        light: ThemePalette::resolve(settings.theme, settings.custom_theme, false, accent),
+    };
+    if ctx.data(|data| data.get_temp::<ThemeStyles>(installed)) != Some(styles) {
         for (mode, colors) in [
-            (egui::Theme::Dark, Palette::GRAPHITE),
-            (egui::Theme::Light, Palette::LIGHT),
+            (egui::Theme::Dark, Palette::from_theme(styles.dark)),
+            (egui::Theme::Light, Palette::from_theme(styles.light)),
         ] {
             let mut style = (*ctx.style_of(mode)).clone();
             style.visuals = if mode == egui::Theme::Dark {
@@ -127,20 +186,28 @@ pub fn apply(ctx: &egui::Context, theme: jig::app_settings::Theme) {
             }
             ctx.set_style_of(mode, style);
         }
-        ctx.data_mut(|data| data.insert_temp(installed, true));
+        ctx.data_mut(|data| data.insert_temp(installed, styles));
     }
-    ctx.set_theme(match theme {
-        jig::app_settings::Theme::Graphite => egui::ThemePreference::Dark,
-        jig::app_settings::Theme::Light => egui::ThemePreference::Light,
-        jig::app_settings::Theme::System => egui::ThemePreference::System,
+    ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::new("jig-system-accent"), system_accent.is_some());
     });
+    let preference = if settings.theme == Theme::System {
+        egui::ThemePreference::System
+    } else if styles.dark.is_dark {
+        egui::ThemePreference::Dark
+    } else {
+        egui::ThemePreference::Light
+    };
+    if ctx.options(|options| options.theme_preference) != preference {
+        ctx.set_theme(preference);
+    }
 }
 
 pub fn srgb(color: Color32) -> [u8; 3] {
     [color.r(), color.g(), color.b()]
 }
 
-/// Quiet, warm graphite shades shared by combined task-list views and tabs.
+/// Quiet, warm Ember shades shared by combined task-list views and tabs.
 pub fn task_list_fill(index: usize) -> Color32 {
     const SHADES: [[u8; 3]; 5] = [
         [37, 33, 30],
@@ -153,9 +220,12 @@ pub fn task_list_fill(index: usize) -> Color32 {
 }
 
 pub fn task_list_fill_for(ctx: &egui::Context, index: usize) -> Color32 {
-    if ctx.style().visuals.dark_mode {
+    let colors = resolved(ctx);
+    if colors.background == palette::BACKGROUND && colors.surface == palette::SURFACE {
         task_list_fill(index)
-    } else {
+    } else if colors.background == ThemePalette::PAPER.background
+        && colors.surface == ThemePalette::PAPER.surface
+    {
         const SHADES: [[u8; 3]; 5] = [
             [241, 236, 229],
             [234, 227, 218],
@@ -164,5 +234,13 @@ pub fn task_list_fill_for(ctx: &egui::Context, index: usize) -> Color32 {
             [231, 223, 213],
         ];
         rgb(SHADES[index % SHADES.len()])
+    } else {
+        const AMOUNTS: [f32; 5] = [0.04, 0.09, 0.14, 0.065, 0.115];
+        let amount = AMOUNTS[index % AMOUNTS.len()];
+        rgb(std::array::from_fn(|channel| {
+            (f32::from(colors.background[channel]) * (1.0 - amount)
+                + f32::from(colors.text[channel]) * amount)
+                .round() as u8
+        }))
     }
 }

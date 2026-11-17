@@ -291,7 +291,7 @@ async function filledRegions(page, color, top, bottom, minimum = 100) {
 async function selectedDay(page) {
   const regions = await filledRegions(page, [67, 42, 34], 60, page.viewportSize().height - 40);
   const region = regions.find(r => r.count > 900 && r.height >= 55 && r.height < 80 && r.width >= 18 && r.width <= 98);
-  assert.ok(region, "The continuous calendar's selected day must be visibly readable"); return region;
+  assert.ok(region, "The Dates strip's selected day must be visibly readable"); return region;
 }
 async function monthDay(page, expected = () => true) {
   const until = Date.now() + 5000; let region;
@@ -301,13 +301,13 @@ async function monthDay(page, expected = () => true) {
     if (region && expected(region)) return region;
     await page.waitForTimeout(25);
   } while (Date.now() < until);
-  assert.ok(region && expected(region), `The Month grid must show the expected selected day: ${JSON.stringify(region)}`);
+  assert.ok(region && expected(region), `The Calendar grid must show the expected selected day: ${JSON.stringify(region)}`);
   return region;
 }
 async function openMonthFromStrip(page, picking = false) {
-  // Reverse past the strip's five controls, optional Done picking, Weather's
-  // Set location, then the third mode button. The strip already owns focus.
-  for (let index = 0; index < 7 + Number(picking); index++) await navigateKey(page, "Shift+Tab");
+  // Reverse past the Dates strip's five controls, optional Done picking,
+  // Weather's Set location, and Timeline/Dates to the first Calendar mode.
+  for (let index = 0; index < 9 + Number(picking); index++) await navigateKey(page, "Shift+Tab");
   await navigateKey(page, "Space");
   // Revealing the focused grid can schedule more app paints after the input
   // batch has already painted. Establish coordinates only once those paints
@@ -326,7 +326,7 @@ async function openMonthFromStrip(page, picking = false) {
     previous = cell;
     lastPaint = paintCount;
   }
-  assert.fail(`The Month grid must settle across app paints before measuring it: ${JSON.stringify(previous)}`);
+  assert.fail(`The Calendar grid must settle across app paints before measuring it: ${JSON.stringify(previous)}`);
 }
 async function monthDueMark(page, color, cell) {
   const until = Date.now() + 5000; let mark;
@@ -336,7 +336,7 @@ async function monthDueMark(page, color, cell) {
     if (mark) return mark;
     await page.waitForTimeout(25);
   } while (Date.now() < until);
-  assert.ok(mark, "A task's due color must appear inside its Month day cell");
+  assert.ok(mark, "A task's due color must appear inside its Calendar day cell");
   return mark;
 }
 async function clickCalculatorIcon(page, touch = false) {
@@ -498,7 +498,7 @@ try {
   await boot(picker.page, true); assert.deepEqual(JSON.parse(await saved(picker.page)), dated);
   await capture(picker.page, "task-date-time-picker"); await release(picker.context, "task-date-time-picker");
 
-  progress("assign Start and Due drafts from the main Calendar and save once");
+  progress("assign Start and Due drafts from the Dates strip and save once");
   const calendarPick = await newPage("calendar-task-picking", { raw: fixtureRaw, fixedTime: "2030-01-15T12:00:00Z" });
   await boot(calendarPick.page); await openTaskDates(calendarPick.page);
   const dueField = await imeCursor(calendarPick.page);
@@ -509,7 +509,7 @@ try {
   const startDay = await selectedDay(calendarPick.page);
   await calendarPick.page.mouse.click(startDay.x, startDay.y); await paint(calendarPick.page);
   assert.equal(await saved(calendarPick.page), fixtureRaw, "Selecting a Start day must only change the unsaved task draft");
-  // Disarming keeps the chosen draft while ordinary Calendar browsing resumes.
+  // Disarming keeps the chosen draft while ordinary Dates browsing resumes.
   await navigateKey(calendarPick.page, "Escape"); const browseDay = await selectedDay(calendarPick.page);
   await calendarPick.page.mouse.click(browseDay.x + browseDay.width + 2, browseDay.y); await paint(calendarPick.page);
   assert.equal(await saved(calendarPick.page), fixtureRaw);
@@ -531,7 +531,7 @@ try {
   assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates);
   await boot(calendarPick.page, true); assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates);
 
-  progress("browse Month without assigning a draft, then pick a due day through the shared editor");
+  progress("browse Calendar without assigning a draft, then pick a due day through the shared editor");
   await openTaskDates(calendarPick.page);
   assert.equal(await calendarPick.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1")), null,
     "Opening an unchanged date editor with Space must not type its activation key into Due");
@@ -545,15 +545,15 @@ try {
   assert.equal(await calendarPick.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1")), null);
   await navigateKey(calendarPick.page, "ArrowRight"); // January 15 → 16.
   await calendarPick.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule?.due.startsWith("2030-01-16"));
-  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "Month selection changes only the shared date draft until Save date");
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "Calendar selection changes only the shared date draft until Save date");
   await capture(calendarPick.page, "calendar-month-date-picking");
   await focusVisibleInput(calendarPick.page, monthDueField); await navigateKey(calendarPick.page, "Enter");
   const monthDates = structuredClone(calendarDates); monthDates.deadlines[0].at = "2030-01-16T18:00:00Z";
   await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-16T18:00:00Z", key);
-  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), monthDates, "Month picking must preserve the existing clock time, start, featured deadline and unrelated records");
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), monthDates, "Calendar picking must preserve the existing clock time, start, featured deadline and unrelated records");
   await resetFocus(calendarPick.page); await navigateKey(calendarPick.page, "Control+z");
   await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-17T18:00:00Z", key);
-  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "One Undo must restore the date chosen through Month");
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "One Undo must restore the date chosen through Calendar");
   await release(calendarPick.context, "calendar-task-picking");
 
   const monthFixture = structuredClone(fixture);
@@ -565,14 +565,14 @@ try {
     ["calendar-month-desktop", { width: 1440, height: 1000 }, false],
     ["calendar-month-mobile", { width: 390, height: 640 }, true],
   ]) {
-    progress(`navigate the classic Month grid across New Year on ${touch ? "a short phone" : "desktop"}`);
+    progress(`navigate the Calendar month grid across New Year on ${touch ? "a short phone" : "desktop"}`);
     const scene = await newPage(label, { raw: monthRaw, viewport, hasTouch: touch, fixedTime: "2026-12-31T12:00:00Z" });
     await boot(scene.page); await resetFocus(scene.page); await navigateKey(scene.page, "Control+Alt+t");
     const december = await openMonthFromStrip(scene.page);
     const column = december.width + 2, row = december.height + 2;
     const gridTop = december.top - 4 * row - 1; // December 31, 2026 is Thursday in the fifth week.
     assert.ok(gridTop >= 60 && gridTop + 6 * row <= viewport.height - 35,
-      "Focusing Month must reveal the whole six-week grid inside the viewport");
+      "Focusing Calendar must reveal the whole six-week grid inside the viewport");
     assert.ok(column * 7 <= 487, "The seven-column month must stay within its compact width");
     await monthDueMark(scene.page, [234, 133, 173], december);
     await capture(scene.page, label);
@@ -652,7 +652,7 @@ try {
   assert.ok(clip.height > 70); const todayWeather = await weather.page.screenshot({ clip });
   await navigateKey(weather.page, "ArrowRight"); await paint(weather.page);
   await expectClipChange(weather.page, todayWeather, clip, "Selecting tomorrow must update weather above the date strip");
-  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Calendar selection must preserve all task records and the featured countdown");
+  assert.deepEqual(JSON.parse(await saved(weather.page)), weatherFixture, "Dates selection must preserve all task records and the featured countdown");
   await navigateKey(weather.page, "Home"); const beforeZoom = await selectedDay(weather.page);
   await navigateKey(weather.page, "="); const zoomed = await selectedDay(weather.page);
   assert.ok(zoomed.width > beforeZoom.width + 5, "Keyboard zoom must enlarge calendar days");
@@ -685,7 +685,7 @@ try {
   assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache);
   await release(outage.context, "weather-stale-outage");
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, continuous calendar keyboard/touch/pan/zoom, classic Month desktop/phone layout and New Year navigation, due marks and shared draft picking without changing the featured task, and mocked local weather/cache/offline recovery.");
+  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, Dates keyboard/touch/pan/zoom, Calendar desktop/phone month layout and New Year navigation, due marks and shared draft picking without changing the featured task, and mocked local weather/cache/offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`, error);
   for (const { page, label } of pages.slice(-2)) if (!page.isClosed()) await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});

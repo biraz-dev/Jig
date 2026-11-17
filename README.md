@@ -2,8 +2,8 @@
 
 Jig is a small, local artist's workbench in Rust. The browser starts in **Tasks**
 and remembers your workspace. **Tasks**, **Notes** and **Sheet** are the main
-views. The header groups Data, workspace tabs, Settings, the calculator, About
-and Help on the left; the date sits on the right. Tasks,
+views. The header groups Data, workspace tabs, Settings, About, Help and the
+calculator on the left; the date sits on the right. Tasks,
 their Gantt timeline, notes, calculator/converter, calendar and optional weather
 use the same portable state. The browser STL interface is hidden for now; the
 native geometry tools remain available. The native CLI and Ratatui terminal
@@ -11,8 +11,7 @@ interface share the Rust core; running `jig` still opens the terminal dashboard.
 
 No accounts, telemetry or backend. Files are processed on your device.
 The [browser app](https://biraz.dev/Jig/) starts with your saved data or an empty
-personal document. Clearly labelled samples are available through **Sample mode**
-or `?sample=1`. Personal documents are never published by the Pages build.
+personal document. Personal documents are never published by the Pages build.
 
 ## Spreadsheet
 
@@ -222,21 +221,18 @@ See [preview notes](docs/preview.md) and [Actions](https://github.com/biraz-dev/
 New visitors start with an empty personal document in Tasks. Existing saved work
 opens automatically; your workspace choice is remembered. Older Workbench
 preferences open Tasks. **Data → Start empty**
-replaces personal data after confirmation. **Open local data** reopens saved work;
-**Sample mode** returns to temporary samples. Demo edits never replace saved
-personal data. Importing a real document explicitly leaves sample mode.
+replaces personal data after confirmation. **Open local data** reopens saved work.
+There is no sample mode; older `?sample=1` links open your normal document.
 
 Personal edits autosave in this browser profile under `jig.personal.v1`.
 **Save ODS** is the portable document download; **Export JSON** is a full Jig
 backup compatible with the native CLI. **Import JSON** validates the complete
 state and asks before replacement. Older files without spreadsheets, task colors
-or start dates still load. **Clear saved data** also requires confirmation.
+or start dates still load. **Clear saved data** also requires confirmation and
+returns to an empty document.
 
 A normal refresh or application update keeps personal data. Press **Enter** to
-commit a spreadsheet cell before leaving. Status messages identify temporary
-sample mode, with a quiet sample marker when the header has room. Personal/local
-badges are removed. To
-keep work already entered in sample mode, **Export JSON**, then **Import JSON** that file and confirm the import.
+commit a spreadsheet cell before leaving. Personal/local badges are removed.
 Use **Start empty** only when you intend to begin with an empty dataset.
 
 Unfinished note/task text and start/due date edits are backed up separately in
@@ -257,8 +253,9 @@ Open **Settings** beside **Notes**, or use **Ctrl+,**. It opens a full main view
 **Light** uses warm light surfaces, and **System** follows the browser/OS
 appearance. Document cell colors and task colors remain their own values.
 
-**About** and **Help** follow the calculator in the header. They open in the main
-panel without changing your document. **Done** or **Esc** returns to your work.
+**About** and **Help** follow **Settings**; the calculator is the final header
+button. They open in the main panel without changing your document.
+**Done** or **Esc** returns to your work.
 Help covers tasks, Gantt dates, notes, calculations, shortcuts and backups.
 
 Settings are saved separately under `jig.settings.v1`, so changing appearance,
@@ -307,9 +304,9 @@ use the portable JSON document; settings exports do not contain folder access.
 unique filename without replacing an earlier backup. Optional **Automatic
 folder backups** queue no sooner than five minutes after enabling, opening valid
 saved personal data, or eligible saved changes, and run while Jig is open.
-Samples, stale/corrupt storage and failed
-saves do not produce automatic folder backups. Dataset resets cancel pending
-backup work. There is no automatic backup retention or cleanup.
+Stale/corrupt storage and failed saves do not produce automatic folder backups.
+Dataset resets cancel pending backup work. There is no automatic backup retention
+or cleanup.
 
 **Download backup** provides a JSON recovery copy of current personal work,
 including edits left in memory after a failed save. It is also the fallback on
@@ -458,8 +455,7 @@ the existing browser document size limit still applies.
 Weather starts disabled. Choose **Set location** above the calendar/timeline, search
 for a town or postcode, and select a result. You can change location, switch
 °F/°C, refresh or disable it at any time. Settings stay in this browser; personal JSON exports
-also carry the chosen weather preference. Changing weather in sample mode does
-not save the sample checklist as personal data.
+also carry the chosen weather preference.
 
 The date strip stays compact with day numbers and task marks. The compact weather
 strip above the calendar/timeline shows today's forecast high/low, rain probability
@@ -656,8 +652,7 @@ computer and open it with `--state`; no migration service or database is needed.
 State includes the workbook and charts, preferences, calculator history, task
 order, linked deadlines, colors, start dates, calendar notes and featured ID.
 New terminal installations start empty;
-the converter initially displays 12 inches as an instrument example. Browser demo
-samples are generated in code and kept separate from saved personal state.
+the converter initially displays 12 inches as an instrument example.
 
 Dated tasks carry an optional link to a deadline record. Old task records without
 that field remain valid. Task and linked deadline edits stay synchronized;
@@ -669,7 +664,7 @@ JSON remains the native state and browser autosave format: an established serde
 parser, an explicit version, and straightforward human-readable backups. ODS is
 the browser's main portable document and carries this same state as metadata.
 The JSON file is editable while Jig is stopped. No personal state is committed;
-only application assets and synthetic sample definitions are published. Each
+only application assets are published. Each
 successful native mutation uses a same-directory temporary file, file sync, atomic rename and
 directory sync on Linux. Invalid or unsupported state produces an error and is
 never silently reset. Files created on Unix use mode 0600.

@@ -262,9 +262,9 @@ async function expectClipChange(page, before, clip, message) {
   } while (Date.now() < until);
   assert.notDeepEqual(actual, before, message);
 }
-async function filledRegions(page, color, top, bottom) {
+async function filledRegions(page, color, top, bottom, minimum = 100) {
   const png = await page.screenshot({ animations: "disabled", caret: "hide" });
-  return page.evaluate(async ({ encoded, color, top, bottom }) => {
+  return page.evaluate(async ({ encoded, color, top, bottom, minimum }) => {
     const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
@@ -283,15 +283,44 @@ async function filledRegions(page, color, top, bottom) {
           if (!seen[next] && near(next)) { seen[next] = 1; stack.push(next); }
         }
       }
-      if (r.count > 100) regions.push({ ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2, width: r.right - r.left + 1, height: r.bottom - r.top + 1 });
+      if (r.count > minimum) regions.push({ ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2, width: r.right - r.left + 1, height: r.bottom - r.top + 1 });
     }
     bitmap.close(); return regions.sort((a, b) => b.count - a.count);
-  }, { encoded: png.toString("base64"), color, top, bottom });
+  }, { encoded: png.toString("base64"), color, top, bottom, minimum });
 }
 async function selectedDay(page) {
   const regions = await filledRegions(page, [67, 42, 34], 60, page.viewportSize().height - 40);
   const region = regions.find(r => r.count > 900 && r.height >= 55 && r.height < 80 && r.width >= 18 && r.width <= 98);
   assert.ok(region, "The continuous calendar's selected day must be visibly readable"); return region;
+}
+async function monthDay(page, expected = () => true) {
+  const until = Date.now() + 5000; let region;
+  do {
+    const regions = await filledRegions(page, [67, 42, 34], 60, page.viewportSize().height - 40);
+    region = regions.find(r => r.count > 500 && r.height >= 34 && r.height <= 38 && r.width >= 28 && r.width <= 70);
+    if (region && expected(region)) return region;
+    await page.waitForTimeout(25);
+  } while (Date.now() < until);
+  assert.ok(region && expected(region), `The Month grid must show the expected selected day: ${JSON.stringify(region)}`);
+  return region;
+}
+async function openMonthFromStrip(page, picking = false) {
+  // Reverse past the strip's five controls, optional Done picking, Weather's
+  // Set location, then the third mode button. The strip already owns focus.
+  for (let index = 0; index < 7 + Number(picking); index++) await navigateKey(page, "Shift+Tab");
+  await navigateKey(page, "Space");
+  return monthDay(page);
+}
+async function monthDueMark(page, color, cell) {
+  const until = Date.now() + 5000; let mark;
+  do {
+    const regions = await filledRegions(page, color, Math.floor(cell.top), Math.ceil(cell.bottom + 1), 3);
+    mark = regions.find(r => r.width <= 8 && r.height <= 8 && r.x >= cell.left && r.x <= cell.right);
+    if (mark) return mark;
+    await page.waitForTimeout(25);
+  } while (Date.now() < until);
+  assert.ok(mark, "A task's due color must appear inside its Month day cell");
+  return mark;
 }
 async function clickCalculatorIcon(page, touch = false) {
   await resetFocus(page);
@@ -484,7 +513,78 @@ try {
   await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].start === "2030-01-15T00:00:00Z", key);
   assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates);
   await boot(calendarPick.page, true); assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates);
+
+  progress("browse Month without assigning a draft, then pick a due day through the shared editor");
+  await openTaskDates(calendarPick.page);
+  const monthDueField = await imeCursor(calendarPick.page);
+  await navigateKey(calendarPick.page, "Control+Alt+t");
+  await openMonthFromStrip(calendarPick.page, true);
+  await navigateKey(calendarPick.page, "PageDown");
+  assert.equal(await calendarPick.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1")), null,
+    "Browsing another month must not assign a task date or create a working draft");
+  await navigateKey(calendarPick.page, "PageUp");
+  assert.equal(await calendarPick.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1")), null);
+  await navigateKey(calendarPick.page, "ArrowRight"); // January 15 → 16.
+  await calendarPick.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule?.due.startsWith("2030-01-16"));
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "Month selection changes only the shared date draft until Save date");
+  await capture(calendarPick.page, "calendar-month-date-picking");
+  await focusVisibleInput(calendarPick.page, monthDueField); await navigateKey(calendarPick.page, "Enter");
+  const monthDates = structuredClone(calendarDates); monthDates.deadlines[0].at = "2030-01-16T18:00:00Z";
+  await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-16T18:00:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), monthDates, "Month picking must preserve the existing clock time, start, featured deadline and unrelated records");
+  await resetFocus(calendarPick.page); await navigateKey(calendarPick.page, "Control+z");
+  await calendarPick.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-17T18:00:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(calendarPick.page)), calendarDates, "One Undo must restore the date chosen through Month");
   await release(calendarPick.context, "calendar-task-picking");
+
+  const monthFixture = structuredClone(fixture);
+  monthFixture.deadlines[0].at = "2026-12-31T18:00:00Z";
+  monthFixture.tasks.push({ id: 5, text: "Sample: New Year work", complete: false, deadline: 6, color: "amber" });
+  monthFixture.deadlines.push({ id: 6, title: "Sample: New Year work", at: "2027-01-01T18:00:00Z" });
+  const monthRaw = JSON.stringify(monthFixture);
+  for (const [label, viewport, touch] of [
+    ["calendar-month-desktop", { width: 1440, height: 1000 }, false],
+    ["calendar-month-mobile", { width: 390, height: 640 }, true],
+  ]) {
+    progress(`navigate the classic Month grid across New Year on ${touch ? "a short phone" : "desktop"}`);
+    const scene = await newPage(label, { raw: monthRaw, viewport, hasTouch: touch, fixedTime: "2026-12-31T12:00:00Z" });
+    await boot(scene.page); await resetFocus(scene.page); await navigateKey(scene.page, "Control+Alt+t");
+    const december = await openMonthFromStrip(scene.page);
+    const column = december.width + 2, row = december.height + 2;
+    const gridTop = december.top - 4 * row - 1; // December 31, 2026 is Thursday in the fifth week.
+    assert.ok(gridTop >= 60 && gridTop + 6 * row <= viewport.height - 35,
+      "Focusing Month must reveal the whole six-week grid inside the viewport");
+    assert.ok(column * 7 <= 487, "The seven-column month must stay within its compact width");
+    await monthDueMark(scene.page, [234, 133, 173], december);
+    await capture(scene.page, label);
+
+    const januaryCell = { ...december, left: december.left + column, right: december.right + column,
+      top: december.top - 4 * row, bottom: december.bottom - 4 * row };
+    await navigateKey(scene.page, "PageDown");
+    await monthDueMark(scene.page, [218, 185, 126], januaryCell);
+    assert.equal(await saved(scene.page), monthRaw, "Browsing from December to January must preserve every task and the featured countdown");
+    await navigateKey(scene.page, "PageUp");
+    await monthDay(scene.page, cell => Math.abs(cell.x - december.x) <= 2 && Math.abs(cell.y - december.y) <= 2);
+    await navigateKey(scene.page, "ArrowRight");
+    const january = await monthDay(scene.page, cell => Math.abs(cell.x - december.x - column) <= 3 && Math.abs(cell.y - december.y + 4 * row) <= 3);
+    await monthDueMark(scene.page, [218, 185, 126], january);
+    await navigateKey(scene.page, "ArrowDown");
+    await monthDay(scene.page, cell => Math.abs(cell.x - january.x) <= 2 && Math.abs(cell.y - january.y - row) <= 2);
+    await navigateKey(scene.page, "ArrowUp");
+    await monthDay(scene.page, cell => Math.abs(cell.x - january.x) <= 2 && Math.abs(cell.y - january.y) <= 2);
+    if (touch) {
+      await scene.page.touchscreen.tap(january.x + column, january.y); await paint(scene.page);
+      const saturday = await monthDay(scene.page, cell => Math.abs(cell.x - january.x - column) <= 3 && Math.abs(cell.y - january.y) <= 2);
+      // Monday before January 1 is an empty cell, rather than a day in December.
+      await scene.page.touchscreen.tap(january.x - 4 * column, january.y); await paint(scene.page);
+      await monthDay(scene.page, cell => Math.abs(cell.x - saturday.x) <= 2 && Math.abs(cell.y - saturday.y) <= 2);
+    }
+    await navigateKey(scene.page, "Home");
+    await monthDay(scene.page, cell => Math.abs(cell.x - december.x) <= 2 && Math.abs(cell.y - december.y) <= 2);
+    assert.equal(await saved(scene.page), monthRaw, "Keyboard and touch month selection must leave saved dates, colors, notes and the featured task unchanged");
+    assert.equal(await scene.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await release(scene.context, label);
+  }
 
   for (const [label, viewport, expression, result, unit] of [
     ["personal-medium", { width: 1024, height: 768 }, "24 in cm", 60.96, "cm"],
@@ -566,7 +666,7 @@ try {
   assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache);
   await release(outage.context, "weather-stale-outage");
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, continuous calendar keyboard/touch/pan/zoom, and mocked local weather/cache/offline recovery.");
+  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, continuous calendar keyboard/touch/pan/zoom, classic Month desktop/phone layout and New Year navigation, due marks and shared draft picking without changing the featured task, and mocked local weather/cache/offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`, error);
   for (const { page, label } of pages.slice(-2)) if (!page.isClosed()) await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});

@@ -34,7 +34,7 @@ const taskFixture = {
 };
 delete taskFixture.notes;
 const issues = [], contexts = [];
-const headerTargets = 6; // Data, Settings, About, Help, Calculator, Source.
+const headerTargets = 6; // About, Data, Settings, Help, Calculator, Source.
 let current, phase = "launch Chromium";
 const timer = setTimeout(() => { console.error(`Notes browser exceeded 360 seconds during: ${phase}`); process.exit(1); }, 360000);
 function progress(message) { phase = message; console.log(`Notes browser phase: ${message}`); }
@@ -150,10 +150,10 @@ async function expectEditorText(page, text) {
   await expectClipboard(page, text);
 }
 async function attemptOpenLocal(scene) {
-  // Data is fixed at the top left of this known desktop viewport.
+  // Data follows About in this known desktop viewport.
   // Clicking it transfers focus without cancelling the working Task editor.
-  await scene.page.mouse.click(25, 14); await paint(scene.page);
-  await tab(scene.page, 6); // Settings, About, Help, Calculator, Start empty, Open local.
+  await scene.page.mouse.click(80, 14); await paint(scene.page);
+  await tab(scene.page, 5); // Settings, Help, Calculator, Start empty, Open local.
   await key(scene.page, "Space"); await key(scene.page, "Control+Alt+d");
 }
 async function focusedButtonRect(page) {
@@ -556,7 +556,7 @@ try {
   const imported = structuredClone(edited); imported.notes[1].text += "\nImported locally";
   await current.page.locator("#jig-import").setInputFiles({ name: "sample-notes.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
   await current.page.waitForTimeout(1200); await expectState(current.page, edited, "Import must wait for confirmation");
-  await notes(current); await tab(current.page, 6); await key(current.page, "Space"); // Data, Settings, About, Help, Calculator, Confirm import.
+  await notes(current); await tab(current.page, 6); await key(current.page, "Space"); // About, Data, Settings, Help, Calculator, Confirm import.
   await expectState(current.page, imported, "Confirmed JSON import must preserve complete note text and identities");
   await boot(current, true); await expectState(current.page, imported);
   await current.context.close();

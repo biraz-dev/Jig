@@ -5,7 +5,10 @@ fn defaults_and_older_partial_settings_restore_expected_bindings() {
     let defaults = AppSettings::default();
     defaults.validate().unwrap();
     assert_eq!(AppSettings::from_json("{}").unwrap(), defaults);
-    assert_eq!(defaults.theme, Theme::Graphite);
+    assert_eq!(defaults.version, 2);
+    assert_eq!(defaults.theme, Theme::Ember);
+    assert_eq!(defaults.custom_theme, None);
+    assert!(!defaults.system_accent);
     assert_eq!(defaults.undo_levels, 20);
     assert!(!defaults.auto_backup);
     assert_eq!(
@@ -16,14 +19,60 @@ fn defaults_and_older_partial_settings_restore_expected_bindings() {
         defaults.binding(Action::Redo),
         Some(Chord::ctrl_shift(ShortcutKey::Z))
     );
+    assert_eq!(
+        defaults.binding(Action::Draft),
+        Some(Chord::ctrl_alt(ShortcutKey::R))
+    );
+    assert_eq!(Action::ALL[11], Action::OpenLocal);
+    assert_eq!(Action::ALL[12], Action::Draft);
     let partial =
         AppSettings::from_json(r#"{"theme":"light","shortcuts":{"calculator":null}}"#).unwrap();
-    assert_eq!(partial.theme, Theme::Light);
+    assert_eq!(partial.theme, Theme::Paper);
     assert_eq!(partial.binding(Action::Calculator), None);
     assert_eq!(
         partial.binding(Action::Tasks),
         defaults.binding(Action::Tasks)
     );
+}
+
+#[test]
+fn adding_draft_keeps_legacy_custom_bindings_and_v2_conflict_checks() {
+    for version in ["", "\"version\":1,"] {
+        let text = format!(
+            r#"{{{version}"shortcuts":{{"calculator":{{"key":"R","ctrl":true,"alt":true}}}}}}"#
+        );
+        let mut legacy = AppSettings::from_json(&text).unwrap();
+        assert_eq!(legacy.version, 2);
+        assert_eq!(
+            legacy.binding(Action::Calculator),
+            Some(Chord::ctrl_alt(ShortcutKey::R))
+        );
+        assert_eq!(legacy.binding(Action::Draft), None);
+        assert_eq!(legacy.shortcuts.get(&Action::Draft), Some(&None));
+        assert_eq!(
+            AppSettings::from_json(&legacy.to_json().unwrap()).unwrap(),
+            legacy
+        );
+        let before = legacy.clone();
+        assert!(legacy.reset_binding(Action::Draft).is_err());
+        assert_eq!(legacy, before, "Reset must not steal the legacy binding");
+        legacy.reset_binding(Action::Calculator).unwrap();
+        legacy.reset_binding(Action::Draft).unwrap();
+        assert_eq!(
+            legacy.binding(Action::Draft),
+            Some(Action::Draft.default_binding())
+        );
+    }
+    let conflict = r#"{"version":2,"shortcuts":{"calculator":{"key":"R","ctrl":true,"alt":true}}}"#;
+    assert!(AppSettings::from_json(conflict)
+        .unwrap_err()
+        .contains("already assigned"));
+    let mut settings = AppSettings::default();
+    let before = settings.clone();
+    assert!(settings
+        .set_binding(Action::Calculator, Some(Action::Draft.default_binding()))
+        .is_err());
+    assert_eq!(settings, before);
 }
 
 #[test]
@@ -205,7 +254,7 @@ fn ordinary_typing_and_fixed_context_keys_cannot_trigger_global_actions() {
 #[test]
 fn malformed_or_out_of_range_imports_are_rejected() {
     for text in [
-        r#"{"version":2}"#,
+        r#"{"version":3}"#,
         r#"{"undo_levels":101}"#,
         r#"{"undo_levels":-1}"#,
         r#"{"undo_levels":1.5}"#,

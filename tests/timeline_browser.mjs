@@ -389,10 +389,22 @@ async function schedule(page, due, start, submit = true) {
   await paint(page);
   if (submit) await key(page, "Enter");
 }
+async function expectEditorText(page, expected) {
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
+  await page.evaluate(() => navigator.clipboard.writeText("Date draft read pending"));
+  await key(page, "Control+a"); await key(page, "Control+c");
+  const until = Date.now() + 10000; let actual;
+  do {
+    actual = await page.evaluate(() => navigator.clipboard.readText());
+    if (actual === expected) return;
+    await page.waitForTimeout(25);
+  } while (Date.now() < until);
+  assert.equal(actual, expected, "The restored date editor must retain its complete unsaved value");
+}
 async function exportData(page) {
   await resetFocus(page);
   await key(page, "Control+Alt+d");
-  await tab(page, 10); // Five header buttons, then Data actions through Export JSON.
+  await tab(page, 9); // Five header buttons, then Start/Open/Import/Export.
   const downloadEvent = page.waitForEvent("download", { timeout: 5000 });
   await key(page, "Space");
   const download = await downloadEvent;
@@ -471,6 +483,34 @@ try {
   await key(current.page, "Escape");
   await key(current.page, "Control+z");
   await expectState(current.page, fixture, "One Undo must restore every record after dragging the start-date end");
+
+  progress("preserve an unsaved date editor when its own timeline endpoint is dragged");
+  await timeline(current.page); await openFirstRow(current.page);
+  await current.page.keyboard.press("Control+a"); await current.page.keyboard.type("2026-11-02", { delay: 15 }); await paint(current.page);
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT"
+    && Number.isFinite(parseFloat(document.activeElement.style.left)) && Number.isFinite(parseFloat(document.activeElement.style.top)), undefined, { polling: 25 });
+  const dueCaret = await current.page.evaluate(() => ({ x: parseFloat(document.activeElement.style.left), y: parseFloat(document.activeElement.style.top) }));
+  const pendingSchedule = await current.page.evaluate(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1")).schedule);
+  assert.equal(pendingSchedule.due, "2026-11-02");
+  await expectState(current.page, fixture, "Typing a date must remain an uncommitted draft");
+  rangeBar = await waitForBar(current.page);
+  await startBarResize(current.page, rangeBar, "due", (rangeBar.width + 1) / 5);
+  await current.page.mouse.up(); await paint(current.page);
+  await expectState(current.page, fixture, "Resizing the same task must not overwrite its unfinished schedule");
+  assert.deepEqual(await current.page.evaluate(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1")).schedule), pendingSchedule,
+    "Rejecting a resize must keep the entire date draft available");
+  // The public IME transport identifies the visible Due field. Refocus it
+  // after the endpoint took focus, then inspect its actual text through Copy.
+  await current.page.mouse.click(dueCaret.x + 6, dueCaret.y); await paint(current.page);
+  await expectEditorText(current.page, "2026-11-02");
+  await expectState(current.page, fixture, "Rejecting a resize must keep the unfinished editor without saving it");
+  await tab(current.page, 6); await key(current.page, "Space"); // Due picker, Start, Start picker, Save, Remove date, Cancel.
+  await timeline(current.page); rangeBar = await waitForBar(current.page);
+  await startBarResize(current.page, rangeBar, "due", (rangeBar.width + 1) / 5);
+  await current.page.mouse.up(); await paint(current.page);
+  await expectState(current.page, resizedDue, "Cancelling the date draft must allow an ordinary endpoint resize again");
+  await key(current.page, "Escape"); await key(current.page, "Control+z");
+  await expectState(current.page, fixture, "The allowed resize after cancellation must still use one Undo step");
   await current.context.close();
 
   progress("cancel real touch gestures and immediately reuse the same timeline controls");
@@ -726,6 +766,20 @@ try {
   invalid.tasks[0].start = "2026-11-04T00:00:00Z";
   await importData(current.page, invalid, false);
   assert.deepEqual(await state(current.page), imported, "An invalid imported range must preserve the previously saved workbench");
+  await current.context.close();
+
+  progress("inspect a standalone legacy deadline from the checklist without creating a task");
+  const legacyOnly = { ...structuredClone(fixture), tasks: [], deadlines: [structuredClone(fixture.deadlines.at(-1))], featured: 107 };
+  current = await open("timeline-legacy-checklist", legacyOnly);
+  await tasks(current.page);
+  await tab(current.page, 14); await key(current.page, "Space"); // Header6, Tasks/+, Gantt/ODS, then star/check/color/date.
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
+  assert.equal(await raw(current.page), JSON.stringify(legacyOnly), "Opening the checklist date field must not save a migrated record");
+  await tab(current.page, 6); await key(current.page, "Space"); // Cancel the untouched date form.
+  assert.deepEqual(await exportData(current.page), legacyOnly, "Cancelling must preserve the actual in-memory legacy document without creating a task");
+  await key(current.page, "Control+z"); await key(current.page, "Control+Shift+z");
+  assert.deepEqual(await exportData(current.page), legacyOnly, "Merely viewing and cancelling a legacy date must not consume an Undo entry");
+  assert.equal(await raw(current.page), JSON.stringify(legacyOnly));
   await current.context.close();
 
   progress("load older task files and inspect a legacy deadline without creating records");

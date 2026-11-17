@@ -121,7 +121,7 @@ async function resetTasks(scene, escape = true) {
 }
 async function lists(scene) { return (await state(scene.page)).task_lists ?? [{ id: 1, name: "Tasks" }]; }
 function headerTargets(scene) {
-  // Data, Settings, Calculator, About, Help and the footer's Source remain
+  // Data, Settings, About, Help, Calculator and the footer's Source remain
   // keyboard targets; workspace navigation buttons are pointer-only.
   // The phone's stacked Tasks/Gantt/Notes board overflows vertically, adding
   // the ordinary dashboard scroll-area target before the list-tab controls.
@@ -321,7 +321,7 @@ async function undo(scene, expected) {
 async function exportData(scene) {
   await resetTasks(scene);
   await key(scene.page, "Control+Alt+d");
-  await tab(scene.page, 10); // Five header controls, then Start/Open/Sample/Import/Export.
+  await tab(scene.page, 9); // Five header controls, then Start/Open/Import/Export.
   const event = scene.page.waitForEvent("download");
   await key(scene.page, "Space");
   const download = await event;
@@ -535,7 +535,7 @@ try {
   await current.page.waitForTimeout(1200);
   await expectState(current.page, renamed, "Choosing a JSON file must wait for confirmation");
   await resetTasks(current);
-  await tab(current.page, 6); // Data, Settings, Calculator, About, Help, Confirm import.
+  await tab(current.page, 6); // Data, Settings, About, Help, Calculator, Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, imported, "JSON import must retain names, list membership, dates, colors and completion");
   await boot(current, true);

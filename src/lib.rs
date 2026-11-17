@@ -10,6 +10,7 @@ pub mod model;
 pub mod palette;
 pub mod pdf_import;
 pub mod sample;
+pub mod sheet_controls;
 pub mod sheet_fonts;
 pub mod sheet_formula;
 pub mod spreadsheet;

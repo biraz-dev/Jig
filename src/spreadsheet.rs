@@ -363,6 +363,8 @@ pub struct Workbook {
     pub sheets: Vec<Sheet>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub charts: Vec<crate::charts::ChartSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls: Vec<crate::sheet_controls::SheetControl>,
 }
 
 impl Default for Workbook {
@@ -377,6 +379,7 @@ impl Default for Workbook {
                 merges: Vec::new(),
             }],
             charts: Vec::new(),
+            controls: Vec::new(),
         }
     }
 }
@@ -557,6 +560,7 @@ impl Workbook {
             }
             chart.validate(self)?;
         }
+        crate::sheet_controls::validate_controls(self)?;
         Ok(())
     }
 
@@ -877,6 +881,12 @@ impl Workbook {
         if chart_overflow {
             return Err("No room to insert without losing a chart source".into());
         }
+        for control in &mut next.controls {
+            if let Some(target) = control.target.filter(|target| target.sheet == sheet) {
+                control.target = shifted_addr(target.cell, axis, edit)?
+                    .map(|cell| crate::sheet_controls::ControlTarget { sheet, cell });
+            }
+        }
         next.validate()?;
         let changed = next != *self;
         if changed {
@@ -1102,6 +1112,11 @@ impl Workbook {
         }
         let mut next = self.clone();
         let name = next.sheets.remove(index).name;
+        for control in &mut next.controls {
+            if control.target.is_some_and(|target| target.sheet == id) {
+                control.target = None;
+            }
+        }
         next.charts.retain(|chart| !matches!(chart.source, crate::charts::ChartSource::Range { sheet, .. } if sheet == id));
         for sheet in &mut next.sheets {
             for raw in sheet

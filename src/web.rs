@@ -4021,8 +4021,17 @@ impl BrowserApp {
         ui.horizontal(|ui| {
             if ui
                 .selectable_label(
-                    !self.timeline_view && !self.calendar_panel.month_view(),
+                    !self.timeline_view && self.calendar_panel.month_view(),
                     "Calendar",
+                )
+                .clicked()
+            {
+                self.show_calendar(ui.ctx(), true);
+            }
+            if ui
+                .selectable_label(
+                    !self.timeline_view && !self.calendar_panel.month_view(),
+                    "Dates",
                 )
                 .clicked()
             {
@@ -4037,15 +4046,6 @@ impl BrowserApp {
                 } else {
                     self.timeline.request_focus();
                 }
-            }
-            if ui
-                .selectable_label(
-                    !self.timeline_view && self.calendar_panel.month_view(),
-                    "Month",
-                )
-                .clicked()
-            {
-                self.show_calendar(ui.ctx(), true);
             }
         });
         let today = Local::now().date_naive();

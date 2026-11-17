@@ -276,7 +276,11 @@ impl BrowserApp {
             .and_then(|text| text.map(|text| AppSettings::from_json(&text)).transpose());
         let settings_error = loaded_settings.as_ref().err().cloned();
         let settings = loaded_settings.ok().flatten().unwrap_or_default();
-        web_theme::apply(&cc.egui_ctx, settings.theme);
+        web_theme::apply(
+            &cc.egui_ctx,
+            &settings,
+            crate::settings_storage::system_accent(settings.system_accent),
+        );
         let settings_error = settings_error
             .or_else(|| crate::settings_storage::configure_shortcuts(&settings).err());
         let mut fonts = egui::FontDefinitions::default();
@@ -982,7 +986,7 @@ impl BrowserApp {
                     });
                 self.status = match result {
                     Ok(()) => {
-                        "CSV values downloaded. Save ODS to retain formulas, formatting and Jig tools."
+                        "CSV values downloaded. Save a Jig ODS backup to retain formulas, formatting and Jig tools."
                             .into()
                     }
                     Err(error) => error,
@@ -1007,7 +1011,7 @@ impl BrowserApp {
                 });
                 self.status = match result {
                     Ok(()) => {
-                        "ODS document download prepared with your workbook, tasks and Jig data."
+                        "Jig ODS backup prepared: all sheets, tasks, Notes, Draft and calculator history."
                             .into()
                     }
                     Err(error) => error,
@@ -1322,7 +1326,11 @@ impl BrowserApp {
         }
         if self.charts_view {
             ui.horizontal(|ui| {
-                if ui.button("Save .ods").clicked() {
+                if ui
+                    .button("Jig backup .ods")
+                    .on_hover_text(crate::spreadsheet_ui::ODS_BACKUP_HINT)
+                    .clicked()
+                {
                     self.apply_sheet_action(SheetAction::SaveOds);
                 }
                 if ui
@@ -1439,7 +1447,10 @@ impl BrowserApp {
                     )
                     .sense(sense),
             )
-            .on_hover_text("Gather and edit formatted text")
+            .on_hover_text(format!(
+                "Gather and edit formatted text · {}",
+                self.shortcut_label(AppAction::Draft)
+            ))
             .clicked()
         {
             self.show_draft(ui.ctx());
@@ -1872,7 +1883,11 @@ impl BrowserApp {
                         self.show_charts(ui.ctx(), None);
                     }
                 }
-                if ui.button("Save .ods").clicked() {
+                if ui
+                    .button("Jig backup .ods")
+                    .on_hover_text(crate::spreadsheet_ui::ODS_BACKUP_HINT)
+                    .clicked()
+                {
                     self.apply_sheet_action(SheetAction::SaveOds);
                 }
             });
@@ -3306,6 +3321,18 @@ impl BrowserApp {
 
     fn tasks(&mut self, ui: &mut Ui) -> Vec<TaskDropRow> {
         let palette = web_theme::colors(ui.ctx());
+        let task_deadlines: std::collections::HashSet<_> = self
+            .state
+            .tasks
+            .iter()
+            .filter_map(|task| task.deadline)
+            .collect();
+        let deadline_dates: std::collections::HashMap<_, _> = self
+            .state
+            .deadlines
+            .iter()
+            .map(|deadline| (deadline.id, deadline.at))
+            .collect();
         let mut targets = Vec::new();
         let mut rows: Vec<_> = self
             .state
@@ -3328,11 +3355,7 @@ impl BrowserApp {
             if self
                 .selected_task_lists
                 .contains(&self.state.default_list_id())
-                && !self
-                    .state
-                    .tasks
-                    .iter()
-                    .any(|task| task.deadline == Some(deadline.id))
+                && !task_deadlines.contains(&deadline.id)
             {
                 rows.push(ChecklistRow {
                     task: None,
@@ -3494,21 +3517,12 @@ impl BrowserApp {
                                     );
                                 }
                             }
-                            let date = row
-                                .deadline
-                                .and_then(|id| {
-                                    self.state
-                                        .deadlines
-                                        .iter()
-                                        .find(|deadline| deadline.id == id)
-                                })
-                                .map(|deadline| {
-                                    deadline
-                                        .at
-                                        .with_timezone(&Local)
-                                        .format("%d %b · %H:%M")
-                                        .to_string()
-                                });
+                            let date =
+                                row.deadline
+                                    .and_then(|id| deadline_dates.get(&id))
+                                    .map(|at| {
+                                        at.with_timezone(&Local).format("%d %b · %H:%M").to_string()
+                                    });
                             if ui.small_button(date.as_deref().unwrap_or("date")).clicked() {
                                 if let Some(id) = row.task {
                                     self.begin_task_date(id, false);
@@ -4472,6 +4486,7 @@ impl eframe::App for BrowserApp {
             AppAction::ToggleWorkspace,
             AppAction::Tasks,
             AppAction::Notes,
+            AppAction::Draft,
             AppAction::Calendar,
             AppAction::OpenLocal,
         ]
@@ -4485,7 +4500,11 @@ impl eframe::App for BrowserApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        web_theme::apply(ctx, self.settings.theme);
+        web_theme::apply(
+            ctx,
+            &self.settings,
+            crate::settings_storage::system_accent(self.settings.system_accent),
+        );
         let palette = web_theme::colors(ctx);
         self.process_draft_events(ctx);
         self.process_settings_events();
@@ -4726,7 +4745,8 @@ impl eframe::App for BrowserApp {
                     } else if self.settings_open {
                         "Preferences save in this browser · Esc return".to_owned()
                     } else if self.draft_workspace {
-                        "Select text to format or send | Ctrl+Z undo | Ctrl+Shift+Z redo".to_owned()
+                        "Select text to format or send | Esc app | Ctrl+Z undo | Ctrl+Shift+Z redo"
+                            .to_owned()
                     } else if self.sheet_workspace && self.charts_view {
                         "Tab navigate | Enter apply | Esc cancel".to_owned()
                     } else if self.sheet_workspace {
@@ -4915,7 +4935,12 @@ impl eframe::App for BrowserApp {
         {
             draft_rect = None;
         }
-        crate::draft_storage::layout(draft_rect, ctx.zoom_factor(), ctx.style().visuals.dark_mode);
+        crate::draft_storage::layout(
+            draft_rect,
+            ctx.zoom_factor(),
+            ctx.style().visuals.dark_mode,
+            web_theme::colors(ctx),
+        );
         let task_draft = self.backup_working_drafts();
         browser_storage::set_unsaved(
             self.dirty

@@ -2,7 +2,7 @@
 name = "jig"
 version = "0.2.0"
 edition = "2021"
-description = "A local artist's utility workbench"
+description = "Local tools for thinking and working things out"
 default-run = "jig"
 
 [features]
@@ -40,3 +40,6 @@ eframe = { version = "0.31", default-features = false, features = ["default_font
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["Document", "Window", "HtmlCanvasElement", "HtmlElement"], optional = true }
+
+[dev-dependencies]
+egui = { version = "0.31", default-features = false, features = ["default_fonts"] }

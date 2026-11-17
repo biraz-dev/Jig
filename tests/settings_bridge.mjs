@@ -303,6 +303,9 @@ for (const rejectEarlier of [false, true]) {
   context.window.jigSettingsCapture(false);
   assert.equal(context.key({}).prevented, false);
   assert.throws(() => context.window.jigSettingsShortcuts("{}"), /effective Jig shortcuts/);
+  const allActions = Array.from({ length: 13 }, (_, index) => ({ ...ctrl, key: String.fromCharCode(65 + index) }));
+  assert.doesNotThrow(() => context.window.jigSettingsShortcuts(JSON.stringify(allActions)), "All registered application actions must reach the browser bridge");
+  assert.throws(() => context.window.jigSettingsShortcuts(JSON.stringify([...allActions, ctrl])), /effective Jig shortcuts/);
   checks++;
 }
 {

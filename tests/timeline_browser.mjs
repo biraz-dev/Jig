@@ -126,7 +126,7 @@ async function boot(page, reload = false) {
   await page.waitForFunction(() => window.jigReady === true || typeof window.jigBootError === "string", undefined, { timeout: 60000 });
   assert.equal(await page.evaluate(() => window.jigBootError), undefined);
   await page.waitForTimeout(500);
-  // Open the shared Tasks/Calendar board through its normal workspace shortcut.
+  // Open the shared Tasks/calendar board through its normal workspace shortcut.
   await canvasFocus(page);
   await key(page, "Control+Alt+2");
 }
@@ -373,7 +373,7 @@ async function calendarPair(page, amberVisible = true) {
     if (rose && Boolean(amber) === amberVisible) return { rose, amber };
     await page.waitForTimeout(50);
   } while (Date.now() < until);
-  assert.fail(`The calendar must show the expected visible deadline marks: ${JSON.stringify(marks)}`);
+  assert.fail(`The Dates strip must show the expected visible deadline marks: ${JSON.stringify(marks)}`);
 }
 async function schedule(page, due, start, submit = true) {
   await page.keyboard.press("Control+a");
@@ -815,7 +815,7 @@ try {
   await expectState(current.page, old, "Undo must remove only the newly created link and range");
   await current.context.close();
 
-  progress("reveal more readable dates across month boundaries as the calendar widens");
+  progress("reveal more readable dates across month boundaries as the Dates strip widens");
   const continuous = {
     ...structuredClone(fixture),
     tasks: [
@@ -831,15 +831,15 @@ try {
   current = await open("calendar-continuous", continuous, false, true);
   await current.page.setViewportSize({ width: 800, height: 1000 });
   await resetFocus(current.page);
-  await key(current.page, "Control+Alt+t"); // Calendar.
+  await key(current.page, "Control+Alt+t"); // Dates.
   await key(current.page, "Control+m");
   await key(current.page, "Control+Alt+t"); await key(current.page, "Control+Alt+t"); // Focus the expanded date band.
   await calendarPair(current.page, false);
   await current.page.setViewportSize({ width: 1440, height: 1000 });
   const wideDates = await calendarPair(current.page);
   const distance = wideDates.amber.x - wideDates.rose.x;
-  assert.ok(Math.abs(distance - 21 * 40) <= 6, "Widening the calendar must reveal November's deadline beyond October at the same readable daily scale");
-  await expectState(current.page, continuous, "Calendar width and viewing dates across a month boundary must preserve tasks, deadline times, colors and featured countdown");
+  assert.ok(Math.abs(distance - 21 * 40) <= 6, "Widening the Dates strip must reveal November's deadline beyond October at the same readable daily scale");
+  await expectState(current.page, continuous, "Dates width and viewing across a month boundary must preserve tasks, deadline times, colors and featured countdown");
   await capture(current.page, "timeline-calendar");
   await current.context.close();
 

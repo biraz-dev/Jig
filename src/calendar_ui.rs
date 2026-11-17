@@ -147,7 +147,7 @@ impl CalendarPanel {
                 egui::WidgetType::Button,
                 ui.is_enabled(),
                 format!(
-                    "Calendar · {} · Left/Right select a day · Page Up/Down pan · Plus/Minus zoom · Home today",
+                    "Dates · {} · Left/Right select a day · Page Up/Down pan · Plus/Minus zoom · Home today",
                     selected_date.format("%A %d %B %Y")
                 ),
             )
@@ -373,7 +373,7 @@ impl CalendarPanel {
                         egui::WidgetType::Button,
                         ui.is_enabled(),
                         format!(
-                            "Calendar month · {} · Arrows select dates · Page Up/Down browse months · Home today",
+                            "Calendar · {} · Arrows select dates · Page Up/Down browse months · Home today",
                             selected_date.format("%A %d %B %Y")
                         ),
                     )

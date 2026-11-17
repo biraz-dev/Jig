@@ -1,13 +1,13 @@
 # Jig
 
-Jig is a small, local artist's workbench in Rust. The browser starts in **Tasks**
-and remembers your workspace. **Tasks**, **Notes** and **Sheets** are the main
-views. The header groups About, Data, Tasks, Notes, Sheets, Settings and Help on
-the left, with the calculator button at the far right. Tasks,
-their Gantt timeline, notes, calculator/converter, calendar and optional weather
-use the same portable state. The browser STL interface is hidden for now; the
-native geometry tools remain available. The native CLI and Ratatui terminal
-interface share the Rust core; running `jig` still opens the terminal dashboard.
+Jig is a local place to work things out, written in Rust. The browser starts in
+**Tasks** and remembers your workspace. **Tasks**, **Notes**, **Sheets** and
+**Charts** are the main views. The header groups About, Data, Tasks, Notes,
+Sheets, Charts, Settings and Help on the left, with the calculator at the far
+right. Tasks, Gantt dates, notes, sheets, charts and preferences use the same
+portable document. The native CLI and Ratatui terminal interface share the Rust
+core; running `jig` still opens the terminal dashboard. Existing native geometry
+commands and saved legacy data remain compatible.
 
 No accounts, telemetry or backend. Files are processed on your device.
 The [browser app](https://biraz.dev/Jig/) starts with your saved data or an empty
@@ -95,7 +95,7 @@ the formula and its references.
 **File → Save ODS** downloads `jig.ods`, the main portable document. Standard
 OpenDocument cells carry formulas, typed values, formats, merges and sheet names.
 A Jig metadata entry also retains the complete state: tasks, linked deadlines,
-colors, charts, preferences, calendar notes and calculator history. Keep this
+colors, charts, cell-linked controls, preferences, calendar notes and calculator history. Keep this
 whole-document scope in mind when sharing an ODS file.
 
 **Open ODS** shows an import summary before replacing saved data. An ordinary ODS
@@ -103,8 +103,10 @@ from another editor replaces the workbook and keeps your existing Jig tools.
 When an exported Jig ODS is edited externally, its visible spreadsheet changes
 are imported while its embedded Jig task/history data is retained. Jig supports
 its documented formula subset; it does not promise full Excel or LibreOffice
-compatibility. ODS charts are exported as SVG previews, with editable Jig chart
-specifications in metadata. Foreign native ODS chart objects are not imported.
+compatibility. ODS charts are exported as SVG snapshots; Jig chart and control
+specifications remain editable in Jig through the embedded metadata. They are
+not native editable ODS chart objects or spreadsheet form controls. Foreign
+native ODS chart objects are not imported.
 Browser ODS input is limited to 10 MiB; the core bounds expanded ZIP/XML content.
 
 **Import CSV** fills cells starting at the selection. **Export CSV values** writes
@@ -118,13 +120,27 @@ Fonts are embedded with Unicode mappings; number/date/currency formats, fills,
 borders and merges are retained. Long cell text clips at its cell boundary;
 oversized numeric values show `####`. The export is capped at 200 pages.
 
-### Charts and tasks
+### Charts and cell-linked controls
 
-Select a table and choose **Insert → Chart**. Pie and bar charts read labels and
-numeric values from the first two columns; Gantt charts read labels, start dates
-and due dates from three columns. An optional first header row is recognized.
-Chart results follow changes to their source cells. **View → Charts** opens the
-inline gallery, where charts can be renamed or removed.
+**Charts**, beside **Sheets**, holds pie, line, bar and Gantt charts, plus small
+controls linked to workbook cells. In Sheets, select a range and choose
+**Insert → Send selection to Charts…** to prefill the source. In Charts, **Create**
+opens a chart or control draft; choose its sheet and range or cell, then
+**Create chart** or **Add control**. **Cancel** or Esc discards the open draft.
+Sheets also retains its direct Insert chart actions and **View → Charts**.
+
+Pie, line and bar charts read labels and numeric values from the first two
+columns; Gantt charts read labels, start dates and due dates from three columns.
+An optional first header row is recognized. Sources stay linked to the original
+cells, so edits recalculate the charts. Charts can be renamed or removed.
+
+**Number input** writes a value with Apply or Enter. **Slider** writes a value
+within its configured min/max/step on release. **Calculated result** displays a
+cell's current value, including formula results, without writing to it. Input
+controls protect formula cells. **Edit layout** reveals control editing,
+up/down ordering and deletion; **Save control** commits an edit, while Cancel
+discards it. Committed chart, control and input-value changes use the shared
+Undo/Redo history. JSON and Jig ODS retain their definitions and cell links.
 
 **Tasks** opens the existing checklist and calendar/timeline. Add a task, give it
 an optional due date, and star it to drive the featured countdown in Tasks.
@@ -248,7 +264,7 @@ PDF/image source bytes are session-only and are not embedded in saved state.
 
 ## Settings and backups
 
-Open **Settings** between **Sheets** and **Help**, or use **Ctrl+,**. It opens a
+Open **Settings** between **Charts** and **Help**, or use **Ctrl+,**. It opens a
 full main view; **Done** returns to the workspace. **Graphite** keeps Jig's warm dark palette,
 **Light** uses warm light surfaces, and **System** follows the browser/OS
 appearance. Document cell colors and task colors remain their own values.
@@ -740,6 +756,5 @@ offline reliably. Fresh weather and optional OCR asset downloads need a connecti
 No native graphical build is included yet; terminal tools keep their existing
 keyboard interface and append/backspace editor.
 
-Next, validate real ODS/statement examples and touch/keyboard use, improve printing
-and accessibility where concrete documents expose gaps, and keep expanding the
-supported subset only when it serves actual work.
+Further work focuses on validating real documents, touch and keyboard use,
+printing, accessibility and reliability within the existing tools.

@@ -2582,6 +2582,11 @@ impl BrowserApp {
             ctx.request_repaint();
             return;
         }
+        // The key that opens this view must not also choose a task date.
+        ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
+        });
         if self.timeline_view {
             self.toggle_calendar(ctx);
         }

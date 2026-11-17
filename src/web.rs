@@ -774,6 +774,7 @@ impl BrowserApp {
     }
 
     fn reset_document_session(&mut self) {
+        self.ctx.stop_dragging();
         self.settings_panel.cancel_capture();
         crate::settings_storage::set_capture(false);
         crate::settings_storage::reset_document();
@@ -814,6 +815,7 @@ impl BrowserApp {
     }
 
     fn step_history(&mut self, ctx: &egui::Context, redo: bool) {
+        ctx.stop_dragging();
         self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         let action = if redo { "Redo" } else { "Undo" };
@@ -883,6 +885,7 @@ impl BrowserApp {
     }
 
     fn reset_editors(&mut self) {
+        self.ctx.stop_dragging();
         self.ctx.memory_mut(|memory| memory.close_popup());
         self.task_split_draft = None;
         self.timeline.cancel_gesture();

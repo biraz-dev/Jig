@@ -11,7 +11,7 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = jigDraftSync)]
     fn sync_json(json: &str, force: bool, saved: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = jigDraftLayout)]
-    fn layout_js(x: f32, y: f32, width: f32, height: f32, dark: bool, visible: bool);
+    fn layout_js(x: f32, y: f32, width: f32, height: f32, dark: bool, visible: bool, colors: &str);
     #[wasm_bindgen(js_name = jigDraftFocus)]
     pub fn focus();
     #[wasm_bindgen(catch, js_name = jigDraftTake)]
@@ -60,9 +60,20 @@ pub fn take() -> Result<Vec<Event>, String> {
     serde_json::from_str(&json).map_err(|error| format!("Could not read Draft edits: {error}"))
 }
 
-pub fn layout(rect: Option<egui::Rect>, zoom: f32, dark: bool) {
+pub fn layout(rect: Option<egui::Rect>, zoom: f32, dark: bool, colors: crate::web_theme::Palette) {
     let visible = rect.is_some();
     let rect = rect.unwrap_or(egui::Rect::ZERO);
+    let colors = [
+        colors.bg,
+        colors.surface,
+        colors.text,
+        colors.muted,
+        colors.rule,
+        colors.accent,
+        colors.selected,
+    ]
+    .map(crate::web_theme::srgb);
+    let colors = serde_json::to_string(&colors).unwrap_or_default();
     layout_js(
         rect.left() * zoom,
         rect.top() * zoom,
@@ -70,6 +81,7 @@ pub fn layout(rect: Option<egui::Rect>, zoom: f32, dark: bool) {
         rect.height() * zoom,
         dark,
         visible,
+        &colors,
     );
 }
 

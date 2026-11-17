@@ -316,7 +316,8 @@ impl ControlsPanel {
         let colors = web_theme::colors(ui.ctx());
         let mut save = false;
         let mut cancel = false;
-        egui::Frame::default()
+        let opening = draft.focus;
+        let frame = egui::Frame::default()
             .fill(colors.bg)
             .stroke(Stroke::new(0.6_f32, colors.rule))
             .inner_margin(egui::Margin::same(9))
@@ -343,6 +344,9 @@ impl ControlsPanel {
                             .char_limit(120)
                             .desired_width(220.0_f32.min(ui.available_width())),
                     );
+                    if opening {
+                        response.request_focus();
+                    }
                     save |= enter(ui, &response);
                     egui::ComboBox::from_id_salt("control-kind")
                         .selected_text(draft.kind.label())
@@ -401,6 +405,9 @@ impl ControlsPanel {
                     cancel = ui.small_button("Cancel").clicked();
                 });
             });
+        if opening {
+            frame.response.scroll_to_me(Some(egui::Align::Min));
+        }
         ui.add_space(8.0);
         if cancel {
             self.editor = None;

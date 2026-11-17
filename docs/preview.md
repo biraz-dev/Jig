@@ -248,14 +248,14 @@ Completing a task clears its star and subdues its calendar mark; removing a task
 also removes its linked date. Existing standalone deadlines appear without a
 migration or save merely to display them.
 
-The calendar is a continuous date strip with month-boundary labels. Widening the
+**Dates** is a continuous date strip with month-boundary labels. Widening the
 panel reveals more dates, including dates in neighboring months. Drag the strip
 or use horizontal/Shift-wheel scrolling to pan; +/−, Ctrl-wheel or a pinch zooms
 the day width. Today returns to the current day. When the strip has keyboard
 focus, Left/Right select a day, Page Up/Down move by a visible page, Home selects
 today, and +/− zoom. Panning and zooming do not edit task dates.
 
-**Month**, beside Calendar and Timeline, shows a classic Monday-first month grid.
+**Calendar** shows a classic Monday-first month grid.
 Previous/next arrows change the month, and Today returns to the current day.
 Both calendar views share the selected date, deadline marks, task details,
 optional forecast and task-date picking. Browsing the month grid does not edit
@@ -270,8 +270,8 @@ compact list within the panel. The selected lists determine the visible task
 marks and details. Date selection never changes the starred task or featured
 countdown. Date, color and completion changes follow the shared links.
 
-Weather controls and a compact forecast strip sit above Calendar/Timeline. The
-strip shows today's available forecast by default; select a calendar day by
+Weather controls and a compact forecast strip sit above Calendar, Dates and
+Timeline. The strip shows today's available forecast by default; select a calendar day by
 pointer, touch or keyboard to see that date instead. This selection is temporary
 UI state and does not change saved records. No weather footer takes space beneath
 the chart.
@@ -286,7 +286,7 @@ remain intact in stored state and JSON exports. Times display in the device's
 timezone; date fields accept calendar dates, local date/time or qualified
 RFC3339 timestamps.
 
-The **Calendar / Timeline / Month** selector reuses this panel; Ctrl-Alt-T switches
+The **Calendar / Dates / Timeline** selector reuses this panel; Ctrl-Alt-T switches
 between the calendar and Timeline and focuses the active view's control.
 The compact Gantt adapter in `src/timeline_ui.rs` draws day-based Week/Month ranges from the portable
 `src/timeline.rs` projection. Existing task colors and completion status appear
@@ -298,8 +298,8 @@ local 24-hour HH:MM time. Browsing and selecting days only change the picker;
 Use date updates the draft, Save date commits the range, and Cancel leaves the
 stored schedule untouched.
 
-To choose dates on the main strip or month grid, keep the task's date editor
-open, switch to Calendar or Month, and click or focus Start or Due. A label shows
+To choose dates on the Calendar grid or Dates strip, keep the task's date editor
+open, switch to Calendar or Dates, and click or focus Start or Due. A label shows
 which field the next selected day will fill. The chosen time is retained, and Save date commits the
 whole range. Done picking or Esc leaves picking mode without discarding the
 draft. Panning and zooming only move the view; the featured countdown changes

@@ -55,6 +55,14 @@ async function open(label, { unsupported = false, directory = false, clock = fal
       const original = prototype[method];
       Object.defineProperty(prototype, method, { configurable: true, value: function (options) {
         increment(`jig-test-${method}`);
+        // Keep the actual OPFS handle and streams while exercising a browser
+        // permission that must be renewed through an explicit UI action.
+        if (sessionStorage.getItem("jig-test-permission") === "prompt") {
+          if (method === "queryPermission") return Promise.resolve("prompt");
+          if (!navigator.userActivation.isActive) throw new Error("Reconnect must require an actual user activation");
+          sessionStorage.setItem("jig-test-permission", "granted");
+          return Promise.resolve("granted");
+        }
         // OPFS grants its origin private files implicitly. Older Chromium
         // versions omit permission methods for those already-authorized handles.
         return original ? original.call(this, options) : Promise.resolve("granted");
@@ -370,7 +378,7 @@ try {
   progress("settings header and persistent Graphite, Light and System themes");
   current = await open("settings-theme"); const dark = await waitBrightness(current.page, false);
   await capture(current.page, "settings-header-desktop");
-  await checkInfoPage(current, 4, "About"); await checkInfoPage(current, 5, "Help");
+  await checkInfoPage(current, 3, "About"); await checkInfoPage(current, 4, "Help");
   await chooseTheme(current, "light"); await closeSettings(current); const light = await waitBrightness(current.page, true);
   assert.ok(light > dark + 100); assert.equal(await raw(current.page), taskRaw);
   await capture(current.page, "settings-light"); await boot(current, true); await waitBrightness(current.page, true);
@@ -383,7 +391,7 @@ try {
 
   progress("phone Settings touch target and persistent theme selection");
   current = await open("settings-mobile", { phone: true });
-  await checkInfoPage(current, 4, "About"); await checkInfoPage(current, 5, "Help");
+  await checkInfoPage(current, 3, "About"); await checkInfoPage(current, 4, "Help");
   await tapSettings(current);
   // A real tap must open Settings and focus Done. The overflowing phone
   // ScrollArea contributes one Tab stop before its Theme control.
@@ -468,28 +476,66 @@ try {
   assert.ok(savedCalculation, `Automatic backup must contain the saved calculation: ${JSON.stringify({ files: automatic, calculated, current: await state(current.page), settings: await settings(current.page), status: await backupStatus(current.page) })}`);
   assert.deepEqual(savedCalculation.data, calculated, `Automatic backup ${savedCalculation.name} must preserve every saved document field`);
   await advanceBackupClock(current.page, 310000); assert.equal((await backupFiles(current.page)).length, 3, "No saved changes means no repeated automatic backups");
+  progress("reopen saved work and rearm one automatic backup without another edit");
+  await closeSettings(current); await resetFocus(current.page); await key(current.page, "Control+Alt+o");
+  assert.deepEqual(await state(current.page), calculated, "Open local must restore the same committed document without an edit");
+  await advanceBackupClock(current.page, 240000); assert.equal((await backupFiles(current.page)).length, 3, "Opening saved work must retain the full five-minute delay");
+  await advanceBackupClock(current.page, 70000); const reopened = await waitFiles(current.page, 4);
+  const reopenedBackup = reopened.find(file => !automatic.some(previous => previous.name === file.name));
+  assert.ok(reopenedBackup, "Opening saved work must create a new backup after the full delay");
+  assert.deepEqual(reopenedBackup.data, calculated, "Reopening must back up the complete existing document without an edit");
   await boot(current, true);
   const restored = await backupStatus(current.page); assert.equal(restored.folder, "jig-settings-browser"); assert.equal(restored.permission, "granted");
   assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-picker"))), 1, "Reload must restore the handle without opening another chooser");
   assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission"))), 0, "Reload must not prompt for permission");
   const settingsDownload = await downloadAt(current, 2); assert.equal(settingsDownload.name, "jig-settings.json"); assert.equal(JSON.stringify(settingsDownload.data).includes("jig-settings-browser"), false);
   await capture(current.page, "settings-folder");
+  progress("retain an expired backup until its real handle is explicitly reconnected");
+  await current.page.evaluate(() => sessionStorage.setItem("jig-test-permission", "prompt"));
+  await boot(current, true);
+  await current.page.waitForFunction(() => JSON.parse(window.jigBackupStatus()).permission === "prompt");
+  await advanceBackupClock(current.page, 310000);
+  assert.equal((await backupFiles(current.page)).length, 4, "An expired deadline must wait while folder permission is unavailable");
+  assert.deepEqual(await state(current.page), calculated);
+  assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission"))), 0,
+    "A due automatic backup must never request permission in the background");
+  await focusSetting(current, 7); await key(current.page, "Space"); // Change folder, then Reconnect folder.
+  await current.page.waitForFunction(() => JSON.parse(window.jigBackupStatus()).permission === "granted");
+  const reconnected = await waitFiles(current.page, 5);
+  const resumedBackup = reconnected.find(file => !reopened.some(previous => previous.name === file.name));
+  assert.ok(resumedBackup, "Reconnect must resume the expired backup without another document edit");
+  assert.deepEqual(resumedBackup.data, calculated, "The resumed backup must contain every current saved document field");
+  assert.deepEqual(await state(current.page), calculated, "Reconnecting must not require or create a document edit");
+  assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission"))), 1,
+    "Only the explicit Reconnect action may request permission");
+  progress("clear a document without backing up stale work, then save fresh personal work");
   await closeSettings(current); await resetFocus(current.page); await key(current.page, "Control+Alt+2"); await key(current.page, "Control+Alt+d");
-  await tab(current.page, 8); await key(current.page, "Space"); await key(current.page, "Control+Alt+d");
-  assert.deepEqual(await state(current.page), calculated, "Sample mode must leave committed personal data intact");
-  await advanceBackupClock(current.page, 310000); assert.equal((await backupFiles(current.page)).length, 3, "Temporary samples must never be written to the folder");
-  await openSettings(current); await tab(current.page, 9);
-  // With automatic backups already on, the next enabled control after it is
-  // Restore. Both sample backup-writing buttons must be skipped by Tab.
+  await tab(current.page, 10); await key(current.page, "Space"); // Five header buttons, then Clear saved data.
+  assert.deepEqual(await state(current.page), calculated, "Clearing must wait for explicit confirmation");
+  await tab(current.page); await key(current.page, "Space");
+  await current.page.waitForFunction(key => localStorage.getItem(key) === null, taskKey);
+  await key(current.page, "Control+Alt+d");
+  await key(current.page, "Control+Alt+o");
+  await advanceBackupClock(current.page, 310000);
+  assert.equal((await backupFiles(current.page)).length, 5, "Clearing and reopening without saved data must not schedule a phantom backup");
+  assert.equal(await raw(current.page), null, "An empty document must remain unsaved until its first edit");
+  await focusSetting(current, 11); // Restore remains available for an empty personal document.
   const chooserEvent = current.page.waitForEvent("filechooser"); await key(current.page, "Space"); const chooser = await chooserEvent;
   assert.equal(await chooser.element().getAttribute("id"), "jig-import"); await chooser.setFiles([]); current.settingsOpen = false;
-  assert.equal((await backupFiles(current.page)).length, 3); assert.deepEqual(await state(current.page), calculated);
+  assert.equal((await backupFiles(current.page)).length, 5); assert.equal(await raw(current.page), null, "Cancelling restore must leave the cleared document empty");
+  await calculate(current, "7 + 1", 1);
+  const fresh = await state(current.page);
+  assert.deepEqual(fresh.history, [{ expression: "7 + 1", result: 8 }]);
+  for (const field of ["tasks", "deadlines", "entries", "notes"]) assert.deepEqual(fresh[field] ?? [], [], `First work after clearing must not add sample ${field}`);
+  assert.equal(fresh.featured, null);
+  await advanceBackupClock(current.page, 310000); const restarted = await waitFiles(current.page, 6);
+  assert.ok(restarted.some(file => JSON.stringify(file.data) === JSON.stringify(fresh)), "Automatic backups must resume for the complete freshly saved document");
   assert.equal(await current.page.evaluate(async () => {
     const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser"); return (await (await folder.getFileHandle("user-owned.txt")).getFile()).text();
   }), "Sample: preserve this file");
   await current.context.close();
   assert.deepEqual(issues, [], "Settings, backups and documents must stay local without browser errors");
-  console.log("Settings browser passed: stable header, persistent Graphite/Light/System themes, captured shortcuts/conflict rejection/reset/guide, configurable Undo limits, validated separate settings portability, personal download fallback, real OPFS backup streams/unique names/debounce/IDB restoration, and sample backup exclusion.");
+  console.log("Settings browser passed: stable header, persistent Graphite/Light/System themes, captured shortcuts/conflict rejection/reset/guide, configurable Undo limits, validated separate settings portability, personal download fallback, real OPFS backup streams/unique names/debounce/IDB restoration, saved-document reopen deadlines, permission-wait and explicit reconnect recovery, explicit clearing with pending-backup cancellation, and fresh personal work after reset.");
 } catch (error) {
   console.error(`Settings browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "settings-failure").catch(() => {});

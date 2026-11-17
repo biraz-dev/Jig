@@ -2,7 +2,7 @@
 use crate::{settings_storage::BackupStatus, web_theme};
 use eframe::egui::{self, RichText, Ui};
 use jig::app_settings::{
-    Action, AppSettings, Chord, ShortcutKey, Theme, FIXED_SHORTCUTS, MAX_UNDO_LEVELS,
+    Action, AppSettings, Chord, CustomTheme, ShortcutKey, Theme, FIXED_SHORTCUTS, MAX_UNDO_LEVELS,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,6 +145,9 @@ pub struct SettingsPanel {
     error: Option<String>,
     focus_done: bool,
     undo_preview: Option<usize>,
+    reveal_colors: bool,
+    color_drafts: [String; 4],
+    color_source: Option<CustomTheme>,
 }
 
 impl SettingsPanel {
@@ -156,6 +159,7 @@ impl SettingsPanel {
         self.cancel_capture();
         self.focus_done = true;
         self.undo_preview = None;
+        self.color_source = None;
     }
 
     pub fn owns_keyboard(&self) -> bool {
@@ -211,6 +215,8 @@ impl SettingsPanel {
                 self.backups(ui, &mut next, backup, saved, &mut response.actions);
                 ui.separator();
                 self.shortcuts(ui, &mut next);
+                ui.separator();
+                self.customize_colors(ui, &mut next);
             });
         if !capturing && self.owns_keyboard() {
             // A click release and the first shortcut can arrive in one pass.
@@ -232,12 +238,13 @@ impl SettingsPanel {
     }
 
     fn appearance(
-        &self,
+        &mut self,
         ui: &mut Ui,
         settings: &mut AppSettings,
         actions: &mut Vec<SettingsAction>,
     ) {
         ui.label(RichText::new("Appearance").strong());
+        let previous = settings.theme;
         ui.horizontal(|ui| {
             ui.label("Theme");
             egui::ComboBox::from_id_salt("application-theme")
@@ -248,6 +255,12 @@ impl SettingsPanel {
                     }
                 });
         });
+        if settings.theme == Theme::Custom && previous != Theme::Custom {
+            settings
+                .custom_theme
+                .get_or_insert_with(|| custom_from_palette(ui.ctx()));
+            self.reveal_colors = true;
+        }
         ui.horizontal_wrapped(|ui| {
             if ui.button("Export settings").clicked() {
                 actions.push(SettingsAction::ExportSettings);
@@ -257,6 +270,86 @@ impl SettingsPanel {
             }
         });
         quiet(ui, "Preferences are saved in this browser. Export settings to take them to another computer.");
+    }
+
+    fn customize_colors(&mut self, ui: &mut Ui, settings: &mut AppSettings) {
+        let reveal = std::mem::take(&mut self.reveal_colors);
+        let section = egui::CollapsingHeader::new("Customize colors")
+            .id_salt("theme-colors")
+            .open(reveal.then_some(true))
+            .show(ui, |ui| {
+                ui.checkbox(&mut settings.system_accent, "Use system accent when available");
+                if settings.system_accent && !web_theme::system_accent_available(ui.ctx()) {
+                    quiet(ui, "This browser does not expose a system accent. Jig keeps your selected accent instead.");
+                }
+                if settings.theme != Theme::Custom {
+                    if ui.button("Customize this theme").clicked() {
+                        settings.custom_theme = Some(custom_from_palette(ui.ctx()));
+                        settings.theme = Theme::Custom;
+                        self.color_source = None;
+                        self.reveal_colors = true;
+                    }
+                    quiet(ui, "Copy this palette into Custom, then choose colors to match your desktop. Your custom palette stays saved when you try another preset.");
+                }
+                if settings.theme == Theme::Custom {
+                    let mut custom = settings.custom_theme.unwrap_or_default();
+                    let mut colors = [custom.background, custom.surface, custom.text, custom.accent];
+                    if self.color_source != Some(custom) {
+                        self.color_drafts = colors.map(hex_color);
+                    }
+                    for (index, (label, color)) in ["Background", "Surface", "Text", "Accent"]
+                        .into_iter()
+                        .zip(colors.iter_mut())
+                        .enumerate()
+                    {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(label);
+                            let picked = ui.color_edit_button_srgb(color).changed();
+                            if picked {
+                                self.color_drafts[index] = hex_color(*color);
+                            }
+                            let field = ui.add(
+                                egui::TextEdit::singleline(&mut self.color_drafts[index])
+                                    .id(egui::Id::new(("theme-color-hex", index)))
+                                    .desired_width(100.0)
+                                    .char_limit(7)
+                                    .hint_text("#RRGGBB"),
+                            );
+                            if reveal && index == 0 {
+                                field.request_focus();
+                            }
+                            if field.changed() {
+                                if let Some(parsed) = parse_hex_color(&self.color_drafts[index]) {
+                                    *color = parsed;
+                                }
+                            }
+                            if field.gained_focus() {
+                                field.scroll_to_me(None);
+                            }
+                        });
+                    }
+                    [custom.background, custom.surface, custom.text, custom.accent] = colors;
+                    if custom != settings.custom_theme.unwrap_or_default() {
+                        settings.custom_theme = Some(custom);
+                    }
+                    self.color_source = Some(custom);
+                    let text_contrast = jig::palette::contrast(custom.background, custom.text)
+                        .min(jig::palette::contrast(custom.surface, custom.text));
+                    if text_contrast < 4.5 {
+                        quiet(ui, "Text contrast is low. Choose lighter text on dark backgrounds, or darker text on light backgrounds.");
+                    }
+                    if settings.system_accent {
+                        quiet(ui, "The system accent takes precedence while available. Turn it off to use your custom accent.");
+                    }
+                    if ui.button("Reset to Ember").clicked() {
+                        settings.custom_theme = Some(CustomTheme::default());
+                        self.color_source = None;
+                    }
+                }
+            });
+        if reveal {
+            section.header_response.scroll_to_me(Some(egui::Align::Min));
+        }
     }
 
     fn history(&mut self, ui: &mut Ui, settings: &mut AppSettings) {
@@ -538,4 +631,30 @@ fn quiet(ui: &mut Ui, text: &str) {
             .size(12.0)
             .color(web_theme::colors(ui.ctx()).muted),
     );
+}
+
+fn custom_from_palette(ctx: &egui::Context) -> CustomTheme {
+    let colors = web_theme::resolved(ctx);
+    CustomTheme {
+        background: colors.background,
+        surface: colors.surface,
+        text: colors.text,
+        accent: colors.accent,
+    }
+}
+
+fn hex_color(color: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2])
+}
+
+fn parse_hex_color(text: &str) -> Option<[u8; 3]> {
+    let text = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    if text.len() != 6 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some([
+        u8::from_str_radix(&text[0..2], 16).ok()?,
+        u8::from_str_radix(&text[2..4], 16).ok()?,
+        u8::from_str_radix(&text[4..6], 16).ok()?,
+    ])
 }

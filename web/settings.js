@@ -32,7 +32,7 @@
   window.jigSettingsShortcuts = text => {
     bounded(text, settingsLimit, "Shortcuts");
     const next = JSON.parse(text);
-    if (!Array.isArray(next) || next.length > 12 || next.some(chord =>
+    if (!Array.isArray(next) || next.length > 13 || next.some(chord =>
       !chord || typeof chord.key !== "string"
       || ["ctrl", "shift", "alt", "meta"].some(name => typeof chord[name] !== "boolean"))) {
       throw new Error("Expected the effective Jig shortcuts.");

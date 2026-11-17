@@ -71,7 +71,7 @@ fn about(ui: &mut Ui) {
     section(
         ui,
         "Your work stays on your device",
-        "Tasks, dates, notes, sheets and charts save in this browser profile for this site's address. Refreshing restores saved work. There are no accounts, telemetry or backend storage. Imported documents are processed on your device.",
+        "Tasks, dates, notes, Draft, sheets and charts save in this browser profile for this site's address. Refreshing restores saved work. There are no accounts, telemetry or backend storage. Imported documents are processed on your device.",
     );
     section(
         ui,
@@ -126,6 +126,12 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
     ui.label("On Tasks, drag a note's handle onto the task list to turn it into a task at the highlighted position. The note's task button also lets you choose its list. To note in the task editor converts it back. Conversion moves the record and retains its full text; a converted scheduled task keeps its dates for restoration.");
     section(
         ui,
+        "Draft",
+        "Gather text in one document next to Notes. Select text to set its size, bold, italic, underline, link, alignment, bullets or numbering. Copy keeps formatting where supported, with plain text as a fallback. To note and To task copy the selection, or the whole Draft, without removing the original; transfers use the existing 16 KiB text limit.",
+    );
+    ui.label("Draft saves as you type and travels in JSON and Jig ODS backups. Older files open an empty Draft. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z use the shared Undo/Redo; consecutive typing is grouped. Esc returns keyboard focus to the main app. Draft allows up to 512 KiB of text within the browser document limit.");
+    section(
+        ui,
         "Sheets and Charts",
         "Charts sits beside Sheets in the header. Select cells in Sheets and choose Insert → Send selection to Charts… to prefill a live range. Charts' Create menu adds pie, line, bar or Gantt charts, Number input, Slider and Calculated result cards linked to your cells. Create chart or Add control saves the draft; Cancel or Esc discards it.",
     );
@@ -144,7 +150,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
     section(
         ui,
         "Undo and text editing",
-        "Application Undo and Redo apply outside text fields. Inside an editor, the text keeps its own Undo/Redo and normal copy/paste shortcuts. Application history lasts for this session; reload clears that history, while saved documents remain. Settings controls the history limit and application shortcuts.",
+        "Application Undo and Redo apply outside text fields and inside Draft. Other text editors keep their own Undo/Redo and normal copy/paste shortcuts. Application history lasts for this session; reload clears that history, while saved documents remain. Settings controls the history limit and application shortcuts.",
     );
     ui.add_space(10.0);
     ui.label(RichText::new("Current application shortcuts").strong());

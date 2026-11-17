@@ -854,7 +854,6 @@ impl Styles {
         let mut format: Option<(String, NumberFormat)> = None;
         let mut currency = String::new();
         let mut in_currency = false;
-        let mut depth = 0;
         let mut events = 0;
         loop {
             events += 1;
@@ -980,12 +979,6 @@ impl Styles {
                         if let Some((name, style)) = current.take() {
                             self.definitions.insert(name, style);
                         }
-                    }
-                    // Empty elements have no matching End; style/property data
-                    // is nevertheless complete. Limits are checked separately.
-                    depth += 1;
-                    if depth > MAX_XML_EVENTS {
-                        return Err("ODS XML exceeds its limit".into());
                     }
                 }
                 Event::Text(event) => {
@@ -1227,6 +1220,23 @@ fn restore_merged_borders(sheet: &mut Sheet) {
     }
 }
 
+fn imported_sheet(attributes: &BTreeMap<String, String>, count: usize) -> Result<Sheet> {
+    if count >= MAX_SHEETS {
+        return Err("ODS contains too many sheets".into());
+    }
+    let id = count as u64 + 1;
+    Ok(Sheet {
+        id,
+        name: attributes
+            .get("name")
+            .cloned()
+            .unwrap_or_else(|| format!("Sheet {id}")),
+        cells: BTreeMap::new(),
+        styles: BTreeMap::new(),
+        merges: Vec::new(),
+    })
+}
+
 fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
     let mut reader = Reader::from_reader(bytes);
     let mut book = Workbook::default();
@@ -1256,19 +1266,7 @@ fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
                         if sheet.is_some() {
                             return Err("Nested ODS tables are not supported".into());
                         }
-                        if book.sheets.len() >= MAX_SHEETS {
-                            return Err("ODS contains too many sheets".into());
-                        }
-                        let mut value = Workbook::default().sheets.remove(0);
-                        value.id = book.sheets.len() as u64 + 1;
-                        value.name = a
-                            .get("name")
-                            .cloned()
-                            .unwrap_or_else(|| format!("Sheet {}", value.id));
-                        value.cells.clear();
-                        value.styles.clear();
-                        value.merges.clear();
-                        sheet = Some(value);
+                        sheet = Some(imported_sheet(&a, book.sheets.len())?);
                         row = 0;
                     }
                     b"table-row" if sheet.is_some() => {
@@ -1311,8 +1309,11 @@ fn parse_sheets(bytes: &[u8], styles: &Styles) -> Result<Workbook> {
                 let tag = local(event.name().as_ref()).to_vec();
                 let a = attributes(&event, &reader)?;
                 match tag.as_slice() {
-                    b"table" if sheet.is_some() => {
-                        return Err("Nested ODS tables are not supported".into());
+                    b"table" => {
+                        if sheet.is_some() {
+                            return Err("Nested ODS tables are not supported".into());
+                        }
+                        book.sheets.push(imported_sheet(&a, book.sheets.len())?);
                     }
                     b"table-row" if sheet.is_some() => {
                         row = row

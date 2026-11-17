@@ -1355,6 +1355,7 @@ dependencies = [
  "clap",
  "crossterm",
  "eframe",
+ "egui",
  "flate2",
  "lopdf",
  "quick-xml 0.38.4",

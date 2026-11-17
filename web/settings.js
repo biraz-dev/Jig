@@ -6,6 +6,7 @@
   const backupLimit = 2 * 1024 * 1024;
   const disabledKey = "jig.backup.disconnected.v1";
   const lastBackupKey = "jig.backup.last.v1";
+  const backupErrorKey = "jig.backup.error.v1";
   let observedSettings = null;
   let importGeneration = 0;
   let importInput = null;
@@ -138,7 +139,7 @@
 
   const status = {
     supported: window.isSecureContext === true && typeof window.showDirectoryPicker === "function",
-    busy: false, folder: null, permission: "unavailable", message: "", last_backup: null,
+    busy: false, folder: null, permission: "unavailable", message: "", last_backup: null, error: null,
   };
   let directory = null;
   let folderGeneration = 0;
@@ -150,6 +151,10 @@
     const saved = localStorage.getItem(lastBackupKey);
     if (saved && saved.length <= 40 && Number.isFinite(Date.parse(saved))) status.last_backup = saved;
   } catch { /* A backup can still be downloaded when browser storage is blocked. */ }
+  try {
+    const saved = localStorage.getItem(backupErrorKey);
+    if (typeof saved === "string" && saved.length > 0 && saved.length <= 2048) status.error = saved;
+  } catch { /* Keep recovery usable when browser metadata is unavailable. */ }
   window.jigBackupStatus = () => JSON.stringify(status);
 
   function handleStore(mode, operation) {
@@ -184,7 +189,18 @@
     directory = handle; status.folder = handle?.name ?? null; status.permission = access;
   }
   function report(error, prefix) {
-    status.message = `${prefix}: ${error.message ?? String(error)}`;
+    status.message = `${prefix}: ${String(error?.message ?? error)}`.slice(0, 2048);
+  }
+  function backupFailure(error) {
+    report(error, "Backup failed");
+    setBackupError(status.message);
+  }
+  function setBackupError(message) {
+    status.error = message;
+    try {
+      if (message === null) localStorage.removeItem(backupErrorKey);
+      else localStorage.setItem(backupErrorKey, message);
+    } catch { /* A metadata failure must not block file backup or recovery. */ }
   }
   function beginFolder(nextPhase) {
     if (phase === "writing") throw new Error("Wait for the current backup to finish.");
@@ -251,8 +267,9 @@
     }).catch(error => { if (token === folderGeneration) report(error, "Could not reconnect the folder"); })
       .finally(() => finishFolder(token));
   };
-  window.jigBackupCancel = () => {
+  window.jigBackupCancel = (resetFailure = false) => {
     ++writeGeneration;
+    if (resetFailure) { setBackupError(null); status.message = ""; }
     if (activeWriter) {
       try { Promise.resolve(activeWriter.abort()).catch(() => {}); } catch { /* Already closing. */ }
     }
@@ -260,7 +277,7 @@
     if (phase === "writing") { phase = "idle"; status.busy = false; status.message = "Backup canceled."; }
   };
   window.jigBackupDisconnectFolder = () => {
-    window.jigBackupCancel();
+    window.jigBackupCancel(true);
     const token = beginFolder("disconnecting");
     // A failed IndexedDB delete must not silently reconnect the folder on reload.
     try { localStorage.setItem(disabledKey, "1"); }
@@ -294,16 +311,21 @@
     try { localStorage.setItem(lastBackupKey, status.last_backup); } catch { /* File was saved successfully. */ }
   }
   window.jigBackupWrite = (text, automatic) => {
-    bounded(text, backupLimit, "Backup");
-    if (automatic && localStorage.getItem("jig.personal.v1") !== text) {
-      throw new Error("Automatic backup requires the current successfully saved personal data.");
+    try {
+      bounded(text, backupLimit, "Backup");
+      if (automatic && localStorage.getItem("jig.personal.v1") !== text) {
+        throw new Error("Automatic backup requires the current successfully saved personal data.");
+      }
+      if (!status.supported) {
+        if (automatic) throw new Error("Automatic folder backups are unavailable in this browser.");
+        download(text, backupName()); rememberBackup(); setBackupError(null); status.message = "Backup downloaded."; return;
+      }
+      if (phase !== "idle") throw new Error("A backup folder operation is still running.");
+      if (!directory || localStorage.getItem(disabledKey) === "1") throw new Error("Choose a backup folder first.");
+    } catch (error) {
+      backupFailure(error);
+      throw error;
     }
-    if (!status.supported) {
-      if (automatic) throw new Error("Automatic folder backups are unavailable in this browser.");
-      download(text, backupName()); rememberBackup(); status.message = "Backup downloaded."; return;
-    }
-    if (phase !== "idle") throw new Error("A backup folder operation is still running.");
-    if (!directory || localStorage.getItem(disabledKey) === "1") throw new Error("Choose a backup folder first.");
     const token = ++writeGeneration;
     const handle = directory;
     const current = () => {
@@ -323,12 +345,15 @@
         current(); activeWriter = stream;
         await stream.write(text + "\n");
         current();
-        await stream.close(); committed = true;
-        if (token === writeGeneration) { rememberBackup(); status.message = `Backup saved to ${handle.name}.`; }
+        await stream.close();
+        // Closing can finish after cancellation; remove this attempt's new file.
+        if (token !== writeGeneration) throw new Error("Backup canceled.");
+        committed = true;
+        if (token === writeGeneration) { rememberBackup(); setBackupError(null); status.message = `Backup saved to ${handle.name}.`; }
       } catch (error) {
         if (token === writeGeneration) {
-          if (error.name === "NotAllowedError" || error.name === "SecurityError") status.permission = "prompt";
-          report(error, "Backup failed");
+          if (error?.name === "NotAllowedError" || error?.name === "SecurityError") status.permission = "prompt";
+          backupFailure(error);
         }
       } finally {
         if (!committed) {

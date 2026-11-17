@@ -123,7 +123,9 @@ async function colored(page, color, top = 0, bottom = page.viewportSize().height
 }
 async function workspacePoint(page) {
   const { regions } = await colored(page, [67, 42, 34], 0, 66);
-  const point = regions.find(r => r.width >= 40 && r.width <= 85 && r.height >= 18 && r.height <= 32);
+  // Measure the selected fill inside the button border: the 18px header
+  // button has a 16px colored interior in the actual browser render.
+  const point = regions.find(r => r.width >= 40 && r.width <= 85 && r.height >= 16 && r.height <= 32);
   assert.ok(point, "The selected Sheets or Charts header tab must be visibly identifiable"); return point;
 }
 async function waitWorkspace(page, workspace) {
@@ -199,6 +201,36 @@ async function dragSlider(scene, thumb, touch = false) {
   await expectState(scene.page, expected, "Slider release must change only its bound literal cell");
   await key(scene.page, "Control+z");
   await expectState(scene.page, before, "One Undo must restore the entire multi-move slider gesture");
+}
+async function undoWhileDragging(scene) {
+  const before = await state(scene.page), committed = structuredClone(before);
+  sheet(committed).cells.B2 = "16";
+  await focusNumber(scene.page, sheet(before).cells.B2);
+  await text(scene.page, "16"); await key(scene.page, "Enter"); await waitCell(scene.page, "16");
+  await expectState(scene.page, committed, "Establish a known committed change before the held Slider preview");
+  await tab(scene.page, 2); const field = await focusedText(scene.page, "16");
+  await tab(scene.page, 2); const thumb = await sliderThumb(scene.page, field);
+  await scene.page.mouse.move(thumb.x, thumb.y); await scene.page.mouse.down(); await paint(scene.page);
+  await scene.page.mouse.move(thumb.x + 20, thumb.y, { steps: 3 }); await paint(scene.page);
+  await expectState(scene.page, committed, "The held Slider must still be an uncommitted preview");
+  // Do not reset focus or release the pointer before Undo: native dragging
+  // must stop along with the app's preview, then remain cancelled until release.
+  await key(scene.page, "Control+z");
+  await expectState(scene.page, before, "Undo while holding Slider must restore the prior committed workbook");
+  for (const distance of [30, 40]) {
+    await scene.page.mouse.move(thumb.x + distance, thumb.y); await paint(scene.page);
+    await expectState(scene.page, before, "Further held-pointer motion must not restart the cancelled Slider preview");
+  }
+  const after = await scene.page.evaluate(() => window.jigTestFrames.paints);
+  await scene.page.waitForFunction(after => window.jigTestFrames.paints > after
+    && window.jigTestFrames.painted >= window.jigTestFrames.input, after);
+  await expectState(scene.page, before, "Holding through another app paint must not commit a cancelled Slider");
+  await scene.page.mouse.up(); await paint(scene.page);
+  await expectState(scene.page, before, "Releasing a cancelled Slider must not write a phantom value");
+  await key(scene.page, "Control+Shift+z");
+  await expectState(scene.page, committed, "Cancelled motion and release must preserve Redo for the known committed change");
+  await key(scene.page, "Control+z");
+  await expectState(scene.page, before, "One Undo must still remove only that known change, with no phantom Slider history");
 }
 async function download(page, shortcut, extension) {
   const event = page.waitForEvent("download", { timeout: 15000 }); await key(page, shortcut);
@@ -296,6 +328,8 @@ try {
   assert.notEqual(resultAfter.signature, resultBefore.signature, "Changing the Number input must visibly recalculate the linked Result card");
   await tab(current.page, 2); const thumb = await sliderThumb(current.page, sliderPoint);
   await capture(current.page, "charts-controls"); await dragSlider(current, thumb);
+  progress("undo a committed value while holding a Slider preview and suppress its later release");
+  await undoWhileDragging(current);
   await current.page.mouse.move(700, 600); await current.page.mouse.wheel(0, 10000); await paint(current.page);
   const changedLine = await colored(current.page, [109, 185, 238], 650, 950);
   assert.notEqual(changedLine.signature, firstLine.signature, "Cell-linked inputs must redraw an existing Line chart from evaluated formulas");

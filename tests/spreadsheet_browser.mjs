@@ -9,7 +9,7 @@ import { installFrameFence, waitForAppPaint } from "./browser_frames.mjs";
 
 const base = process.env.JIG_PREVIEW_URL ?? "http://127.0.0.1:4173/Jig/";
 const origin = new URL(base).origin;
-const sampleUrl = new URL(base); sampleUrl.searchParams.set("sample", "1"); sampleUrl.hash = "";
+const legacySampleUrl = new URL(base); legacySampleUrl.searchParams.set("sample", "1"); legacySampleUrl.hash = "";
 const storageKey = "jig.personal.v1";
 const results = resolve("playwright-results");
 await mkdir(results, { recursive: true });
@@ -127,7 +127,7 @@ async function open(label, saved = fixture, phone = false) {
   // WASM startup can hold load open on the software renderer. Match the ready check.
   page.setDefaultNavigationTimeout(60000);
   await page.clock.setFixedTime(new Date("2026-11-11T12:00:00Z"));
-  await boot(page, false, saved === null ? sampleUrl.href : base);
+  await boot(page, false, saved === null ? legacySampleUrl.href : base);
   return { context, page };
 }
 async function boot(page, reload = false, address = base) {
@@ -180,6 +180,36 @@ async function enter(page, address, value, submit = true) {
     await confirmDraft(page, value);
   }
 }
+async function typeAndShortcutInOneBatch(page, text, shortcut) {
+  const batch = await page.evaluate(({ text, shortcut }) => {
+    const input = document.activeElement;
+    const editor = input instanceof HTMLInputElement && input.type === "text" && input.parentElement === document.body;
+    if (!editor && input?.id !== "jig_canvas") throw new Error("The spreadsheet grid or its real text transport must own keyboard focus");
+    const before = { ...window.jigTestFrames };
+    // Dispatch normal DOM events in one task so rAF cannot separate text and
+    // shortcut. The grid gets printable keys; an editor gets text-agent input.
+    let consumed;
+    if (editor) {
+      input.value = text;
+      input.dispatchEvent(new InputEvent("input", { data: text, inputType: "insertText", bubbles: true }));
+      consumed = input.value === "";
+    } else {
+      for (const character of text) {
+        const event = { key: character, code: `Digit${character}`, bubbles: true, cancelable: true };
+        input.dispatchEvent(new KeyboardEvent("keydown", event));
+        input.dispatchEvent(new KeyboardEvent("keyup", event));
+      }
+    }
+    input.dispatchEvent(new KeyboardEvent("keydown", { ...shortcut, bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { ...shortcut, bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: shortcut.ctrlKey ? "Control" : "Alt", bubbles: true }));
+    return { before, after: { ...window.jigTestFrames }, editor, consumed };
+  }, { text, shortcut });
+  if (batch.editor) assert.equal(batch.consumed, true, "The actual eframe input handler must consume the final character");
+  assert.equal(batch.after.processed, batch.before.processed, "Text and shortcut must queue before another app update");
+  assert.ok(batch.after.input - batch.before.input >= 3, "The same batch must contain text and keyboard events");
+  await paint(page);
+}
 async function copied(page, address) {
   if (address !== undefined) await select(page, address);
   await page.evaluate(() => navigator.clipboard.writeText("Jig spreadsheet clipboard pending"));
@@ -222,7 +252,7 @@ async function exportCsv(page) {
 async function exportJson(page) {
   await boot(page, true); // Reload also verifies the exported workbook was saved.
   await key(page, "Control+Alt+d");
-  await tab(page, 10);
+  await tab(page, 9);
   const event = page.waitForEvent("download", { timeout: 5000 });
   await key(page, "Space");
   const download = await event;
@@ -237,7 +267,7 @@ async function importJson(page, imported, confirm = true) {
   if (confirm) {
     await canvasFocus(page);
     await key(page, "Escape");
-    await tab(page, 6); // Data, Settings, Calculator, About, Help, Confirm import.
+    await tab(page, 6); // Data, Settings, About, Help, Calculator, Confirm import.
     await key(page, "Space");
   }
 }
@@ -354,7 +384,7 @@ async function backToCells(page) {
   // Chart gallery controls follow the five header buttons and the footer Source link.
   await canvasFocus(page);
   await key(page, "Escape");
-  await tab(page, 9); // Data, Settings, Calculator, About, Help, Source, Save ODS, Export PDF, Back to cells.
+  await tab(page, 9); // Data, Settings, About, Help, Calculator, Source, Save ODS, Export PDF, Back to cells.
   await key(page, "Space");
 }
 async function renderedBarWidths(page) {
@@ -633,6 +663,40 @@ try {
   await value(current.page, "H1", 84);
   assert.deepEqual(toolsOnly(await state(current.page)), fixture);
 
+  progress("preserve the final typed character before same-batch sheet and address shortcuts");
+  const beforeBatchedShortcuts = await state(current.page);
+  await enter(current.page, "Z90", "22", false);
+  await typeAndShortcutInOneBatch(current.page, "3", { key: "PageDown", code: "PageDown", altKey: true });
+  const switchedEdit = structuredClone(beforeBatchedShortcuts);
+  sheet(switchedEdit).cells.Z90 = "223";
+  await expectState(current.page, switchedEdit, "Alt-PageDown must commit the final character to the original sheet exactly once");
+  assert.equal(sheet(await state(current.page), secondId).cells.Z90, undefined, "Switching sheets must not redirect the edit to the new sheet");
+  await value(current.page, "A1", 42); // The destination sheet is actually selected.
+  await undo(current.page);
+  await expectState(current.page, beforeBatchedShortcuts, "One Undo must restore the workbook before the batched edit");
+  await key(current.page, "Alt+PageUp"); await value(current.page, "H1", 84);
+  await select(current.page, "Z92");
+  await typeAndShortcutInOneBatch(current.page, "223", { key: "g", code: "KeyG", ctrlKey: true });
+  const firstEntryEdit = structuredClone(beforeBatchedShortcuts);
+  sheet(firstEntryEdit).cells.Z92 = "223";
+  await expectState(current.page, firstEntryEdit, "Typing from the grid and Ctrl-G in one batch must create the whole cell value");
+  await confirmDraft(current.page, "Z92");
+  await text(current.page, "A1"); await key(current.page, "Enter");
+  await undo(current.page);
+  await expectState(current.page, beforeBatchedShortcuts, "First-entry text and its shortcut must produce one cell edit");
+  await enter(current.page, "Z91", "22", false);
+  await typeAndShortcutInOneBatch(current.page, "3", { key: "g", code: "KeyG", ctrlKey: true });
+  const addressedEdit = structuredClone(beforeBatchedShortcuts);
+  sheet(addressedEdit).cells.Z91 = "223";
+  await expectState(current.page, addressedEdit, "Ctrl-G must finish the cell's final character before opening the address editor");
+  await confirmDraft(current.page, "Z91"); // Positive proof that Ctrl-G opened the address field.
+  await text(current.page, "A1"); await key(current.page, "Enter");
+  await boot(current.page, true);
+  await expectState(current.page, addressedEdit, "A batched shortcut's complete cell value must survive reload");
+  await value(current.page, "Z91", 223);
+  await select(current.page, "Z91"); await key(current.page, "Delete");
+  await expectState(current.page, beforeBatchedShortcuts, "Regression probe cells must leave the rest of the workbook unchanged");
+
   progress("format financial values while preserving their stored precision");
   await enter(current.page, "A15", "0.125");
   await select(current.page, "A15");
@@ -814,7 +878,7 @@ try {
   assert.equal(await raw(current.page), beforeOdsReview, "Opening ODS must wait for the user's review before replacing current data");
   await canvasFocus(current.page);
   await key(current.page, "Escape");
-  await tab(current.page, 6); // Data, Settings, Calculator, About, Help, then Confirm import.
+  await tab(current.page, 6); // Data, Settings, About, Help, Calculator, then Confirm import.
   await key(current.page, "Space");
   await expectState(current.page, beforeOds, "Confirming a locally saved ODS must restore formulas and all original Jig records");
   assert.deepEqual(sheet(await state(current.page)).styles.D15, { strike: true, alignment: "center" }, "ODS import must restore the actual alignment and strike style");
@@ -831,7 +895,7 @@ try {
   await importStatementPdf(current.page);
   await expectState(current.page, beforeStatement, "Reading a PDF must preserve the entire workbook until reviewed rows are applied");
   await capture(current.page, "sheet-import");
-  await reviewControl(current.page, 7); // Data, Settings, Calculator, About, Help, Source, then Cancel import.
+  await reviewControl(current.page, 7); // Data, Settings, About, Help, Calculator, Source, then Cancel import.
   await value(current.page, "M1", "");
   await expectState(current.page, beforeStatement, "Cancelling document review must preserve every original record");
   await select(current.page, "M1");
@@ -860,7 +924,7 @@ try {
   await importOds(current.page, odsWithOnlyStandardWorkbook(ods));
   await canvasFocus(current.page);
   await key(current.page, "Escape");
-  await tab(current.page, 6); // Data, Settings, Calculator, About, Help, Confirm import.
+  await tab(current.page, 6); // Data, Settings, About, Help, Calculator, Confirm import.
   await key(current.page, "Space");
   saved = await state(current.page);
   assert.deepEqual(sheet(saved).styles.D15, { strike: true, alignment: "center" }, "Standard ODS XML must restore strikethrough and centered text without Jig metadata");
@@ -896,14 +960,21 @@ try {
   assert.deepEqual(toolsOnly(await state(current.page)), fixture);
   await current.context.close();
 
-  progress("keep edits to clearly labelled sample workbooks temporary");
-  current = await open("sheet-samples", null);
+  progress("ignore the obsolete sample query and save a fresh personal workbook");
+  current = await open("sheet-first-use", null);
   assert.equal(await raw(current.page), null);
-  await enter(current.page, "D10", "Sample: temporary spreadsheet edit");
-  await value(current.page, "D10", "Sample: temporary spreadsheet edit");
-  assert.equal(await raw(current.page), null, "Sample spreadsheet edits must not create or replace personal data");
+  await enter(current.page, "D10", "Sample: first saved spreadsheet edit");
+  await value(current.page, "D10", "Sample: first saved spreadsheet edit");
+  const firstWorkbook = await state(current.page);
+  assert.deepEqual(sheet(firstWorkbook).cells, { D10: "Sample: first saved spreadsheet edit" },
+    "The obsolete query must not seed cells or divert edits into temporary storage");
+  for (const field of ["tasks", "deadlines", "entries", "history"]) assert.deepEqual(firstWorkbook[field], []);
+  assert.deepEqual(firstWorkbook.notes ?? [], []); assert.equal(firstWorkbook.featured, null);
+  await boot(current.page, true);
+  await value(current.page, "D10", "Sample: first saved spreadsheet edit");
+  await expectState(current.page, firstWorkbook, "A first-use workbook must survive refresh even through an obsolete sample URL");
   assert.deepEqual(issues, [], "The local spreadsheet must emit no application errors or remote data requests");
-  console.log("Spreadsheet browser checks passed: legacy-data preservation; cell editing, formulas, ranges, errors and cycle recovery; clipboard rectangles, formula relocation and global Undo; quoted CSV; sheet lifecycle and cross-sheet references; USD-only number choices with retained legacy currencies; visible alignment and strike, Auto reset, every border preset and style round trips; bottom sheet controls and double-click rename; header context-menu row/column span edits, reference updates and Undo; rendered live bar charts and existing-task Gantt charts; calculator popup with shared Undo; JSON backup/import and reload; real ODS documents with formulas, styles, charts and Jig data; embedded-font PDF export; local text-PDF review, cancellation, source provenance and atomic import/Undo; phone touch editing, draft cancellation and sample isolation.");
+  console.log("Spreadsheet browser checks passed: legacy-data preservation; cell editing, formulas, ranges, errors and cycle recovery; clipboard rectangles, formula relocation and global Undo; quoted CSV; sheet lifecycle and cross-sheet references; USD-only number choices with retained legacy currencies; visible alignment and strike, Auto reset, every border preset and style round trips; bottom sheet controls and double-click rename; header context-menu row/column span edits, reference updates and Undo; rendered live bar charts and existing-task Gantt charts; calculator popup with shared Undo; JSON backup/import and reload; real ODS documents with formulas, styles, charts and Jig data; embedded-font PDF export; local text-PDF review, cancellation, source provenance and atomic import/Undo; phone touch editing, draft cancellation and personal first-use persistence through obsolete sample URLs.");
 } catch (error) {
   originalError = error;
   console.error(`Spreadsheet browser failed during: ${phase}; ${interaction}`);

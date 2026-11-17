@@ -118,7 +118,12 @@ impl ChartPanel {
     }
 
     pub fn reset(&mut self) {
-        *self = Self::new();
+        let mut controls = std::mem::take(&mut self.controls);
+        controls.reset();
+        *self = Self {
+            controls,
+            ..Self::new()
+        };
     }
 
     pub fn invalidate(&mut self) {

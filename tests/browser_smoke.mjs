@@ -309,7 +309,24 @@ async function openMonthFromStrip(page, picking = false) {
   // Set location, then the third mode button. The strip already owns focus.
   for (let index = 0; index < 7 + Number(picking); index++) await navigateKey(page, "Shift+Tab");
   await navigateKey(page, "Space");
-  return monthDay(page);
+  // Revealing the focused grid can schedule more app paints after the input
+  // batch has already painted. Establish coordinates only once those paints
+  // show the same cell bounds, rather than sampling the first visible cell.
+  const until = Date.now() + 10000;
+  let previous, lastPaint = -1, stable = 0;
+  while (Date.now() < until) {
+    await page.waitForFunction(after => window.jigTestFrames.paints > after
+      && window.jigTestFrames.painted >= window.jigTestFrames.input,
+    lastPaint, { timeout: Math.max(1, until - Date.now()), polling: 25 });
+    const cell = await monthDay(page);
+    const paintCount = await page.evaluate(() => window.jigTestFrames.paints);
+    const same = previous && ["left", "right", "top", "bottom"].every(edge => cell[edge] === previous[edge]);
+    stable = same ? stable + 1 : 0;
+    if (stable >= 2) return cell;
+    previous = cell;
+    lastPaint = paintCount;
+  }
+  assert.fail(`The Month grid must settle across app paints before measuring it: ${JSON.stringify(previous)}`);
 }
 async function monthDueMark(page, color, cell) {
   const until = Date.now() + 5000; let mark;

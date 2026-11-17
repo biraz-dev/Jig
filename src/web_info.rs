@@ -133,6 +133,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
         "Saving and backups",
         "Your document saves automatically in this browser. Data → Export JSON creates a portable copy; Import JSON shows a review before replacing a document. Settings can choose a backup folder in supported browsers or download a backup. CSV, ODS and PDF exports use your browser's download location.",
     );
+    ui.label("If a folder backup fails, Retry backup and Download backup appear in the workspace and at the top of Settings. Reconnect the folder if access is needed. Retry uses your current document; unfinished text stays in its editor. Existing backup files are kept.");
     section(
         ui,
         "Undo and text editing",

@@ -3560,20 +3560,20 @@ impl BrowserApp {
                                     Some(id) => self.state.remove_task(id),
                                     None => self.state.remove_deadline(row.deadline.unwrap_or(0)),
                                 };
+                                if result.is_ok() {
+                                    if row.task.is_some() && self.task_edit == row.task {
+                                        self.task_edit = None;
+                                        self.task_edit_original = None;
+                                        self.task_edit_list = None;
+                                        self.task_text.clear();
+                                        self.task_details.clear();
+                                    }
+                                    self.close_missing_task_dates();
+                                    if self.task_color_edit == row.deadline {
+                                        self.task_color_edit = None;
+                                    }
+                                }
                                 self.apply(result);
-                                if row.task.is_some() && self.task_edit == row.task {
-                                    self.task_edit = None;
-                                    self.task_edit_original = None;
-                                    self.task_edit_list = None;
-                                    self.task_text.clear();
-                                    self.task_details.clear();
-                                }
-                                if row.task.is_some() && self.task_date_edit == row.task {
-                                    self.task_date_edit = None;
-                                }
-                                if self.task_color_edit == row.deadline {
-                                    self.task_color_edit = None;
-                                }
                             }
                         });
                         if row.deadline.is_some() && self.task_color_edit == row.deadline {
@@ -3735,9 +3735,7 @@ impl BrowserApp {
                         self.task_edit_list = None;
                         self.task_text.clear();
                         self.task_details.clear();
-                        if self.task_date_edit == Some(id) {
-                            self.close_task_dates();
-                        }
+                        self.close_missing_task_dates();
                         self.changed();
                         ui.ctx().request_repaint();
                     }
@@ -3798,11 +3796,7 @@ impl BrowserApp {
                                 self.task_text.clear();
                                 self.task_details.clear();
                             }
-                            if self.task_date_edit.is_some_and(|id| {
-                                !self.state.tasks.iter().any(|task| task.id == id)
-                            }) {
-                                self.task_date_edit = None;
-                            }
+                            self.close_missing_task_dates();
                             if self.task_color_edit.is_some_and(|id| {
                                 !self
                                     .state
@@ -3838,6 +3832,22 @@ impl BrowserApp {
         });
         self.drag_auto_scroll(ui);
         targets
+    }
+
+    fn close_missing_task_dates(&mut self) {
+        if self
+            .task_date_edit
+            .is_some_and(|id| !self.state.tasks.iter().any(|task| task.id == id))
+            || self.task_date_legacy.is_some_and(|id| {
+                !self
+                    .state
+                    .deadlines
+                    .iter()
+                    .any(|deadline| deadline.id == id)
+            })
+        {
+            self.close_task_dates();
+        }
     }
 
     fn close_task_dates(&mut self) {

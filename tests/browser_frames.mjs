@@ -2,7 +2,7 @@
 // the app. This probe is installed only by browser tests, never by the product.
 export async function installFrameFence(context) {
   await context.addInitScript(() => {
-    const state = { input: 0, processed: -1, painted: -1 };
+    const state = { input: 0, processed: -1, painted: -1, paints: 0 };
     window.jigTestFrames = state;
     const app = target => target?.id === "jig_canvas" || (target instanceof HTMLInputElement
       && target.type === "text" && !target.id && target.parentElement === document.body);
@@ -27,7 +27,10 @@ export async function installFrameFence(context) {
         // egui clears the default target with color only. STL clears its own
         // framebuffer with color/depth and must not count as another UI frame.
         if (this.canvas?.id === "jig_canvas" && mask === this.COLOR_BUFFER_BIT
-          && this.getParameter(this.FRAMEBUFFER_BINDING) === null) state.painted = state.processed;
+          && this.getParameter(this.FRAMEBUFFER_BINDING) === null) {
+          state.painted = state.processed;
+          state.paints++;
+        }
         return result;
       };
     }

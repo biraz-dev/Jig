@@ -1315,22 +1315,6 @@ impl BrowserApp {
         let sense = egui::Sense::click().difference(egui::Sense::focusable_noninteractive());
         if ui
             .add(
-                egui::Button::new("Sheet")
-                    .selected(
-                        self.sheet_workspace && !self.settings_open && self.info_page.is_none(),
-                    )
-                    .sense(sense),
-            )
-            .on_hover_text(format!(
-                "Spreadsheet workspace · {} switches Sheet/Tasks",
-                self.shortcut_label(AppAction::ToggleWorkspace)
-            ))
-            .clicked()
-        {
-            self.set_workspace(true, ui.ctx());
-        }
-        if ui
-            .add(
                 egui::Button::new("Tasks")
                     .selected(
                         self.tasks_workspace && !self.settings_open && self.info_page.is_none(),
@@ -1360,6 +1344,22 @@ impl BrowserApp {
             .clicked()
         {
             self.show_notes(ui.ctx());
+        }
+        if ui
+            .add(
+                egui::Button::new("Sheets")
+                    .selected(
+                        self.sheet_workspace && !self.settings_open && self.info_page.is_none(),
+                    )
+                    .sense(sense),
+            )
+            .on_hover_text(format!(
+                "Spreadsheet workspace · {} switches Sheets/Tasks",
+                self.shortcut_label(AppAction::ToggleWorkspace)
+            ))
+            .clicked()
+        {
+            self.set_workspace(true, ui.ctx());
         }
     }
 
@@ -2368,11 +2368,21 @@ impl BrowserApp {
         }
     }
 
+    fn info_button(&mut self, ui: &mut Ui, page: InfoPage) {
+        if ui
+            .add(egui::Button::new(page.label()).selected(self.info_page == Some(page)))
+            .clicked()
+        {
+            self.deferred_view = Some(DeferredView::Info(page));
+        }
+    }
+
     fn toolbar(&mut self, ui: &mut Ui) {
         let palette = web_theme::colors(ui.ctx());
         let width = ui.available_width();
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(28.0);
+            self.info_button(ui, InfoPage::About);
             if ui
                 .add(
                     egui::Button::new("Data")
@@ -2395,14 +2405,7 @@ impl BrowserApp {
             }
             self.workspace_buttons(ui);
             self.settings_button(ui);
-            for page in [InfoPage::About, InfoPage::Help] {
-                if ui
-                    .add(egui::Button::new(page.label()).selected(self.info_page == Some(page)))
-                    .clicked()
-                {
-                    self.deferred_view = Some(DeferredView::Info(page));
-                }
-            }
+            self.info_button(ui, InfoPage::Help);
             self.calculator_button(ui);
             if width >= 600.0 {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

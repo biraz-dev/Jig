@@ -20,7 +20,7 @@ const fixture = {
   deadlines: [{ id: 101, title: "Sample: settings task", at: "2030-01-15T18:00:00Z" }],
   entries: [], notes: [{ id: 201, text: "Sample: useful note", pinned: true }], featured: 101,
 };
-const defaults = { version: 1, theme: "graphite", undo_levels: 20, auto_backup: false };
+const defaults = { version: 2, theme: "ember", undo_levels: 20, auto_backup: false };
 const taskRaw = JSON.stringify(fixture);
 const issues = [], contexts = [];
 let current, phase = "launch Chromium";
@@ -316,8 +316,8 @@ async function focusedRecoveryPoint(page, footer = false) {
 async function prefix(page) { return 7 + Number((await backupStatus(page)).supported); }
 async function chooseTheme(scene, theme) {
   await focusSetting(scene, 1); await key(scene.page, "Space");
-  // The ComboBox's popup scroll target precedes its three options.
-  await tab(scene.page, { graphite: 2, light: 3, system: 4 }[theme]); await key(scene.page, "Space");
+  // The ComboBox's popup scroll target precedes the theme options.
+  await tab(scene.page, { ember: 2, paper: 3, system: 4, nord: 5, dracula: 6, graphite: 7, custom: 8 }[theme]); await key(scene.page, "Space");
   await waitSettings(scene.page, { theme });
 }
 async function brightness(page) {
@@ -452,15 +452,15 @@ async function waitFiles(page, count) {
 }
 
 try {
-  progress("settings header and persistent Graphite, Light and System themes");
+  progress("settings header and persistent Ember, Paper and System themes");
   current = await open("settings-theme"); const dark = await waitBrightness(current.page, false);
   await capture(current.page, "settings-header-desktop");
   await checkInfoPage(current, 1, "About"); await checkInfoPage(current, 4, "Help");
-  await chooseTheme(current, "light"); await closeSettings(current); const light = await waitBrightness(current.page, true);
+  await chooseTheme(current, "paper"); await closeSettings(current); const light = await waitBrightness(current.page, true);
   assert.ok(light > dark + 100); assert.equal(await raw(current.page), taskRaw);
   await capture(current.page, "settings-light"); await boot(current, true); await waitBrightness(current.page, true);
-  assert.equal((await settings(current.page)).theme, "light"); assert.equal(await raw(current.page), taskRaw);
-  await chooseTheme(current, "graphite"); await closeSettings(current); await waitBrightness(current.page, false);
+  assert.equal((await settings(current.page)).theme, "paper"); assert.equal(await raw(current.page), taskRaw);
+  await chooseTheme(current, "ember"); await closeSettings(current); await waitBrightness(current.page, false);
   await current.page.emulateMedia({ colorScheme: "light" }); await chooseTheme(current, "system"); await closeSettings(current); await waitBrightness(current.page, true);
   await current.page.emulateMedia({ colorScheme: "dark" }); await waitBrightness(current.page, false);
   assert.equal((await settings(current.page)).theme, "system"); assert.equal(await raw(current.page), taskRaw);
@@ -473,9 +473,9 @@ try {
   // A real tap must open Settings and focus Done. The overflowing phone
   // ScrollArea contributes one Tab stop before its Theme control.
   await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 3); await key(current.page, "Space");
-  await waitSettings(current.page, { theme: "light" }); await waitBrightness(current.page, true);
+  await waitSettings(current.page, { theme: "paper" }); await waitBrightness(current.page, true);
   assert.equal(await raw(current.page), taskRaw); await boot(current, true);
-  assert.equal((await settings(current.page)).theme, "light"); await waitBrightness(current.page, true);
+  assert.equal((await settings(current.page)).theme, "paper"); await waitBrightness(current.page, true);
   await tapSettings(current); await capture(current.page, "settings-mobile");
   assert.equal(await raw(current.page), taskRaw); await current.context.close();
 
@@ -492,14 +492,14 @@ try {
   await key(current.page, "Control+Alt+4"); await current.page.waitForTimeout(200);
   assert.notEqual(await current.page.evaluate(() => document.activeElement?.tagName), "INPUT", "The replaced shortcut must stop opening Calculator");
   await calculate(current, "3 * 7", 3, "Control+Alt+5"); assert.equal((await state(current.page)).history.at(-1).result, 21);
-  await focusSetting(current, (await prefix(current.page)) + 26); await key(current.page, "Space"); // 12 rows plus one enabled Calculator Reset, then Reset all.
+  await focusSetting(current, (await prefix(current.page)) + 28); await key(current.page, "Space"); // 13 rows plus one enabled Calculator Reset, then Reset all.
   await current.page.waitForFunction(key => !Object.keys(JSON.parse(localStorage.getItem(key)).shortcuts ?? {}).length, settingsKey);
   await closeSettings(current); await resetFocus(current.page); await key(current.page, "Control+Alt+5"); await current.page.waitForTimeout(200);
   assert.notEqual(await current.page.evaluate(() => document.activeElement?.tagName), "INPUT");
   await calculate(current, "4 * 8", 4); assert.equal((await state(current.page)).history.at(-1).result, 32);
   await focusSetting(current, (await prefix(current.page)) + 7); await key(current.page, "Space"); await key(current.page, "Control+Alt+5");
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).shortcuts?.calculator?.key === "5", settingsKey);
-  await focusSetting(current, (await prefix(current.page)) + 27); await key(current.page, "Space");
+  await focusSetting(current, (await prefix(current.page)) + 29); await key(current.page, "Space");
   await current.page.mouse.move(500, 900); await current.page.mouse.wheel(0, 1000); await paint(current.page);
   await capture(current.page, "settings-cheatsheet"); await current.context.close();
 
@@ -521,10 +521,10 @@ try {
   for (const invalid of ["{broken", { ...defaults, version: 99 }, { ...defaults, undo_levels: 101 }, { ...defaults, theme: "neon" }, { ...defaults, shortcuts: { calculator: { key: "Z", ctrl: true } } }]) {
     await importSettings(current, invalid); assert.equal(await raw(current.page, settingsKey), initialSettings); assert.equal(await raw(current.page), taskRaw);
   }
-  const imported = { ...defaults, theme: "light", undo_levels: 3, shortcuts: { calculator: { key: "5", ctrl: true, shift: false, alt: true, meta: false } } };
+  const imported = { ...defaults, theme: "paper", undo_levels: 3, shortcuts: { calculator: { key: "5", ctrl: true, shift: false, alt: true, meta: false } } };
   await importSettings(current, imported); assert.equal(await raw(current.page, settingsKey), initialSettings, "Valid settings still wait for explicit Apply");
   await tab(current.page, 2, true); await key(current.page, "Space"); // Done -> Cancel import -> Apply imported settings.
-  await waitSettings(current.page, { theme: "light", undo_levels: 3 }); assert.equal(await raw(current.page), taskRaw);
+  await waitSettings(current.page, { theme: "paper", undo_levels: 3 }); assert.equal(await raw(current.page), taskRaw);
   await closeSettings(current); await waitBrightness(current.page, true); await boot(current, true);
   assert.deepEqual(await settings(current.page), imported); assert.equal(await raw(current.page), taskRaw);
   await current.context.close();
@@ -745,7 +745,7 @@ try {
   }), "Sample: preserve this file");
   await current.context.close();
   assert.deepEqual(issues, [], "Settings, backups and documents must stay local without browser errors");
-  console.log("Settings browser passed: stable header, persistent Graphite/Light/System themes, captured shortcuts/conflict rejection/reset/guide, configurable Undo limits, validated separate settings portability, personal download fallback, real OPFS backup streams/unique names/debounce/IDB restoration, saved-document reopen deadlines, permission-wait and explicit reconnect recovery, persistent failed-write recovery across refresh, current-work retry with duplicate-click protection, download fallback and real touch reconnect/retry, reset during an in-flight retry, and fresh personal work after reset.");
+  console.log("Settings browser passed: stable header, persistent Ember/Paper/System themes, captured shortcuts/conflict rejection/reset/guide, configurable Undo limits, validated separate settings portability, personal download fallback, real OPFS backup streams/unique names/debounce/IDB restoration, saved-document reopen deadlines, permission-wait and explicit reconnect recovery, persistent failed-write recovery across refresh, current-work retry with duplicate-click protection, download fallback and real touch reconnect/retry, reset during an in-flight retry, and fresh personal work after reset.");
 } catch (error) {
   console.error(`Settings browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "settings-failure").catch(() => {});

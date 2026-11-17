@@ -208,7 +208,7 @@ async function openSettings(scene, header = false) {
 }
 async function tapSettings(scene) {
   await closeSettings(scene); await resetFocus(scene.page); await tab(scene.page, 3);
-  const png = await scene.page.screenshot({ clip: { x: 0, y: 0, width: scene.page.viewportSize().width, height: 31 }, timeout: 10000, animations: "disabled", caret: "hide" });
+  const png = await scene.page.screenshot({ clip: { x: 0, y: 0, width: scene.page.viewportSize().width, height: 66 }, timeout: 10000, animations: "disabled", caret: "hide" });
   const point = await scene.page.evaluate(async encoded => {
     const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d"); context.drawImage(bitmap, 0, 0);
@@ -236,7 +236,7 @@ async function tapSettings(scene) {
     }
     bitmap.close(); return null;
   }, png.toString("base64"));
-  assert.ok(point, "The focused Settings button must be visible after Sheets in the phone header");
+  assert.ok(point, "The focused Settings button must be visible after Charts in the two-row phone header");
   await scene.page.touchscreen.tap(point.x, point.y); await paint(scene.page); scene.settingsOpen = true;
   await waitDoneFocus(scene.page);
 }

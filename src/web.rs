@@ -146,6 +146,7 @@ enum DeferredView {
     Settings,
     Info(InfoPage),
     Calendar,
+    CalendarMonth(bool),
     Tasks,
     Notes,
 }
@@ -2575,6 +2576,23 @@ impl BrowserApp {
         ctx.request_repaint();
     }
 
+    fn show_calendar(&mut self, ctx: &egui::Context, month: bool) {
+        if self.pending_task_input.is_some() || self.pending_note_input {
+            self.deferred_view = Some(DeferredView::CalendarMonth(month));
+            ctx.request_repaint();
+            return;
+        }
+        if self.timeline_view {
+            self.toggle_calendar(ctx);
+        }
+        if self.calendar_panel.month_view() != month {
+            self.calendar_panel
+                .set_month_view(month, self.selected_date);
+        }
+        self.calendar_panel.request_focus();
+        ctx.request_repaint();
+    }
+
     fn toggle_calendar(&mut self, ctx: &egui::Context) {
         if self.pending_task_input.is_some() || self.pending_note_input {
             self.deferred_view = Some(DeferredView::Calendar);
@@ -4003,14 +4021,13 @@ impl BrowserApp {
         let top = ui.cursor().top();
         ui.horizontal(|ui| {
             if ui
-                .selectable_label(!self.timeline_view, "Calendar")
+                .selectable_label(
+                    !self.timeline_view && !self.calendar_panel.month_view(),
+                    "Calendar",
+                )
                 .clicked()
             {
-                if self.timeline_view {
-                    self.toggle_calendar(ui.ctx());
-                } else {
-                    self.calendar_panel.request_focus();
-                }
+                self.show_calendar(ui.ctx(), false);
             }
             if ui
                 .selectable_label(self.timeline_view, "Timeline")
@@ -4021,6 +4038,15 @@ impl BrowserApp {
                 } else {
                     self.timeline.request_focus();
                 }
+            }
+            if ui
+                .selectable_label(
+                    !self.timeline_view && self.calendar_panel.month_view(),
+                    "Month",
+                )
+                .clicked()
+            {
+                self.show_calendar(ui.ctx(), true);
             }
         });
         let today = Local::now().date_naive();
@@ -4646,6 +4672,7 @@ impl eframe::App for BrowserApp {
                     self.set_workspace(true, ctx);
                 }
                 DeferredView::Calendar => self.toggle_calendar(ctx),
+                DeferredView::CalendarMonth(month) => self.show_calendar(ctx, month),
                 DeferredView::Calculator => {
                     self.settings_panel.cancel_capture();
                     crate::settings_storage::set_capture(false);

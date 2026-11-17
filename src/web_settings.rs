@@ -47,6 +47,9 @@ impl BrowserApp {
         if self.consume_shortcut(ctx, AppAction::Notes) {
             self.show_notes(ctx);
         }
+        if self.consume_shortcut(ctx, AppAction::Draft) {
+            self.show_draft(ctx);
+        }
         if self.consume_shortcut(ctx, AppAction::Calculator) {
             self.open_calculator(ctx);
         }
@@ -98,7 +101,11 @@ impl BrowserApp {
         let disable_backup = !next.auto_backup && self.settings.auto_backup;
         self.settings = next;
         self.trim_history();
-        web_theme::apply(ctx, self.settings.theme);
+        web_theme::apply(
+            ctx,
+            &self.settings,
+            settings_storage::system_accent(self.settings.system_accent),
+        );
         self.status = match settings_storage::configure_shortcuts(&self.settings) {
             Ok(()) => "Settings saved in this browser.".into(),
             Err(error) => {

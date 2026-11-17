@@ -2,6 +2,8 @@
 use crate::web_theme;
 use jig::app_settings::{Action as AppAction, AppSettings};
 
+#[path = "web_draft.rs"]
+mod draft;
 #[path = "web_info.rs"]
 mod info;
 #[path = "web_settings.rs"]
@@ -150,6 +152,7 @@ enum DeferredView {
     CalendarMonth(bool),
     Tasks,
     Notes,
+    Draft,
 }
 
 struct ChecklistRow {
@@ -244,6 +247,8 @@ pub struct BrowserApp {
     pending_paste_target: Option<(u64, CellAddr)>,
     tasks_workspace: bool,
     notes_workspace: bool,
+    draft_workspace: bool,
+    draft_undo_group: bool,
     notes: NotesPanel,
     pending_note_input: bool,
     pending_chart_input: bool,
@@ -310,7 +315,7 @@ impl BrowserApp {
         let undo_baseline = state.clone();
         let undo_baseline_json = serde_json::to_vec(&state).unwrap_or_default();
         let preferred = browser_storage::preferred_workspace();
-        let workspace = if matches!(preferred.as_str(), "sheet" | "charts" | "notes") {
+        let workspace = if matches!(preferred.as_str(), "sheet" | "charts" | "notes" | "draft") {
             preferred
         } else {
             "tasks".into()
@@ -386,6 +391,8 @@ impl BrowserApp {
             pending_paste_target: None,
             tasks_workspace: workspace == "tasks",
             notes_workspace: workspace == "notes",
+            draft_workspace: workspace == "draft",
+            draft_undo_group: false,
             notes: NotesPanel::new(),
             pending_note_input: false,
             pending_chart_input: false,
@@ -406,8 +413,13 @@ impl BrowserApp {
             ocr_original: None,
             ocr_running: false,
         };
+        crate::draft_storage::install(cc.egui_ctx.clone());
         app.sanitize_task_lists();
         app.restore_working_drafts();
+        app.sync_draft(false);
+        if app.draft_workspace {
+            crate::draft_storage::focus();
+        }
         if let Some(error) = settings_error {
             app.status.push_str(&format!(
                 " Settings could not be loaded; defaults are in use: {error}"
@@ -666,6 +678,7 @@ impl BrowserApp {
     }
 
     fn changed(&mut self) {
+        self.draft_undo_group = false;
         self.sheet.invalidate();
         self.charts.invalidate();
         // Finish an earlier viewer gesture before recording this data action.
@@ -689,6 +702,7 @@ impl BrowserApp {
         self.dirty = true;
         if self.storage_error {
             self.status = "Stored data could not be decoded and has been preserved. Export your current work, then explicitly import a valid file or confirm Start empty before saving.".into();
+            self.sync_draft(false);
             return;
         }
         match browser_storage::save(&self.state) {
@@ -716,6 +730,7 @@ impl BrowserApp {
                 )
             }
         }
+        self.sync_draft(false);
     }
 
     fn push_undo(&mut self, entry: UndoEntry) {
@@ -774,6 +789,12 @@ impl BrowserApp {
     }
 
     fn reset_document_session(&mut self) {
+        self.draft_undo_group = false;
+        self.sync_draft(true);
+        if let Err(error) = crate::draft_storage::reset_recovery() {
+            crate::draft_storage::show_error(&error);
+            self.status = error;
+        }
         self.ctx.stop_dragging();
         self.settings_panel.cancel_capture();
         crate::settings_storage::set_capture(false);
@@ -815,6 +836,7 @@ impl BrowserApp {
     }
 
     fn step_history(&mut self, ctx: &egui::Context, redo: bool) {
+        self.draft_undo_group = false;
         ctx.stop_dragging();
         self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
@@ -885,6 +907,8 @@ impl BrowserApp {
     }
 
     fn reset_editors(&mut self) {
+        self.draft_undo_group = false;
+        self.sync_draft(true);
         self.ctx.stop_dragging();
         self.ctx.memory_mut(|memory| memory.close_popup());
         self.task_split_draft = None;
@@ -1203,6 +1227,8 @@ impl BrowserApp {
         self.close_settings();
         self.info_page = None;
         self.notes_workspace = true;
+        self.draft_workspace = false;
+        self.draft_undo_group = false;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
         self.expanded = false;
@@ -1271,6 +1297,8 @@ impl BrowserApp {
         self.charts_view = charts;
         self.tasks_workspace = false;
         self.notes_workspace = false;
+        self.draft_workspace = false;
+        self.draft_undo_group = false;
         self.task_split_draft = None;
         self.timeline.cancel_gesture();
         browser_storage::set_workspace(if charts { "charts" } else { "sheet" });
@@ -1352,6 +1380,8 @@ impl BrowserApp {
         self.info_page = None;
         self.tasks_workspace = true;
         self.notes_workspace = false;
+        self.draft_workspace = false;
+        self.draft_undo_group = false;
         self.focus = 1;
         self.expanded = false;
         self.timeline_view = true;
@@ -1400,6 +1430,19 @@ impl BrowserApp {
             .clicked()
         {
             self.show_notes(ui.ctx());
+        }
+        if ui
+            .add(
+                egui::Button::new("Draft")
+                    .selected(
+                        self.draft_workspace && !self.settings_open && self.info_page.is_none(),
+                    )
+                    .sense(sense),
+            )
+            .on_hover_text("Gather and edit formatted text")
+            .clicked()
+        {
+            self.show_draft(ui.ctx());
         }
         if ui
             .add(
@@ -2456,6 +2499,7 @@ impl BrowserApp {
                     self.storage_error = false;
                     self.reset_editors();
                     self.reset_document_session();
+                    self.sync_draft(false);
                     self.initial_backup_pending = self.settings.auto_backup && has_saved_personal;
                     self.status = "Opened your browser-local data.".into();
                 }
@@ -2558,6 +2602,7 @@ impl BrowserApp {
                                 self.storage_error = false;
                                 self.reset_editors();
                                 self.reset_document_session();
+                                self.sync_draft(false);
                                 self.status = "Browser-local data cleared. Start a new task, note or sheet to save new work.".into();
                             }
                             Err(error) => self.status = error,
@@ -4442,6 +4487,7 @@ impl eframe::App for BrowserApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         web_theme::apply(ctx, self.settings.theme);
         let palette = web_theme::colors(ctx);
+        self.process_draft_events(ctx);
         self.process_settings_events();
         if self.ordered_input.has_pending() {
             ctx.request_repaint();
@@ -4527,6 +4573,7 @@ impl eframe::App for BrowserApp {
             }
             if !self.sheet_workspace
                 && !self.notes_workspace
+                && !self.draft_workspace
                 && !self.notes.owns_keyboard(ctx)
                 && !ctx.memory(|memory| memory.any_popup_open())
                 && self.consume_shortcut(ctx, AppAction::Maximize)
@@ -4539,6 +4586,7 @@ impl eframe::App for BrowserApp {
             }
             if !self.sheet_workspace
                 && !self.notes_workspace
+                && !self.draft_workspace
                 && !self.notes.owns_keyboard(ctx)
                 && !ctx.memory(|memory| memory.any_popup_open())
                 && self.consume_shortcut(ctx, AppAction::RenameTaskList)
@@ -4562,6 +4610,7 @@ impl eframe::App for BrowserApp {
             }
             if !self.sheet_workspace
                 && !self.notes_workspace
+                && !self.draft_workspace
                 && !self.notes.owns_keyboard(ctx)
                 && !ctx.memory(|memory| memory.any_popup_open())
                 && ctx
@@ -4600,6 +4649,7 @@ impl eframe::App for BrowserApp {
                     || self.notes.owns_keyboard(ctx);
                 let previous = !self.sheet_workspace
                     && !self.notes_workspace
+                    && !self.draft_workspace
                     && !divider_focused
                     && ctx.input_mut(|input| {
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
@@ -4607,6 +4657,7 @@ impl eframe::App for BrowserApp {
                     });
                 let next = !self.sheet_workspace
                     && !self.notes_workspace
+                    && !self.draft_workspace
                     && !divider_focused
                     && ctx.input_mut(|input| {
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
@@ -4635,8 +4686,10 @@ impl eframe::App for BrowserApp {
         }
         // Static label selection runs after app UI and can overwrite a cell's
         // clipboard output. Sheet owns selection; TextEdit keeps normal copy.
-        let selectable_labels =
-            !(self.sheet_workspace || self.notes_workspace || self.tasks_workspace);
+        let selectable_labels = !(self.sheet_workspace
+            || self.notes_workspace
+            || self.tasks_workspace
+            || self.draft_workspace);
         if ctx.style().interaction.selectable_labels != selectable_labels {
             ctx.style_mut(|style| style.interaction.selectable_labels = selectable_labels);
         }
@@ -4672,6 +4725,8 @@ impl eframe::App for BrowserApp {
                         "Esc return to workspace".to_owned()
                     } else if self.settings_open {
                         "Preferences save in this browser · Esc return".to_owned()
+                    } else if self.draft_workspace {
+                        "Select text to format or send | Ctrl+Z undo | Ctrl+Shift+Z redo".to_owned()
                     } else if self.sheet_workspace && self.charts_view {
                         "Tab navigate | Enter apply | Esc cancel".to_owned()
                     } else if self.sheet_workspace {
@@ -4706,6 +4761,7 @@ impl eframe::App for BrowserApp {
                 }
             }
         });
+        let mut draft_rect = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(page) = self.info_page {
                 match info::show(ui, page, &self.settings, &mut self.focus_info) {
@@ -4717,6 +4773,10 @@ impl eframe::App for BrowserApp {
             }
             if self.settings_open {
                 self.settings_workspace(ui);
+                return;
+            }
+            if self.draft_workspace {
+                draft_rect = Some(ui.available_rect_before_wrap());
                 return;
             }
             if self.sheet_workspace {
@@ -4840,14 +4900,26 @@ impl eframe::App for BrowserApp {
                 DeferredView::Notes => {
                     self.show_notes(ctx);
                 }
+                DeferredView::Draft => {
+                    self.show_draft(ctx);
+                }
             }
             ctx.request_repaint();
         }
         self.finish_backup_action(ctx);
         self.run_automatic_backup(ctx);
+        if !self.draft_workspace
+            || self.settings_open
+            || self.info_page.is_some()
+            || ctx.memory(|memory| memory.any_popup_open())
+        {
+            draft_rect = None;
+        }
+        crate::draft_storage::layout(draft_rect, ctx.zoom_factor(), ctx.style().visuals.dark_mode);
         let task_draft = self.backup_working_drafts();
         browser_storage::set_unsaved(
             self.dirty
+                || crate::draft_storage::pending()
                 || self.charts.has_draft()
                 || self.notes.has_unsaved_changes()
                 || task_draft

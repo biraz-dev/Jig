@@ -1,10 +1,10 @@
 # Jig
 
 Jig is a local place to work things out, written in Rust. The browser starts in
-**Tasks** and remembers your workspace. **Tasks**, **Notes**, **Sheets** and
-**Charts** are the main views. The header groups About, Data, Tasks, Notes,
-Sheets, Charts, Settings and Help on the left, with the calculator at the far
-right. Tasks, Gantt dates, notes, sheets, charts and preferences use the same
+**Tasks** and remembers your workspace. **Tasks**, **Notes**, **Draft**, **Sheets**
+and **Charts** are the main views. The header groups About, Data, Tasks, Notes,
+Draft, Sheets, Charts, Settings and Help on the left, with the calculator at the
+far right. Tasks, Gantt dates, notes, Draft, sheets, charts and preferences use the same
 portable document. The native CLI and Ratatui terminal interface share the Rust
 core; running `jig` still opens the terminal dashboard. Existing native geometry
 commands and saved legacy data remain compatible.
@@ -95,14 +95,15 @@ the formula and its references.
 **File → Save ODS** downloads `jig.ods`, the main portable document. Standard
 OpenDocument cells carry formulas, typed values, formats, merges and sheet names.
 A Jig metadata entry also retains the complete state: tasks, linked deadlines,
-colors, charts, cell-linked controls, preferences, calendar notes and calculator history. Keep this
-whole-document scope in mind when sharing an ODS file.
+colors, notes, Draft, charts, cell-linked controls, preferences, calendar notes
+and calculator history. Keep this whole-document scope in mind when sharing an
+ODS file.
 
 **Open ODS** shows an import summary before replacing saved data. An ordinary ODS
 from another editor replaces the workbook and keeps your existing Jig tools.
 When an exported Jig ODS is edited externally, its visible spreadsheet changes
-are imported while its embedded Jig task/history data is retained. Jig supports
-its documented formula subset; it does not promise full Excel or LibreOffice
+are imported while its embedded Jig task, Draft and history data is retained.
+Jig supports its documented formula subset; it does not promise full Excel or LibreOffice
 compatibility. ODS charts are exported as SVG snapshots; Jig chart and control
 specifications remain editable in Jig through the embedded metadata. They are
 not native editable ODS chart objects or spreadsheet form controls. Foreign
@@ -243,8 +244,8 @@ There is no sample mode; older `?sample=1` links open your normal document.
 Personal edits autosave in this browser profile under `jig.personal.v1`.
 **Save ODS** is the portable document download; **Export JSON** is a full Jig
 backup compatible with the native CLI. **Import JSON** validates the complete
-state and asks before replacement. Older files without spreadsheets, task colors
-or start dates still load. **Clear saved data** also requires confirmation and
+state and asks before replacement. Older files without Draft, spreadsheets,
+task colors or start dates still load. **Clear saved data** also requires confirmation and
 returns to an empty document.
 
 A normal refresh or application update keeps personal data. Press **Enter** to
@@ -273,7 +274,7 @@ appearance. Document cell colors and task colors remain their own values.
 sits at the far right. About and Help open in the main panel without changing your
 document.
 **Done** or **Esc** returns to your work.
-Help covers tasks, Gantt dates, notes, calculations, shortcuts and backups.
+Help covers tasks, Gantt dates, notes, Draft, sheets/charts, calculations, shortcuts and backups.
 
 Settings are saved separately under `jig.settings.v1`, so changing appearance,
 shortcuts or backup options does not edit the task document. **Export settings**
@@ -303,11 +304,13 @@ keys for text, sheets, notes and calendar controls.
 | Rename list / expand panel | F2 |
 | Open saved local data | Ctrl-Alt-O |
 
-Text fields keep their own editing shortcuts. The history limit is configurable
+Other text fields keep local editing shortcuts; Draft uses the shared history.
+The history limit is configurable
 from **0–100 combined Undo/Redo steps**, with **20** by default and a shared
 **64 MiB** cap. Release the slider or finish numeric entry to apply it. Lowering
 the limit discards the furthest steps; increasing it cannot recover discarded
-history. Zero disables application history, while text editors retain theirs.
+history. Zero disables application history, including Draft; other text editors
+retain theirs.
 The application Undo/Redo journal lasts for the session and is not included in
 document backups; calculator history remains part of the saved document.
 
@@ -444,13 +447,14 @@ selecting a day fills that draft and retains its time. **Save date** commits the
 range. **Done picking** or Esc exits picking without discarding the draft.
 Panning and zooming do not assign dates or change the featured countdown.
 
-**Ctrl-Z** and **Ctrl-Shift-Z**, the default Undo/Redo shortcuts outside text
-fields, cover document changes. A new committed edit clears Redo; a no-op keeps
+**Ctrl-Z** and **Ctrl-Shift-Z** are the default document Undo/Redo shortcuts and
+also apply inside Draft. A new committed edit clears Redo; a no-op keeps
 it. The configurable session journal shares a 64 MiB budget and is cleared when
 switching datasets or reloading; it is not saved in documents. There are no
-Undo/Redo buttons in the header. Text fields keep their normal local Undo/Redo
-shortcuts. See [Settings and backups](#settings-and-backups) for the history limit
-and current shortcut bindings.
+Undo/Redo buttons in the header. Other text fields keep their normal local
+Undo/Redo; Draft uses the shared document history. See
+[Settings and backups](#settings-and-backups) for the history limit and current
+shortcut bindings.
 
 ## Notes
 
@@ -485,6 +489,29 @@ for scrolling.
 Notes are saved locally with the document and included in JSON/ODS backups.
 Older documents open with an empty board. Text is limited to 16 KiB per note;
 the existing browser document size limit still applies.
+
+## Draft
+
+Open **Draft** next to **Notes** for one continuous text holding zone. Paste
+information, tidy it up, and select text to change its size (8–72), bold, italic,
+underline, link, paragraph alignment, bullets or numbered list. Links support
+HTTP, HTTPS and email addresses with `mailto:`.
+
+**Copy** preserves formatting where the browser supports rich clipboard output,
+with a plain-text fallback. **To note** and **To task** copy the selection, or the
+whole Draft when nothing is selected, as plain text. The original stays in Draft.
+A task uses the first nonblank line as its name and keeps the full text in its
+details. These transfers use the existing 16 KiB note/task-text limit.
+
+Edits save locally as you type. **Ctrl/Cmd-Z** and **Ctrl/Cmd-Shift-Z** use Jig's
+shared Undo/Redo; continuous typing forms one history step. **Esc** returns
+keyboard focus to the main app without discarding text. Pending edits have a
+tab-local refresh recovery copy; portable backups remain JSON and Jig ODS.
+Draft is limited to 512 KiB of text within the browser's 2 MiB document limit.
+
+JSON and Jig ODS retain Draft formatting; older documents open an empty Draft.
+ODS includes the complete Draft in Jig metadata, rather than exposing it as a
+word-processing document or spreadsheet cells.
 
 ## Weather calendar
 

@@ -110,12 +110,13 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
         "Dates and calendar",
         "Use a task's date control to set Start and Due. The calendar icon opens a date picker with local 24-hour time. You can type YYYY-MM-DD or YYYY-MM-DD HH:MM. Use date fills the draft; Save date commits it.",
     );
-    ui.label("You can also keep the date editor open, choose Calendar, select Start or Due, then pick a day on the strip. Colored marks show tasks due on that day; completed tasks are subdued. Selecting a day shows its tasks and optional forecast without changing the starred countdown.");
+    ui.label("You can also keep the date editor open, choose Calendar or Month, select Start or Due, then pick a day. Colored marks show tasks due on that day; completed tasks are subdued. Selecting a day shows its tasks and optional forecast without changing the starred countdown.");
     section(
         ui,
         "Calendar and Gantt views",
         "Drag the calendar's day strip or use horizontal/Shift-wheel scrolling to pan. + and −, Ctrl-wheel or a pinch zoom it. Widening the panel reveals more dates; Today returns to today. Timeline shows bars for tasks with start and due dates, and diamonds for due-only tasks.",
     );
+    ui.label("Choose Month beside Calendar and Timeline for a classic Monday-first month grid. Previous/next arrows browse months; Today returns to the current day. The grid shares date selection, task colors, details, forecast and task-date picking with the strip.");
     ui.label("Drag either end of a bar to change that date; the preview saves when released as one Undo step. The other date and existing clock times stay fixed. Esc cancels a drag. Drag the panel divider or the divider beside timeline titles to resize them; double-click resets a divider.");
     section(
         ui,

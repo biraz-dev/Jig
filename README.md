@@ -314,6 +314,16 @@ browsers without folder access. **Restore backup** opens the existing JSON
 import review and requires confirmation. The chosen folder applies to backups;
 CSV, ODS and PDF exports still use the browser's download location.
 
+If a folder backup fails, a recovery notice stays visible in the workspace and
+at the top of Settings, including after refresh. **Retry backup** writes the
+current document to a new file once its changes have saved. **Reconnect folder**
+requests access when needed; **Download backup** keeps a recovery copy when
+folder writing is unavailable. Downloading does not repair the folder connection.
+Successful folder writes clear the notice. Replacing or clearing the document,
+or disconnecting its backup folder, discards the previous recovery notice and
+cancels pending writes. The retry controls are explicit; normal automatic
+backups still follow their existing schedule after saved changes or reopening.
+
 ## Tasks, calendar and timeline
 
 Task lists appear as horizontal tabs, with a maximum of five. Click a tab to show

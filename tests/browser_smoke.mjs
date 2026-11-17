@@ -194,7 +194,7 @@ async function expectCalculation(page, expression, result, length, unit) {
 }
 async function openTaskDates(page) {
   await resetFocus(page); await navigateKey(page, "Control+Alt+2");
-  // Data/Settings/About/Help/Calculator/Source, Tasks/+, Gantt/Save, then row date.
+  // About/Data/Settings/Help/Calculator/Source, Tasks/+, Gantt/Save, then row date.
   await tab(page, 14); await navigateKey(page, "Space");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
 }

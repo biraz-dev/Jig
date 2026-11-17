@@ -498,6 +498,32 @@ try {
   await boot(picker.page, true); assert.deepEqual(JSON.parse(await saved(picker.page)), dated);
   await capture(picker.page, "task-date-time-picker"); await release(picker.context, "task-date-time-picker");
 
+  for (const legacy of [false, true]) {
+    const label = legacy ? "delete-legacy-date-draft" : "delete-task-date-draft";
+    progress(`clear an unfinished date editor after ${legacy ? "legacy deadline" : "task"} deletion`);
+    const rows = structuredClone(fixture);
+    if (legacy) rows.tasks = [];
+    else rows.tasks.push({ id: 5, text: "Sample: remaining dated task", complete: false, deadline: 6 });
+    rows.deadlines.push({ id: 6, title: "Sample: remaining dated task", at: "2030-01-20T18:00:00Z" });
+    const removed = await newPage(label, { raw: JSON.stringify(rows) });
+    await boot(removed.page); await openTaskDates(removed.page);
+    await navigateKey(removed.page, "Control+a"); await removed.page.keyboard.type("2030-01-17"); await paint(removed.page);
+    await removed.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule?.due === "2030-01-17");
+    // The date editor follows its owning row, whose final control is del.
+    await navigateKey(removed.page, "Shift+Tab"); await navigateKey(removed.page, "Space");
+    await removed.page.waitForFunction(key => !JSON.parse(localStorage.getItem(key)).deadlines.some(deadline => deadline.id === 2), key);
+    await removed.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule);
+    await openTaskDates(removed.page);
+    await navigateKey(removed.page, "Control+a"); await removed.page.keyboard.type("2030-01-21"); await navigateKey(removed.page, "Enter");
+    await removed.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines.find(deadline => deadline.id === 6)?.at === "2030-01-21T18:00:00Z", key);
+    await boot(removed.page, true);
+    const restored = JSON.parse(await saved(removed.page));
+    assert.equal(restored.deadlines.some(deadline => deadline.id === 2), false, "Reload must retain the deletion without an orphan date draft");
+    assert.equal(restored.deadlines.find(deadline => deadline.id === 6)?.at, "2030-01-21T18:00:00Z", "The next date editor must save normally after its predecessor was deleted");
+    assert.deepEqual(restored.notes, fixture.notes);
+    await release(removed.context, label);
+  }
+
   progress("assign Start and Due drafts from the Dates strip and save once");
   const calendarPick = await newPage("calendar-task-picking", { raw: fixtureRaw, fixedTime: "2030-01-15T12:00:00Z" });
   await boot(calendarPick.page); await openTaskDates(calendarPick.page);

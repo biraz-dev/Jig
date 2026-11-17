@@ -94,6 +94,41 @@ fn arithmetic_recalculates_references_ranges_and_percentages() {
 }
 
 #[test]
+fn round_preserves_large_finite_values_and_existing_precision_rules() {
+    let mut book = Workbook::default();
+    for (formula, expected) in [
+        ("=ROUND(1e308,2)", 1e308),
+        ("=ROUND(-1e308,2)", -1e308),
+        ("=ROUND(1e308,15)", 1e308),
+        ("=ROUND(-1e308,15)", -1e308),
+        ("=ROUND(123.456,2)", 123.46),
+        ("=ROUND(-123.456,2)", -123.46),
+        ("=ROUND(12345.67,-2)", 12300.0),
+        ("=ROUND(-12345.67,-2)", -12300.0),
+    ] {
+        put(&mut book, 1, "A1", formula);
+        assert_eq!(number(&book, 1, "A1"), expected, "{formula}");
+    }
+    put(&mut book, 1, "B1", "NaN");
+    put(&mut book, 1, "B2", "inf");
+    put(&mut book, 1, "B3", "-inf");
+    for formula in [
+        "=ROUND(B1,2)",
+        "=ROUND(B2,2)",
+        "=ROUND(B3,2)",
+        "=ROUND(1e309,2)",
+        "=ROUND(1e308,16)",
+    ] {
+        put(&mut book, 1, "A1", formula);
+        assert_eq!(
+            book.recalculate().value(1, addr("A1")),
+            CellValue::Error(CellError::Num),
+            "{formula}"
+        );
+    }
+}
+
+#[test]
 fn convert_recalculates_measurements_unit_references_and_material_costs() {
     let mut book = Workbook::default();
     for (cell, raw) in [

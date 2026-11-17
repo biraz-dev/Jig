@@ -59,6 +59,61 @@ fn data_segments(scene: &ChartScene) -> usize {
 }
 
 #[test]
+fn pie_scenes_contain_the_full_circle_and_legend_at_compact_and_desktop_widths() {
+    for count in [1, 3, 24] {
+        let mut rows = vec![vec!["Label".to_string(), "Value".to_string()]];
+        rows.extend((0..count).map(|index| vec![format!("Item {index}"), "1".into()]));
+        let mut book = Workbook::default();
+        book.set_block(1, CellAddr::new(0, 0), &rows).unwrap();
+        let state = State {
+            workbook: Some(book),
+            ..State::default()
+        };
+        let spec = chart(
+            ChartKind::Pie,
+            ChartSource::Range {
+                sheet: 1,
+                range: CellRange::new(CellAddr::new(0, 0), CellAddr::new(count, 1)),
+            },
+        );
+        for width in [280.0, 619.0, 620.0, 1440.0] {
+            for requested_height in [180.0, 280.0] {
+                let scene = charts::scene(&state, &spec, width, requested_height).unwrap();
+                assert!(scene.height >= requested_height);
+                assert!(matches!(
+                    scene.primitives.first(),
+                    Some(Primitive::Rect { height, .. }) if *height == scene.height
+                ));
+                let mut slices = 0;
+                for primitive in &scene.primitives {
+                    match primitive {
+                        Primitive::Polygon { points, .. } => {
+                            slices += 1;
+                            for [x, y] in points {
+                                assert!(
+                                    *x >= 0.0 && *x <= scene.width && *y >= 0.0
+                                        && *y + 1.0 <= scene.height,
+                                    "Pie is clipped: {width}×{requested_height}, {count} items, point ({x}, {y}), scene height {}",
+                                    scene.height
+                                );
+                            }
+                        }
+                        Primitive::Rect { y, height, .. } => {
+                            assert!(*y >= 0.0 && y + height <= scene.height);
+                        }
+                        Primitive::Text { y, size, .. } => {
+                            assert!(*y >= *size && y + size * 0.2 <= scene.height);
+                        }
+                        Primitive::Line { .. } => {}
+                    }
+                }
+                assert_eq!(slices, count);
+            }
+        }
+    }
+}
+
+#[test]
 fn line_charts_keep_sheet_order_and_recalculate_formula_values() {
     let mut state = table(&[
         &["Label", "Value"],

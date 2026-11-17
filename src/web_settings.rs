@@ -239,10 +239,7 @@ impl BrowserApp {
         }
         // Earlier input may still be queued for its editor. Use the document
         // only after those edits and this pass's UI actions have been handled.
-        if self.pending_task_input.is_some()
-            || self.pending_note_input
-            || self.ordered_input.has_pending()
-        {
+        if self.has_pending_editor_input() || self.ordered_input.has_pending() {
             ctx.request_repaint();
             return;
         }

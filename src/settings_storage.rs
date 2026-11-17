@@ -35,7 +35,7 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = jigBackupWrite)]
     fn write_backup(text: &str, automatic: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = jigBackupCancel)]
-    fn cancel_backup();
+    fn cancel_backup(reset_failure: bool);
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -46,6 +46,8 @@ pub struct BackupStatus {
     pub permission: String,
     pub message: String,
     pub last_backup: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 fn error(value: JsValue) -> String {
@@ -129,5 +131,9 @@ pub fn backup(state: &State, automatic: bool) -> Result<(), String> {
 }
 
 pub fn cancel_pending() {
-    cancel_backup();
+    cancel_backup(false);
+}
+
+pub fn reset_document() {
+    cancel_backup(true);
 }

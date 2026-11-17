@@ -3,7 +3,7 @@
 Jig provides local tools for thinking, planning and working things out. Its
 egui/eframe browser application opens Tasks by default and remembers the selected
 workspace. About, Data, Tasks,
-Notes, Sheets, Charts, Settings and Help sit on
+Notes, Draft, Sheets, Charts, Settings and Help sit on
 the left; the calculator button sits at the far right. Undo/Redo and personal/local labels no
 longer occupy the header. The title and tagline no longer
 occupy header space. Sheet retains its named tabs, formulas,
@@ -52,6 +52,23 @@ deletion; Save control commits configuration changes. Shared Undo/Redo covers
 committed chart, control and input changes. JSON and Jig ODS preserve chart and
 control definitions and their cell links; ordinary ODS chart output is an SVG
 snapshot with Jig metadata, not a native editable ODS chart or form control.
+
+**Draft**, next to Notes, is one continuous formatted text holding zone. It
+supports size 8–72, bold, italic, underline, HTTP/HTTPS/mailto links, paragraph
+alignment, bullets and numbered lists. **Copy** uses rich clipboard output where
+supported, with plain text as a fallback. **To note** and **To task** copy selected
+text, or the whole Draft, into the existing tools as plain text without removing
+the source. A task takes its first nonblank line as its name and retains the full
+text in details. Transfers use the existing 16 KiB text limit.
+
+Draft saves locally on input and uses Jig's shared Undo/Redo, with consecutive
+typing grouped into one step. Esc returns focus to the canvas. A tab-local
+pending-edit recovery copy protects refreshes; JSON and Jig ODS are the portable
+backups. Older documents open an empty Draft. The document allows 512 KiB of
+Draft text within the existing browser state limit. Jig ODS retains Draft in
+its embedded whole-document metadata, not as visible spreadsheet cells.
+The browser's native text-editing surface uses a small local JavaScript bridge;
+the typed document, validation, saved state and history remain in Rust.
 
 The Tasks board uses the same Rust task, deadline and calendar records as the
 CLI and Ratatui dashboard. Its checklist and Gantt share a resizable panel, with
@@ -149,7 +166,7 @@ backup service.
 
 Open **Settings** between **Charts** and **Help**, or press **Ctrl+,** by default.
 Settings uses the main view, with **Done** returning to the existing workspace. The header
-keeps About, Data, Tasks, Notes, Sheets, Charts, Settings and Help together on the left,
+keeps About, Data, Tasks, Notes, Draft, Sheets, Charts, Settings and Help together on the left,
 with the calculator button at the far right. About and Help use the main panel;
 Done or Esc returns to the existing workspace without changing its data.
 Application Undo/Redo remain available through
@@ -176,9 +193,10 @@ Rename list/expand panel and Open local data. Select a binding and press its new
 combination; Esc cancels capture. Each action can be reset or unassigned, and
 **Reset all shortcuts** restores the defaults. Duplicate combinations and keys
 reserved for typing, editing, files, the browser or the operating system are
-rejected. Ctrl-Z and Ctrl-Shift-Z are the standard Undo/Redo defaults; editors
-retain their own local Undo/Redo. **Hotkey cheatsheet** shows the current
-application bindings alongside fixed contextual controls. Shortcut examples in
+rejected. Ctrl-Z and Ctrl-Shift-Z are the standard Undo/Redo defaults; other text
+editors retain local Undo/Redo, while Draft uses the shared history. **Hotkey
+cheatsheet** shows the current application bindings alongside fixed contextual
+controls. Shortcut examples in
 this guide describe the defaults.
 
 **Undo levels** accepts 0–100 combined Undo/Redo steps, with 20 by default and a
@@ -369,7 +387,7 @@ The **Browser preview** workflow runs WASM Clippy, builds using pinned Trunk
 on every push and pull request. Browser test results and the static Pages
 artifact are available in Actions. The separate Rust workflow retains native
 formatting, Clippy, core tests, Linux PTY checks and release builds.
-The nine browser suites run against the same built artifact in separate jobs,
+The ten browser suites run against the same built artifact in separate jobs,
 with at most six runners in parallel. Pages deploys only after all suites pass.
 
 Screenshots normally stay in the test artifact. A push whose commit message
@@ -377,24 +395,25 @@ contains `[render]` also prints allowlisted synthetic screenshots as
 bounded PNG data for visual review. Set `JIG_RENDER_LOGS` when running the test
 locally to request named scenes; personal application data is never used.
 
-The deployment gates cover spreadsheets, local OCR, the timeline, task lists,
-notes, general browser flows, Undo/Redo and Settings. The Settings browser suite
+The deployment gates cover spreadsheets, Charts, Draft, local OCR, the timeline,
+task lists, notes, general browser flows, Undo/Redo and Settings. The Settings browser suite
 also runs `tests/settings_bridge.mjs`, which covers settings and backup bridge
 races with synthetic files and handles. The four STL-only browser suites are
 not deployment gates while that interface is hidden. Native geometry, scale,
 camera, comparison and shrinkage tests still run in `cargo test`.
 
 Application Undo/Ctrl-Z and Redo/Ctrl-Shift-Z share one chronological journal for
-spreadsheet, task, note, calculator and document-preference changes, including
+spreadsheet, chart, Draft, task, note, calculator and document-preference changes, including
 weather and panel widths. Application Settings stay outside that journal.
 Undo/Redo navigation
 moves snapshots between stacks; a new committed edit clears Redo and a no-op
 keeps it. The configured combined step limit (20 by default, at most 100) and a
 shared 64 MiB budget bound history. Data
 restores use the normal safe-save path and update weather when its preference
-changes. Draft guards prevent history navigation from discarding unfinished
+changes. Guards for unfinished edits prevent history navigation from discarding
 work. Dataset switches and reload clear this session journal; it is not included
-in JSON or ODS. Text editors retain their normal local editing shortcuts.
+in JSON or ODS. Other text editors retain their normal local editing shortcuts;
+Draft routes Undo/Redo to the shared journal, including its formatting changes.
 `tests/undo_browser.mjs` covers history branching and dataset/save protections.
 
 Deployment runs only after a push to `main`; pull requests build and test without

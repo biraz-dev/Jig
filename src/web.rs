@@ -4672,6 +4672,8 @@ impl eframe::App for BrowserApp {
                         "Esc return to workspace".to_owned()
                     } else if self.settings_open {
                         "Preferences save in this browser · Esc return".to_owned()
+                    } else if self.sheet_workspace && self.charts_view {
+                        "Tab navigate | Enter apply | Esc cancel".to_owned()
                     } else if self.sheet_workspace {
                         format!(
                             "Arrows cells | Enter edit | Ctrl+G go to | {} tasks",

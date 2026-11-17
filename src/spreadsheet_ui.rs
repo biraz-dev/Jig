@@ -18,6 +18,7 @@ const ROW_HEAD: f32 = 44.0;
 const COL_HEAD: f32 = 25.0;
 const TOOL_ICON_SIZE: f32 = 26.0;
 const BORDER_ICON_SIZE: f32 = 28.0;
+pub const ODS_BACKUP_HINT: &str = "Includes every sheet, tasks and dates, Notes, Draft and calculator history. Use CSV or PDF to share sheet content only.";
 
 #[derive(Clone, Copy)]
 enum SheetIcon {
@@ -711,7 +712,13 @@ impl SheetPanel {
         label: &str,
         action: SheetAction,
     ) {
-        if ui.button(label).clicked() {
+        let response = ui.button(label);
+        let response = if matches!(&action, SheetAction::SaveOds) {
+            response.on_hover_text(ODS_BACKUP_HINT)
+        } else {
+            response
+        };
+        if response.clicked() {
             self.queue(actions, action);
             ui.close_menu();
         }
@@ -732,7 +739,7 @@ impl SheetPanel {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 self.menu_action(ui, actions, "Open ODS…", SheetAction::OpenOds);
-                self.menu_action(ui, actions, "Save ODS", SheetAction::SaveOds);
+                self.menu_action(ui, actions, "Save Jig backup (.ods)", SheetAction::SaveOds);
                 ui.separator();
                 self.menu_action(
                     ui,

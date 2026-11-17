@@ -107,7 +107,7 @@ impl BrowserApp {
         if !self.settings.auto_backup {
             self.auto_backup_due = None;
             settings_storage::cancel_pending();
-        } else if enable_backup && !self.demo && !self.dirty && !self.storage_error {
+        } else if enable_backup && !self.dirty && !self.storage_error {
             self.auto_backup_due = Some(ctx.input(|input| input.time) + 300.0);
         }
         ctx.request_repaint();
@@ -158,13 +158,9 @@ impl BrowserApp {
         }
         let mut next = self.settings.clone();
         let backup = settings_storage::status();
-        let response = self.settings_panel.ui(
-            ui,
-            &mut next,
-            &backup,
-            !self.demo,
-            !self.dirty && !self.storage_error,
-        );
+        let response =
+            self.settings_panel
+                .ui(ui, &mut next, &backup, !self.dirty && !self.storage_error);
         if response.changed {
             self.commit_settings(next, ui.ctx());
         }
@@ -181,20 +177,14 @@ impl BrowserApp {
                     settings_storage::disconnect_folder()
                 }
                 SettingsAction::BackupNow => {
-                    if self.demo || self.dirty || self.storage_error {
+                    if self.dirty || self.storage_error {
                         Err("Save your personal data before making a folder backup.".into())
                     } else {
                         self.auto_backup_due = None;
-                        settings_storage::backup(&self.state, false, true)
+                        settings_storage::backup(&self.state, false)
                     }
                 }
-                SettingsAction::DownloadBackup => {
-                    if self.demo {
-                        Err("Open your local data before making a backup.".into())
-                    } else {
-                        browser_storage::download(&self.state)
-                    }
-                }
+                SettingsAction::DownloadBackup => browser_storage::download(&self.state),
                 SettingsAction::RestoreBackup => {
                     self.close_settings();
                     self.data_open = true;
@@ -216,7 +206,6 @@ impl BrowserApp {
     pub(super) fn run_automatic_backup(&mut self, ctx: &egui::Context) {
         if std::mem::take(&mut self.initial_backup_pending)
             && self.settings.auto_backup
-            && !self.demo
             && !self.dirty
             && !self.storage_error
         {
@@ -227,7 +216,7 @@ impl BrowserApp {
         let Some(due) = self.auto_backup_due else {
             return;
         };
-        if !self.settings.auto_backup || self.demo || self.storage_error {
+        if !self.settings.auto_backup || self.storage_error {
             self.auto_backup_due = None;
             return;
         }
@@ -235,11 +224,15 @@ impl BrowserApp {
             return;
         }
         let backup = settings_storage::status();
-        if backup.busy {
+        if backup.busy
+            || !backup.supported
+            || backup.folder.is_none()
+            || backup.permission != "granted"
+        {
             return;
         }
         self.auto_backup_due = None;
-        if let Err(error) = settings_storage::backup(&self.state, true, true) {
+        if let Err(error) = settings_storage::backup(&self.state, true) {
             self.status = format!("Automatic backup could not start: {error}");
         }
     }

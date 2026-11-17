@@ -38,8 +38,8 @@ async function capture(page, name) {
   }
 }
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"] });
-async function open(label, { unsupported = false, directory = false, clock = false, phone = false } = {}) {
-  const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 1400 }, hasTouch: phone, acceptDownloads: true, timezoneId: "Etc/UTC", colorScheme: "dark" });
+async function open(label, { unsupported = false, directory = false, clock = false, phone = false, touch = false } = {}) {
+  const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 1400 }, hasTouch: phone || touch, acceptDownloads: true, timezoneId: "Etc/UTC", colorScheme: "dark" });
   contexts.push(context); await installFrameFence(context);
   await context.addInitScript(({ taskKey, settingsKey, taskRaw, defaults }) => {
     if (sessionStorage.getItem("jig-settings-test-seeded") !== "yes") {
@@ -68,6 +68,45 @@ async function open(label, { unsupported = false, directory = false, clock = fal
         return original ? original.call(this, options) : Promise.resolve("granted");
       } });
     }
+    // Fault only a backup's real writable stream. Handles, committed files,
+    // permission APIs and all successful writes remain native browser objects.
+    const files = window.FileSystemFileHandle.prototype;
+    const createWritable = files.createWritable;
+    const holdBackup = async phase => {
+      window.jigTestBackupWriteHeld = true;
+      window.jigTestBackupHoldPhase = phase;
+      await new Promise(resolve => { window.jigTestReleaseBackupWrite = resolve; });
+      window.jigTestReleaseBackupWrite = null;
+      window.jigTestBackupWriteHeld = false;
+      window.jigTestBackupHoldPhase = null;
+    };
+    Object.defineProperty(files, "createWritable", { configurable: true, value: async function (...args) {
+      const stream = await createWritable.apply(this, args);
+      if (!this.name.startsWith("jig-backup-")) return stream;
+      const write = stream.write.bind(stream), close = stream.close.bind(stream);
+      Object.defineProperty(stream, "write", { configurable: true, value: async data => {
+        increment("jig-test-backup-stream-writes");
+        const mode = sessionStorage.getItem("jig-test-backup-write-mode");
+        if (mode !== "hold-close") sessionStorage.removeItem("jig-test-backup-write-mode");
+        if (mode === "fail") throw new DOMException("Synthetic backup write failure", "NotReadableError");
+        if (mode === "permission") {
+          sessionStorage.setItem("jig-test-permission", "prompt");
+          throw new DOMException("Synthetic backup permission expired", "NotAllowedError");
+        }
+        if (mode === "hold") await holdBackup("write");
+        return write(data);
+      } });
+      Object.defineProperty(stream, "close", { configurable: true, value: async () => {
+        await close();
+        if (sessionStorage.getItem("jig-test-backup-write-mode") === "hold-close") {
+          sessionStorage.removeItem("jig-test-backup-write-mode");
+          // The native file has really committed. Delay only delivery of the
+          // close result so document reset races the application's final check.
+          await holdBackup("closed");
+        }
+      } });
+      return stream;
+    } });
     Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: async options => {
       increment("jig-test-picker");
       if (!navigator.userActivation.isActive) throw new Error("The folder chooser requires an actual user activation");
@@ -238,7 +277,42 @@ async function checkInfoPage(scene, index, name) {
   assert.equal(await raw(scene.page), beforeTask); assert.equal(await raw(scene.page, settingsKey), beforeSettings);
 }
 async function focusSetting(scene, index) { await openSettings(scene); await tab(scene.page, index); }
+async function focusRecovery(scene, index) { await openSettings(scene); await tab(scene.page, index); }
 async function backupStatus(page) { return page.evaluate(() => JSON.parse(window.jigBackupStatus())); }
+async function waitBackupFailure(page) {
+  await page.waitForFunction(() => { const s = JSON.parse(window.jigBackupStatus()); return !!s.error && !s.busy; }, undefined, { polling: 25 });
+  return backupStatus(page);
+}
+async function focusedRecoveryPoint(page, footer = false) {
+  const { width, height } = page.viewportSize(), top = footer ? height - 220 : 32;
+  const png = await page.screenshot({ clip: { x: 0, y: top, width, height: footer ? 220 : Math.min(350, height - top) }, timeout: 10000, animations: "disabled", caret: "hide" });
+  const point = await page.evaluate(async ({ encoded, top }) => {
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
+    const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height);
+    const matches = index => [[77, 49, 39], [226, 192, 173]].some(color => color.every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3));
+    for (let start = 0; start < seen.length; start++) {
+      if (seen[start] || !matches(start)) continue;
+      const stack = [start]; seen[start] = 1;
+      let left = bitmap.width, right = -1, first = bitmap.height, last = -1, count = 0;
+      while (stack.length) {
+        const index = stack.pop(), x = index % bitmap.width, y = Math.floor(index / bitmap.width);
+        left = Math.min(left, x); right = Math.max(right, x); first = Math.min(first, y); last = Math.max(last, y); count++;
+        for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+          if (nx < 0 || nx >= bitmap.width || ny < 0 || ny >= bitmap.height) continue;
+          const next = ny * bitmap.width + nx;
+          if (!seen[next] && matches(next)) { seen[next] = 1; stack.push(next); }
+        }
+      }
+      if (count > 200 && right - left >= 80 && right - left <= 155 && last - first >= 22 && last - first <= 32) {
+        bitmap.close(); return { x: (left + right) / 2, y: top + (first + last) / 2 };
+      }
+    }
+    bitmap.close(); return null;
+  }, { encoded: png.toString("base64"), top });
+  assert.ok(point, "The recovery action must have a visible focused touch-sized button");
+  return point;
+}
 async function prefix(page) { return 7 + Number((await backupStatus(page)).supported); }
 async function chooseTheme(scene, theme) {
   await focusSetting(scene, 1); await key(scene.page, "Space");
@@ -264,10 +338,13 @@ async function waitBrightness(page, light) {
   do { actual = await brightness(page); if (light ? actual > 150 : actual < 100) return actual; await page.waitForTimeout(50); } while (Date.now() < until);
   assert.ok(light ? actual > 150 : actual < 100, `Expected ${light ? "light" : "dark"} theme, measured brightness ${actual}`);
 }
-async function calculate(scene, expression, count, chord = "Control+Alt+4") {
+async function enterCalculation(scene, expression, chord = "Control+Alt+4") {
   await closeSettings(scene); await resetFocus(scene.page); await key(scene.page, chord);
   await scene.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
   await scene.page.keyboard.press("Control+a"); await scene.page.keyboard.type(expression, { delay: 15 }); await key(scene.page, "Enter");
+}
+async function calculate(scene, expression, count, chord = "Control+Alt+4") {
+  await enterCalculation(scene, expression, chord);
   await scene.page.waitForFunction(({ key, count, expression }) => {
     const value = JSON.parse(localStorage.getItem(key)); return value.history.length === count && value.history.at(-1).expression === expression;
   }, { key: taskKey, count, expression }, { polling: 25 });
@@ -458,7 +535,7 @@ try {
   await capture(current.page, "settings-download-fallback"); await current.context.close();
 
   progress("real directory streams, unique backups, debounce and remembered folder");
-  current = await open("settings-folder", { directory: true, clock: true }); assert.equal((await backupStatus(current.page)).supported, true);
+  current = await open("settings-folder", { directory: true, clock: true, touch: true }); assert.equal((await backupStatus(current.page)).supported, true);
   await current.page.evaluate(async () => {
     const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser", { create: true });
     const file = await folder.getFileHandle("user-owned.txt", { create: true }), stream = await file.createWritable(); await stream.write("Sample: preserve this file"); await stream.close();
@@ -508,34 +585,167 @@ try {
   assert.deepEqual(await state(current.page), calculated, "Reconnecting must not require or create a document edit");
   assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission"))), 1,
     "Only the explicit Reconnect action may request permission");
+  progress("retain a failed folder write across refresh and retry the latest saved work once");
+  let retainedBackups = 5, beforeClear = calculated;
+  const priorFiles = await waitFiles(current.page, retainedBackups), lastSuccessful = (await backupStatus(current.page)).last_backup;
+  await current.page.evaluate(() => sessionStorage.setItem("jig-test-backup-write-mode", "fail"));
+  await focusSetting(current, 9); await key(current.page, "Space");
+  const failedWrite = await waitBackupFailure(current.page);
+  assert.match(failedWrite.error, /Synthetic backup write failure/);
+  assert.equal(failedWrite.last_backup, lastSuccessful, "A failed write must not claim a successful backup");
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), priorFiles, "Failure cleanup must preserve every prior file and remove its own incomplete file");
+  await openSettings(current); await capture(current.page, "settings-backup-failed");
+  await boot(current, true);
+  assert.equal((await backupStatus(current.page)).error, failedWrite.error, "Refreshing must retain the unresolved folder failure");
+  assert.equal((await backupStatus(current.page)).last_backup, lastSuccessful);
+  const beforeQuota = await raw(current.page);
+  const writesBeforeQuota = await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-backup-stream-writes")));
+  await current.page.evaluate(key => {
+    const descriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem"), original = descriptor.value;
+    let failed = false;
+    window.jigTestQuotaFailures = 0;
+    window.jigTestRestorePersonalSave = () => Object.defineProperty(Storage.prototype, "setItem", descriptor);
+    Object.defineProperty(Storage.prototype, "setItem", { ...descriptor, value: function (name, value) {
+      if (this === localStorage && name === key && !failed) {
+        failed = true; window.jigTestQuotaFailures++;
+        throw new DOMException("Synthetic personal-save quota exceeded", "QuotaExceededError");
+      }
+      return original.call(this, name, value);
+    } });
+  }, taskKey);
+  await enterCalculation(current, "9 * 9");
+  assert.equal(await current.page.evaluate(() => window.jigTestQuotaFailures), 1, "The recovery test must actually fail one personal save");
+  assert.equal(await raw(current.page), beforeQuota, "A failed personal save must preserve the prior stored document");
+  const memoryOnly = structuredClone(calculated); memoryOnly.history.push({ expression: "9 * 9", result: 81 });
+  await resetFocus(current.page); await tab(current.page, 8); // Five header buttons, Retry save, Source, then Download; folder Retry is disabled.
+  const memoryDownloadEvent = current.page.waitForEvent("download"); await key(current.page, "Space");
+  const memoryDownload = await memoryDownloadEvent;
+  assert.deepEqual(JSON.parse(await readFile(await memoryDownload.path(), "utf8")), memoryOnly,
+    "Recovery download must include memory-only work while folder retry is disabled for an unsaved document");
+  assert.equal(await raw(current.page), beforeQuota);
+  assert.equal((await backupStatus(current.page)).error, failedWrite.error);
+  assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-backup-stream-writes"))), writesBeforeQuota,
+    "An unsaved document's disabled Retry must not start a folder write");
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), priorFiles);
+  await current.page.evaluate(() => window.jigTestRestorePersonalSave());
+  await resetFocus(current.page); await tab(current.page, 6); await key(current.page, "Space"); // Actual Retry save header control.
+  await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).history.length === 3, taskKey, { polling: 25 });
+  beforeClear = await state(current.page);
+  assert.deepEqual(beforeClear, memoryOnly, "Retry save must commit the exact downloaded in-memory recovery document");
+  assert.equal((await backupStatus(current.page)).error, failedWrite.error, "Ordinary saved edits must not hide an unresolved folder failure");
+  await resetFocus(current.page); await tab(current.page, 9); // Header five, Source, Retry, Download, Settings.
+  await key(current.page, "Space"); current.settingsOpen = true; await waitDoneFocus(current.page);
+  assert.equal((await backupStatus(current.page)).error, failedWrite.error, "The footer Settings action must open details without clearing the failure");
+  await closeSettings(current);
+  await resetFocus(current.page); await tab(current.page, 7); // Header five, Source, then the footer Retry action.
+  const footerRetry = await focusedRecoveryPoint(current.page, true);
+  const writesBeforeRetry = await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-backup-stream-writes")));
+  await current.page.evaluate(() => sessionStorage.setItem("jig-test-backup-write-mode", "hold"));
+  await current.page.mouse.dblclick(footerRetry.x, footerRetry.y, { delay: 30 }); await paint(current.page);
+  await current.page.waitForFunction(() => window.jigTestBackupWriteHeld === true && JSON.parse(window.jigBackupStatus()).busy, undefined, { polling: 25 });
+  assert.equal((await backupStatus(current.page)).error, failedWrite.error, "Retrying must retain the failure until a real file commit succeeds");
+  assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-backup-stream-writes"))), writesBeforeRetry + 1,
+    "A rapid repeat click while writing must not start a second backup");
+  await capture(current.page, "settings-backup-retrying");
+  await current.page.evaluate(() => window.jigTestReleaseBackupWrite());
+  const recovered = await waitFiles(current.page, ++retainedBackups);
+  const retried = recovered.find(file => !priorFiles.some(previous => previous.name === file.name));
+  assert.ok(retried, "Retry must create one new uniquely named backup");
+  assert.deepEqual(retried.data, beforeClear, "Retry must use the complete latest saved document, including work added after the failed attempt");
+  await current.page.waitForFunction(() => { const s = JSON.parse(window.jigBackupStatus()); return !s.error && !s.busy; }, undefined, { polling: 25 });
+  assert.notEqual((await backupStatus(current.page)).last_backup, lastSuccessful);
+  assert.deepEqual(await state(current.page), beforeClear, "Recovering a backup must not modify the document");
+  await advanceBackupClock(current.page, 310000);
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), recovered, "A successful manual retry must not leave a duplicate automatic backup queued");
+  await capture(current.page, "settings-backup-recovered");
+
+  progress("download during a permission failure, then reconnect and retry by touch");
+  const beforePermissionFailure = await backupStatus(current.page);
+  await current.page.evaluate(() => sessionStorage.setItem("jig-test-backup-write-mode", "permission"));
+  await focusSetting(current, 9); await key(current.page, "Space");
+  const permissionFailure = await waitBackupFailure(current.page);
+  assert.match(permissionFailure.error, /Synthetic backup permission expired/);
+  assert.equal(permissionFailure.permission, "prompt");
+  assert.equal(permissionFailure.last_backup, beforePermissionFailure.last_backup);
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), recovered);
+  const permissionRequests = await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission")));
+  await closeSettings(current); await resetFocus(current.page); await tab(current.page, 8); // Disabled Retry is skipped: Reconnect, then Download.
+  const recoveryDownloadEvent = current.page.waitForEvent("download"); await key(current.page, "Space");
+  const recoveryDownload = await recoveryDownloadEvent;
+  assert.equal(recoveryDownload.suggestedFilename(), "jig.json");
+  assert.deepEqual(JSON.parse(await readFile(await recoveryDownload.path(), "utf8")), beforeClear, "Download fallback must preserve all current document fields");
+  assert.equal((await backupStatus(current.page)).error, permissionFailure.error, "A download must not falsely claim the folder was repaired");
+  assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission"))), permissionRequests,
+    "Downloading must not request folder permission");
+  await current.page.setViewportSize({ width: 390, height: 844 });
+  await focusRecovery(current, 1);
+  const reconnectPoint = await focusedRecoveryPoint(current.page);
+  await capture(current.page, "settings-backup-failed-mobile");
+  assert.equal(await current.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "Recovery controls must fit a phone viewport");
+  await current.page.touchscreen.tap(reconnectPoint.x, reconnectPoint.y); await paint(current.page);
+  await current.page.waitForFunction(() => JSON.parse(window.jigBackupStatus()).permission === "granted", undefined, { polling: 25 });
+  assert.equal(await current.page.evaluate(() => Number(sessionStorage.getItem("jig-test-requestPermission"))), permissionRequests + 1,
+    "Only the actual Reconnect touch may request access");
+  assert.equal((await backupStatus(current.page)).error, permissionFailure.error, "Restoring access must retain the failure until the retry commits");
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), recovered, "Reconnecting a manually failed backup must not create a hidden retry");
+  await focusRecovery(current, 1);
+  const touchRetry = await focusedRecoveryPoint(current.page);
+  await current.page.touchscreen.tap(touchRetry.x, touchRetry.y); await paint(current.page);
+  const permissionRecovered = await waitFiles(current.page, ++retainedBackups);
+  const afterReconnect = permissionRecovered.find(file => !recovered.some(previous => previous.name === file.name));
+  assert.ok(afterReconnect); assert.deepEqual(afterReconnect.data, beforeClear);
+  await current.page.waitForFunction(() => !JSON.parse(window.jigBackupStatus()).error, undefined, { polling: 25 });
+  await openSettings(current); await capture(current.page, "settings-backup-recovered-mobile");
+  await current.page.setViewportSize({ width: 1280, height: 1400 });
+
+  progress("reset an unresolved failure while the native close result is still in flight");
+  await current.page.evaluate(() => sessionStorage.setItem("jig-test-backup-write-mode", "fail"));
+  await focusSetting(current, 9); await key(current.page, "Space"); await waitBackupFailure(current.page);
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), permissionRecovered);
+  await closeSettings(current); await resetFocus(current.page); await tab(current.page, 7);
+  const lastBeforeCloseRace = (await backupStatus(current.page)).last_backup;
+  await current.page.evaluate(() => sessionStorage.setItem("jig-test-backup-write-mode", "hold-close"));
+  await key(current.page, "Space");
+  await current.page.waitForFunction(() => window.jigTestBackupHoldPhase === "closed" && JSON.parse(window.jigBackupStatus()).busy, undefined, { polling: 25 });
+  const closedFiles = await backupFiles(current.page);
+  assert.equal(closedFiles.length, retainedBackups + 1, "The race must hold an actually committed native close, rather than an unstarted write");
+  const closingBackup = closedFiles.find(file => !permissionRecovered.some(previous => previous.name === file.name));
+  assert.ok(closingBackup); assert.deepEqual(closingBackup.data, beforeClear);
+  assert.equal((await backupStatus(current.page)).last_backup, lastBeforeCloseRace, "An undelivered close result must not yet count as a successful backup");
   progress("clear a document without backing up stale work, then save fresh personal work");
   await closeSettings(current); await resetFocus(current.page); await key(current.page, "Control+Alt+2"); await key(current.page, "Control+Alt+d");
   await tab(current.page, 10); await key(current.page, "Space"); // Five header buttons, then Clear saved data.
-  assert.deepEqual(await state(current.page), calculated, "Clearing must wait for explicit confirmation");
+  assert.deepEqual(await state(current.page), beforeClear, "Clearing must wait for explicit confirmation");
   await tab(current.page); await key(current.page, "Space");
   await current.page.waitForFunction(key => localStorage.getItem(key) === null, taskKey);
-  await key(current.page, "Control+Alt+d");
+  assert.equal((await backupStatus(current.page)).error, null, "Explicit reset must clear recovery for the old document");
+  await current.page.evaluate(() => window.jigTestReleaseBackupWrite());
+  await current.page.waitForFunction(() => window.jigTestBackupWriteHeld === false, undefined, { polling: 25 });
+  assert.deepEqual(await waitFiles(current.page, retainedBackups), permissionRecovered, "A cancelled retry must never commit the old document or leave a partial file");
+  assert.equal((await backupStatus(current.page)).last_backup, lastBeforeCloseRace, "A stale close result must not replace the last successful backup timestamp");
+  await boot(current, true);
+  assert.equal((await backupStatus(current.page)).error, null, "Refreshing after reset must not restore the old failure");
   await key(current.page, "Control+Alt+o");
   await advanceBackupClock(current.page, 310000);
-  assert.equal((await backupFiles(current.page)).length, 5, "Clearing and reopening without saved data must not schedule a phantom backup");
+  assert.equal((await backupFiles(current.page)).length, retainedBackups, "Clearing and reopening without saved data must not schedule a phantom backup");
   assert.equal(await raw(current.page), null, "An empty document must remain unsaved until its first edit");
   await focusSetting(current, 11); // Restore remains available for an empty personal document.
   const chooserEvent = current.page.waitForEvent("filechooser"); await key(current.page, "Space"); const chooser = await chooserEvent;
   assert.equal(await chooser.element().getAttribute("id"), "jig-import"); await chooser.setFiles([]); current.settingsOpen = false;
-  assert.equal((await backupFiles(current.page)).length, 5); assert.equal(await raw(current.page), null, "Cancelling restore must leave the cleared document empty");
+  assert.equal((await backupFiles(current.page)).length, retainedBackups); assert.equal(await raw(current.page), null, "Cancelling restore must leave the cleared document empty");
   await calculate(current, "7 + 1", 1);
   const fresh = await state(current.page);
   assert.deepEqual(fresh.history, [{ expression: "7 + 1", result: 8 }]);
   for (const field of ["tasks", "deadlines", "entries", "notes"]) assert.deepEqual(fresh[field] ?? [], [], `First work after clearing must not add sample ${field}`);
   assert.equal(fresh.featured, null);
-  await advanceBackupClock(current.page, 310000); const restarted = await waitFiles(current.page, 6);
+  await advanceBackupClock(current.page, 310000); const restarted = await waitFiles(current.page, retainedBackups + 1);
   assert.ok(restarted.some(file => JSON.stringify(file.data) === JSON.stringify(fresh)), "Automatic backups must resume for the complete freshly saved document");
   assert.equal(await current.page.evaluate(async () => {
     const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("jig-settings-browser"); return (await (await folder.getFileHandle("user-owned.txt")).getFile()).text();
   }), "Sample: preserve this file");
   await current.context.close();
   assert.deepEqual(issues, [], "Settings, backups and documents must stay local without browser errors");
-  console.log("Settings browser passed: stable header, persistent Graphite/Light/System themes, captured shortcuts/conflict rejection/reset/guide, configurable Undo limits, validated separate settings portability, personal download fallback, real OPFS backup streams/unique names/debounce/IDB restoration, saved-document reopen deadlines, permission-wait and explicit reconnect recovery, explicit clearing with pending-backup cancellation, and fresh personal work after reset.");
+  console.log("Settings browser passed: stable header, persistent Graphite/Light/System themes, captured shortcuts/conflict rejection/reset/guide, configurable Undo limits, validated separate settings portability, personal download fallback, real OPFS backup streams/unique names/debounce/IDB restoration, saved-document reopen deadlines, permission-wait and explicit reconnect recovery, persistent failed-write recovery across refresh, current-work retry with duplicate-click protection, download fallback and real touch reconnect/retry, reset during an in-flight retry, and fresh personal work after reset.");
 } catch (error) {
   console.error(`Settings browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "settings-failure").catch(() => {});

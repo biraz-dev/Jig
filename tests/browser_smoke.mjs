@@ -516,6 +516,8 @@ try {
 
   progress("browse Month without assigning a draft, then pick a due day through the shared editor");
   await openTaskDates(calendarPick.page);
+  assert.equal(await calendarPick.page.evaluate(() => sessionStorage.getItem("jig.drafts.v1")), null,
+    "Opening an unchanged date editor with Space must not type its activation key into Due");
   const monthDueField = await imeCursor(calendarPick.page);
   await navigateKey(calendarPick.page, "Control+Alt+t");
   await openMonthFromStrip(calendarPick.page, true);

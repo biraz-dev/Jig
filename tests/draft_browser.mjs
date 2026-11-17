@@ -306,7 +306,34 @@ try {
   await expectState(current.page, beforeFailure, "A failed save must not overwrite the existing stored document");
   await boot(current.page, true);
   await saved(current.page, value => textOf(value.draft) === refreshText + " Sample: recover even when saving fails.", "Tab-local recovery must survive a main storage failure and save after reload");
+  await current.page.waitForFunction(() => !window.jigDraftPending()); await paint(current.page);
+  assert.equal(await current.page.evaluate(() => {
+    const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented;
+  }), false, "A normally saved Draft must not leave an unload warning active");
   assert.deepEqual(withoutDraft(await state(current.page)), fixture); await current.context.close();
+
+  progress("protect a conflicting tab-local recovery without replacing the saved Draft");
+  const recoveryDraft = text => ({ blocks: [{ runs: [{ text }] }] });
+  const conflicting = { ...fixture, draft: recoveryDraft("Sample: keep the newer saved Draft.") };
+  const recoverable = recoveryDraft("Sample: the only copy of this unfinished Draft.");
+  const conflictJournal = JSON.stringify({ version: 1, base: recoveryDraft("Sample: an earlier saved Draft."), draft: recoverable, recovered: [] });
+  current = await open("draft-conflicting-recovery", conflicting, false, false, conflictJournal);
+  await current.page.getByRole("button", { name: "Copy recovered text", exact: true }).waitFor({ state: "visible" });
+  await paint(current.page);
+  assert.equal(await current.page.evaluate(() => window.jigDraftPending()), true,
+    "Text kept only in the recovery journal must remain protected when closing the tab");
+  assert.equal(await current.page.evaluate(() => {
+    const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented;
+  }), true, "Jig's unload warning must cover a conflicting recovery even when the current Draft is saved");
+  await expectState(current.page, conflicting, "Recovery must not replace a different saved Draft");
+  await button(current.page, "Copy recovered text");
+  await readClipboard(current.page, textOf(recoverable), true);
+  assert.deepEqual(await current.page.evaluate(() => JSON.parse(sessionStorage.getItem("jig.draft.recovery.v1")).recovered), [recoverable],
+    "Copying recovered text must preserve the journal until an explicit document replacement");
+  await boot(current.page, true);
+  assert.equal(await current.page.evaluate(() => window.jigDraftPending()), true, "Conflicting recovery remains protected after refresh");
+  await expectState(current.page, conflicting, "Refreshing a conflicting recovery must keep the saved Draft intact");
+  await current.context.close();
 
   progress("preserve an unreadable recovery journal and the current saved document");
   const unreadable = '{"version":1,"draft":';
@@ -333,7 +360,7 @@ try {
   await selectAll(current.page); await current.page.keyboard.press("ArrowRight"); await capture(current.page, "draft-mobile");
   await boot(current.page, true); await expectState(current.page, phoneSaved, "Phone reload must retain formatting and text");
   assert.deepEqual(issues, [], "Draft must not execute pasted content, issue external requests, or raise page errors");
-  console.log("Draft browser checks passed: older saved files, typed formatting/size/alignment/lists/links, rich copy, selected text to Notes/Tasks, shared Undo/Redo across workspaces, refresh and failed-save recovery, malformed-journal preservation, JSON/ODS round trips, safe rich paste without network requests, and light-theme phone layout/touch editing.");
+  console.log("Draft browser checks passed: older saved files, typed formatting/size/alignment/lists/links, rich copy, selected text to Notes/Tasks, shared Undo/Redo across workspaces, refresh and failed-save recovery, conflicting-recovery unload protection, malformed-journal preservation, JSON/ODS round trips, safe rich paste without network requests, and light-theme phone layout/touch editing.");
 } catch (error) {
   console.error(`Draft browser failed during: ${phase}`, error);
   if (current?.page && !current.page.isClosed()) {

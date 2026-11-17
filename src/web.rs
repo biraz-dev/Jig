@@ -2379,7 +2379,6 @@ impl BrowserApp {
 
     fn toolbar(&mut self, ui: &mut Ui) {
         let palette = web_theme::colors(ui.ctx());
-        let width = ui.available_width();
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(28.0);
             self.info_button(ui, InfoPage::About);
@@ -2406,16 +2405,9 @@ impl BrowserApp {
             self.workspace_buttons(ui);
             self.settings_button(ui);
             self.info_button(ui, InfoPage::Help);
-            self.calculator_button(ui);
-            if width >= 600.0 {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(Local::now().format("%a %d %b %Y").to_string())
-                            .size(13.0)
-                            .color(palette.muted),
-                    );
-                });
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.calculator_button(ui);
+            });
         });
         if self.data_open {
             ui.separator();

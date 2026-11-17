@@ -367,8 +367,14 @@ impl CalendarPanel {
                     )
                 });
                 if response.gained_focus() || requested_focus {
+                    if response.gained_focus() {
+                        // The filter can only lock a widget focused in the
+                        // preceding pass. Prime it before the next key arrives.
+                        ui.ctx().request_discard("Prime month calendar arrow-key focus");
+                    }
                     response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
                     focus_rect = Some(grid);
+                    ui.ctx().request_repaint();
                 }
                 if response.clicked() && ui.input(|input| input.pointer.any_released()) {
                     if let Some(pointer) = response.interact_pointer_pos().filter(|p| {
@@ -380,6 +386,13 @@ impl CalendarPanel {
                     }
                 }
                 if response.has_focus() {
+                    ui.memory_mut(|memory| {
+                        memory.set_focus_lock_filter(id, egui::EventFilter {
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            ..Default::default()
+                        });
+                    });
                     let (days, page, home, enter) = ui.input_mut(|input| {
                         let none = egui::Modifiers::NONE;
                         let days = if input.consume_key(none, egui::Key::ArrowLeft) { -1 }

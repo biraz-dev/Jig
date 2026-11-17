@@ -2,8 +2,8 @@
 
 Jig is a small, local artist's workbench in Rust. The browser starts in **Tasks**
 and remembers your workspace. **Tasks**, **Notes** and **Sheets** are the main
-views. The header reads About, Data, Tasks, Notes, Sheets, Settings, Help and the
-calculator on the left; the date sits on the right. Tasks,
+views. The header groups About, Data, Tasks, Notes, Sheets, Settings and Help on
+the left, with the calculator button at the far right. Tasks,
 their Gantt timeline, notes, calculator/converter, calendar and optional weather
 use the same portable state. The browser STL interface is hidden for now; the
 native geometry tools remain available. The native CLI and Ratatui terminal
@@ -254,7 +254,7 @@ full main view; **Done** returns to the workspace. **Graphite** keeps Jig's warm
 appearance. Document cell colors and task colors remain their own values.
 
 **About** starts the header; **Help** follows **Settings**, and the calculator
-is the final header button. They open in the main panel without changing your
+sits at the far right. About and Help open in the main panel without changing your
 document.
 **Done** or **Esc** returns to your work.
 Help covers tasks, Gantt dates, notes, calculations, shortcuts and backups.

@@ -50,6 +50,7 @@ fn presets_are_distinct_and_keep_small_text_readable() {
         Theme::Catppuccin,
         Theme::Gruvbox,
         Theme::TokyoNight,
+        Theme::Dark,
     ] {
         let colors = ThemePalette::resolve(theme, None, true, None);
         assert!(backgrounds.insert(colors.background), "{theme:?}");
@@ -129,6 +130,54 @@ fn added_presets_keep_canonical_names_and_standard_anchor_colors() {
             "Explicit dark presets must not follow system light mode"
         );
     }
+}
+
+#[test]
+fn dark_is_neutral_and_retains_its_appearance_in_system_light_mode() {
+    let settings = AppSettings::from_json(r#"{"version":2,"theme":"dark"}"#).unwrap();
+    assert_eq!(settings.theme, Theme::Dark);
+    assert_eq!(settings.theme.label(), "Dark");
+    assert_eq!(serde_json::to_value(&settings).unwrap()["theme"], "dark");
+    assert_eq!(
+        Theme::ALL
+            .iter()
+            .filter(|choice| **choice == Theme::Dark)
+            .count(),
+        1
+    );
+    assert_eq!(AppSettings::default().theme, Theme::Ember);
+
+    let dark = ThemePalette::resolve(Theme::Dark, None, true, None);
+    assert_eq!(dark.background, [16; 3]);
+    assert_eq!(dark.surface, [25; 3]);
+    assert_eq!(dark.text, [216; 3]);
+    assert_eq!(dark.accent, [192; 3]);
+    assert!(
+        palette::luminance(dark.background) < palette::luminance(ThemePalette::GRAPHITE.background)
+    );
+    for color in [
+        dark.background,
+        dark.surface,
+        dark.text,
+        dark.muted,
+        dark.border,
+        dark.grid,
+        dark.accent,
+        dark.selected,
+        dark.hover,
+        dark.active,
+        dark.weekend,
+        dark.pinned,
+    ] {
+        assert_eq!(color[0], color[1]);
+        assert_eq!(color[1], color[2]);
+    }
+    for background in [dark.background, dark.surface] {
+        assert!(contrast(dark.error, background) >= 4.5);
+    }
+    assert!(dark.error[0] > dark.error[1]);
+    assert!(dark.is_dark);
+    assert_eq!(ThemePalette::resolve(Theme::Dark, None, false, None), dark);
 }
 
 #[test]

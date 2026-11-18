@@ -123,6 +123,60 @@ impl ThemePalette {
         is_dark: true,
     };
 
+    /// Catppuccin's Mocha base, foreground and mauve accent.
+    pub const CATPPUCCIN: Self = Self {
+        background: [30, 30, 46],
+        surface: [49, 50, 68],
+        text: [205, 214, 244],
+        muted: [166, 173, 200],
+        border: [108, 112, 134],
+        grid: [69, 71, 90],
+        accent: [203, 166, 247],
+        selected: [58, 48, 82],
+        hover: [44, 43, 63],
+        active: [75, 58, 102],
+        error: [243, 139, 168],
+        weekend: [35, 35, 52],
+        pinned: [43, 40, 61],
+        is_dark: true,
+    };
+
+    /// Gruvbox's dark background, warm foreground and bright yellow accent.
+    pub const GRUVBOX: Self = Self {
+        background: [40, 40, 40],
+        surface: [60, 56, 54],
+        text: [235, 219, 178],
+        muted: [189, 174, 147],
+        border: [146, 131, 116],
+        grid: [80, 73, 69],
+        accent: [250, 189, 47],
+        selected: [80, 65, 36],
+        hover: [55, 51, 44],
+        active: [102, 81, 40],
+        error: [251, 140, 122],
+        weekend: [45, 43, 39],
+        pinned: [60, 56, 45],
+        is_dark: true,
+    };
+
+    /// Tokyo Night's standard Night background and blue accent.
+    pub const TOKYO_NIGHT: Self = Self {
+        background: [26, 27, 38],
+        surface: [36, 40, 59],
+        text: [192, 202, 245],
+        muted: [169, 177, 214],
+        border: [86, 95, 137],
+        grid: [65, 72, 104],
+        accent: [122, 162, 247],
+        selected: [40, 52, 87],
+        hover: [35, 39, 58],
+        active: [51, 65, 111],
+        error: [247, 118, 142],
+        weekend: [30, 32, 47],
+        pinned: [35, 43, 64],
+        is_dark: true,
+    };
+
     /// System chooses the existing warm dark/light pair. An optional native
     /// accent is supplied by the adapter only when the user enables it.
     pub fn resolve(
@@ -139,6 +193,9 @@ impl ThemePalette {
             Theme::Nord => Self::NORD,
             Theme::Dracula => Self::DRACULA,
             Theme::Graphite => Self::GRAPHITE,
+            Theme::Catppuccin => Self::CATPPUCCIN,
+            Theme::Gruvbox => Self::GRUVBOX,
+            Theme::TokyoNight => Self::TOKYO_NIGHT,
             Theme::Custom => custom.map_or(Self::EMBER, Self::custom),
         };
         if let Some(accent) = system_accent {

@@ -28,19 +28,19 @@ pub enum Theme {
 
 impl Theme {
     pub const ALL: [Self; 13] = [
-        Self::Ember,
-        Self::Paper,
-        Self::System,
-        Self::Nord,
-        Self::Dracula,
-        Self::Graphite,
-        Self::Catppuccin,
-        Self::Gruvbox,
-        Self::TokyoNight,
-        Self::Dark,
-        Self::RosePine,
         Self::Apprentice,
+        Self::Catppuccin,
         Self::Custom,
+        Self::Dark,
+        Self::Dracula,
+        Self::Ember,
+        Self::Graphite,
+        Self::Gruvbox,
+        Self::Nord,
+        Self::Paper,
+        Self::RosePine,
+        Self::System,
+        Self::TokyoNight,
     ];
 
     pub fn label(self) -> &'static str {

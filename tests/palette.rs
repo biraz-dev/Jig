@@ -36,6 +36,18 @@ fn version_one_names_keep_their_existing_appearance() {
         ThemePalette::resolve(neutral.theme, None, true, None),
         ember
     );
+
+    // Adding Rosé Pine must retain existing Nord files and its palette anchors.
+    let nord = AppSettings::from_json(r#"{"theme":"nord"}"#).unwrap();
+    assert_eq!(nord.theme, Theme::Nord);
+    assert_eq!(nord.theme.label(), "Nord");
+    assert!(Theme::ALL.contains(&Theme::Nord));
+    assert_eq!(serde_json::to_value(&nord).unwrap()["theme"], "nord");
+    let colors = ThemePalette::resolve(nord.theme, None, true, None);
+    assert_eq!(colors, ThemePalette::NORD);
+    assert_eq!(colors.background, [46, 52, 64]);
+    assert_eq!(colors.text, [236, 239, 244]);
+    assert_eq!(colors.accent, [136, 192, 208]);
 }
 
 #[test]
@@ -51,6 +63,7 @@ fn presets_are_distinct_and_keep_small_text_readable() {
         Theme::Gruvbox,
         Theme::TokyoNight,
         Theme::Dark,
+        Theme::RosePine,
     ] {
         let colors = ThemePalette::resolve(theme, None, true, None);
         assert!(backgrounds.insert(colors.background), "{theme:?}");
@@ -106,6 +119,14 @@ fn added_presets_keep_canonical_names_and_standard_anchor_colors() {
             [26, 27, 38],
             [192, 202, 245],
             [122, 162, 247],
+        ),
+        (
+            Theme::RosePine,
+            "rose_pine",
+            "Rosé Pine",
+            [25, 23, 36],
+            [224, 222, 244],
+            [235, 188, 186],
         ),
     ] {
         let json = format!(r#"{{"version":2,"theme":"{name}"}}"#);

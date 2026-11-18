@@ -105,6 +105,7 @@ fn interface_palettes_change_chart_chrome_without_changing_geometry_or_series() 
             ThemePalette::TOKYO_NIGHT,
             ThemePalette::DARK,
             ThemePalette::ROSE_PINE,
+            ThemePalette::APPRENTICE,
             ThemePalette::PAPER,
         ] {
             let scene = charts::scene_themed(&state, &spec, 720.0, 280.0, colors).unwrap();
@@ -183,6 +184,7 @@ fn themed_task_gantt_preserves_task_colors_and_printer_friendly_exports() {
         ThemePalette::TOKYO_NIGHT,
         ThemePalette::DARK,
         ThemePalette::ROSE_PINE,
+        ThemePalette::APPRENTICE,
         ThemePalette::PAPER,
     ] {
         let scene = charts::scene_themed(&state, &spec, 720.0, 280.0, colors).unwrap();
@@ -265,6 +267,7 @@ fn shared_evaluation_scenes_match_fresh_scenes_after_source_and_palette_changes(
                 ThemePalette::TOKYO_NIGHT,
                 ThemePalette::DARK,
                 ThemePalette::ROSE_PINE,
+                ThemePalette::APPRENTICE,
                 ThemePalette::PAPER,
             ] {
                 for width in [340.0, 720.0] {

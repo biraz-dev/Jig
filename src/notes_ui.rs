@@ -218,11 +218,20 @@ impl NotesPanel {
     }
 
     pub fn owns_keyboard(&self, ctx: &egui::Context) -> bool {
+        // egui clears ordinary widget focus before UI handles Escape. Retain
+        // this frame's owner so the parent does not consume the cancellation.
+        let escaping = ctx.input(|input| input.key_pressed(egui::Key::Escape));
         self.drag.is_some()
-            || ctx.memory(|memory| {
-                memory
-                    .focused()
-                    .is_some_and(|id| id == draft_input_id() || self.keyboard_ids.contains(&id))
+            || ctx.memory(|memory| match memory.focused() {
+                Some(id) => id == draft_input_id() || self.keyboard_ids.contains(&id),
+                None => {
+                    escaping
+                        && (memory.had_focus_last_frame(draft_input_id())
+                            || self
+                                .keyboard_ids
+                                .iter()
+                                .any(|id| memory.had_focus_last_frame(*id)))
+                }
             })
     }
 
@@ -601,8 +610,6 @@ impl NotesPanel {
         let focused = draft.focus || ui.memory(|memory| memory.has_focus(draft_input_id()));
         let save_key = focused
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Enter));
-        let cancel_key = focused
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let response = egui::ScrollArea::vertical()
             .id_salt("note-editor-scroll")
             .max_height(150.0)
@@ -625,13 +632,22 @@ impl NotesPanel {
             ui.ctx().request_repaint();
         }
         let mut save = save_key;
-        let mut cancel = cancel_key;
+        let mut cancel = false;
         ui.horizontal_wrapped(|ui| {
-            save |= ui
-                .small_button("Save")
-                .on_hover_text("Ctrl-Enter")
-                .clicked();
-            cancel |= ui.small_button("Cancel").on_hover_text("Escape").clicked();
+            let save_button = ui.small_button("Save").on_hover_text("Ctrl-Enter");
+            let cancel_button = ui.small_button("Cancel").on_hover_text("Escape");
+            save |= save_button.clicked();
+            cancel |= cancel_button.clicked();
+            self.keyboard_ids.extend([save_button.id, cancel_button.id]);
+            self.focused |= save_button.has_focus() || cancel_button.has_focus();
+            let controls = [draft_input_id(), save_button.id, cancel_button.id];
+            let escape_owner = ui.memory(|memory| match memory.focused() {
+                Some(id) => controls.contains(&id),
+                None => controls.iter().any(|id| memory.had_focus_last_frame(*id)),
+            });
+            cancel |= escape_owner
+                && ui
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         });
         if cancel {
             self.cancel_edit();

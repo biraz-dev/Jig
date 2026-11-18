@@ -195,6 +195,24 @@ impl ThemePalette {
         is_dark: true,
     };
 
+    /// Rosé Pine's main dark palette, with the rose accent and subtle labels.
+    pub const ROSE_PINE: Self = Self {
+        background: [25, 23, 36],
+        surface: [31, 29, 46],
+        text: [224, 222, 244],
+        muted: [144, 140, 170],
+        border: [82, 79, 103],
+        grid: [64, 61, 82],
+        accent: [235, 188, 186],
+        selected: [64, 61, 82],
+        hover: [38, 35, 58],
+        active: [82, 79, 103],
+        error: [235, 111, 146],
+        weekend: [33, 32, 46],
+        pinned: [40, 32, 47],
+        is_dark: true,
+    };
+
     /// System chooses the existing warm dark/light pair. An optional native
     /// accent is supplied by the adapter only when the user enables it.
     pub fn resolve(
@@ -215,6 +233,7 @@ impl ThemePalette {
             Theme::Gruvbox => Self::GRUVBOX,
             Theme::TokyoNight => Self::TOKYO_NIGHT,
             Theme::Dark => Self::DARK,
+            Theme::RosePine => Self::ROSE_PINE,
             Theme::Custom => custom.map_or(Self::EMBER, Self::custom),
         };
         if let Some(accent) = system_accent {

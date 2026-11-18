@@ -92,15 +92,15 @@ impl ThemePalette {
     pub const NORD: Self = Self {
         background: [46, 52, 64],
         surface: [59, 66, 82],
-        text: [236, 239, 244],
+        text: [216, 222, 233],
         muted: [175, 185, 202],
         border: [101, 115, 136],
         grid: [75, 85, 104],
         accent: [136, 192, 208],
-        selected: [61, 83, 102],
+        selected: [63, 71, 88],
         hover: [67, 76, 94],
         active: [70, 102, 119],
-        error: [230, 149, 155],
+        error: [204, 163, 173],
         weekend: [51, 58, 71],
         pinned: [59, 75, 82],
         is_dark: true,
@@ -114,16 +114,16 @@ impl ThemePalette {
         border: [100, 111, 148],
         grid: [68, 71, 90],
         accent: [189, 147, 249],
-        selected: [72, 55, 100],
+        selected: [68, 71, 90],
         hover: [61, 60, 79],
         active: [87, 62, 120],
-        error: [255, 139, 147],
+        error: [255, 117, 117],
         weekend: [45, 46, 61],
         pinned: [61, 55, 75],
         is_dark: true,
     };
 
-    /// Catppuccin's Mocha base, foreground and mauve accent.
+    /// Catppuccin Mocha's Terminalcolors background, foreground and magenta.
     pub const CATPPUCCIN: Self = Self {
         background: [30, 30, 46],
         surface: [49, 50, 68],
@@ -131,8 +131,8 @@ impl ThemePalette {
         muted: [166, 173, 200],
         border: [108, 112, 134],
         grid: [69, 71, 90],
-        accent: [203, 166, 247],
-        selected: [58, 48, 82],
+        accent: [245, 194, 231],
+        selected: [53, 55, 72],
         hover: [44, 43, 63],
         active: [75, 58, 102],
         error: [243, 139, 168],
@@ -153,7 +153,7 @@ impl ThemePalette {
         selected: [80, 65, 36],
         hover: [55, 51, 44],
         active: [102, 81, 40],
-        error: [251, 140, 122],
+        error: [245, 128, 100],
         weekend: [45, 43, 39],
         pinned: [60, 56, 45],
         is_dark: true,
@@ -195,21 +195,39 @@ impl ThemePalette {
         is_dark: true,
     };
 
-    /// Rosé Pine's main dark palette, with the rose accent and subtle labels.
+    /// Rosé Pine's Terminalcolors default, with its rose accent and subtle labels.
     pub const ROSE_PINE: Self = Self {
-        background: [25, 23, 36],
-        surface: [31, 29, 46],
+        background: [31, 29, 46],
+        surface: [38, 35, 58],
         text: [224, 222, 244],
         muted: [144, 140, 170],
         border: [82, 79, 103],
         grid: [64, 61, 82],
         accent: [235, 188, 186],
-        selected: [64, 61, 82],
+        selected: [47, 44, 64],
         hover: [38, 35, 58],
         active: [82, 79, 103],
         error: [235, 111, 146],
         weekend: [33, 32, 46],
         pinned: [40, 32, 47],
+        is_dark: true,
+    };
+
+    /// Apprentice's gray background and foreground with its bright blue accent.
+    pub const APPRENTICE: Self = Self {
+        background: [38; 3],
+        surface: [44; 3],
+        text: [188; 3],
+        muted: [153; 3],
+        border: [92; 3],
+        grid: [60; 3],
+        accent: [135, 175, 215],
+        selected: [48, 61, 73],
+        hover: [47; 3],
+        active: [54, 72, 90],
+        error: [255, 135, 0],
+        weekend: [42; 3],
+        pinned: [43, 50, 56],
         is_dark: true,
     };
 
@@ -234,6 +252,7 @@ impl ThemePalette {
             Theme::TokyoNight => Self::TOKYO_NIGHT,
             Theme::Dark => Self::DARK,
             Theme::RosePine => Self::ROSE_PINE,
+            Theme::Apprentice => Self::APPRENTICE,
             Theme::Custom => custom.map_or(Self::EMBER, Self::custom),
         };
         if let Some(accent) = system_accent {

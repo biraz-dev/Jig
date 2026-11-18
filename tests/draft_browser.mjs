@@ -32,12 +32,13 @@ async function key(page, value) { await page.keyboard.press(value); await paint(
 async function tab(page, count = 1) { for (let index = 0; index < count; index++) await key(page, "Tab"); }
 async function state(page) { return page.evaluate(key => JSON.parse(localStorage.getItem(key)), storageKey); }
 async function readClipboard(page, expected, exact = false) {
-  await page.waitForFunction(({ expected, exact }) => navigator.clipboard.readText().then(text => exact ? text === expected : text.includes(expected)), { expected, exact });
-  return page.evaluate(async () => {
+  const snapshot = await page.waitForFunction(async ({ expected, exact }) => {
     const items = await navigator.clipboard.read(), output = {};
     for (const item of items) for (const type of item.types) if (["text/plain", "text/html"].includes(type)) output[type] = await (await item.getType(type)).text();
-    return output;
-  });
+    const text = output["text/plain"];
+    return typeof text === "string" && (exact ? text === expected : text.includes(expected)) ? output : false;
+  }, { expected, exact });
+  try { return await snapshot.jsonValue(); } finally { await snapshot.dispose(); }
 }
 async function saved(page, predicate, message) {
   const until = Date.now() + 10000;

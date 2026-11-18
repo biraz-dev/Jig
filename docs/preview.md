@@ -15,7 +15,8 @@ CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 
 The default Ember palette keeps the original charcoal surfaces, warm white text
 and blood-orange accent. Settings also offers Nord, Dracula, neutral dark
-Graphite, Paper, Catppuccin Mocha, Gruvbox Dark, Tokyo Night, System and Custom.
+Graphite, Paper, Catppuccin Mocha, Gruvbox Dark, Tokyo Night, neutral near-black
+Dark, System and Custom.
 Themes cover all browser workspaces,
 including Draft and chart backgrounds, text and controls; task/list colors,
 chart series colors and explicit cell formatting retain their data values.
@@ -175,7 +176,7 @@ Application Undo/Redo remain available through
 their shortcuts; there are no header Undo/Redo buttons or personal/local labels.
 
 **Appearance** offers Ember, Paper, Nord, Dracula, neutral dark Graphite,
-Catppuccin (Mocha), Gruvbox (Dark), Tokyo Night (Night), System
+Catppuccin (Mocha), Gruvbox (Dark), Tokyo Night (Night), neutral near-black Dark, System
 and Custom. Ember preserves Jig's original warm look. System follows the
 browser's light/dark preference, rather than reading a desktop or GTK palette.
 Themes and customization do not require a network connection.

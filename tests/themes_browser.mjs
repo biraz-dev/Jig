@@ -27,14 +27,15 @@ const defaults = { version: 2, theme: "ember", undo_levels: 20, auto_backup: fal
 const palettes = {
   ember: { background: [30, 27, 25], text: [230, 225, 219], accent: [244, 107, 74] },
   paper: { background: [246, 242, 236], text: [49, 43, 39], accent: [175, 64, 38] },
-  nord: { background: [46, 52, 64], text: [236, 239, 244], accent: [136, 192, 208] },
+  nord: { background: [46, 52, 64], text: [216, 222, 233], accent: [136, 192, 208] },
   dracula: { background: [40, 42, 54], text: [248, 248, 242], accent: [189, 147, 249] },
   graphite: { background: [32, 34, 37], text: [226, 228, 232], accent: [128, 185, 176] },
-  catppuccin: { background: [30, 30, 46], text: [205, 214, 244], accent: [203, 166, 247] },
+  catppuccin: { background: [30, 30, 46], text: [205, 214, 244], accent: [245, 194, 231] },
   gruvbox: { background: [40, 40, 40], text: [235, 219, 178], accent: [250, 189, 47] },
   tokyo_night: { background: [26, 27, 38], text: [192, 202, 245], accent: [122, 162, 247] },
   dark: { background: [16, 16, 16], text: [216, 216, 216], accent: [192, 192, 192] },
-  rose_pine: { background: [25, 23, 36], text: [224, 222, 244], accent: [235, 188, 186] },
+  rose_pine: { background: [31, 29, 46], text: [224, 222, 244], accent: [235, 188, 186] },
+  apprentice: { background: [38, 38, 38], text: [188, 188, 188], accent: [135, 175, 215] },
 };
 const custom = { background: [18, 24, 30], surface: [28, 36, 44], text: [224, 231, 238], accent: [233, 151, 91] };
 const contexts = [], issues = [];
@@ -79,7 +80,7 @@ async function closeSettings(scene) {
 async function chooseTheme(scene, name) {
   await openSettings(scene); await tab(scene.page, scene.phone ? 2 : 1); await key(scene.page, "Space");
   // The parent panel and scrolling popup each precede the theme options.
-  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, dark: 12, rose_pine: 13, custom: 14 }[name]);
+  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, dark: 12, rose_pine: 13, apprentice: 14, custom: 15 }[name]);
   await key(scene.page, "Space");
   await waitSettings(scene.page, value => value.version === 2 && value.theme === name, `Selecting ${name} must save its canonical v2 preference`);
   await preserved(scene.page);
@@ -225,12 +226,12 @@ try {
 
   progress("select every named preset through the real Settings menu and verify canvas and Draft colors");
   current = await open("theme-presets"); const header = await selectedDraftHeader(current.page);
-  for (const name of ["nord", "dracula", "graphite", "paper", "ember", "catppuccin", "gruvbox", "tokyo_night", "dark", "rose_pine"]) {
+  for (const name of ["nord", "dracula", "graphite", "paper", "ember", "catppuccin", "gruvbox", "tokyo_night", "dark", "rose_pine", "apprentice"]) {
     await chooseTheme(current, name); await closeSettings(current); await draftPalette(current, palettes[name]);
     await capture(current.page, `theme-${name.replaceAll("_", "-")}`); await boot(current, true); await draftPalette(current, palettes[name]);
     assert.equal((await settings(current.page)).theme, name);
   }
-  for (const name of ["tokyo_night", "dark", "rose_pine"]) {
+  for (const name of ["tokyo_night", "dark", "rose_pine", "apprentice"]) {
     await chooseTheme(current, name); await closeSettings(current); await draftPalette(current, palettes[name]);
     const presetSettings = await exportSettings(current);
     assert.equal(presetSettings.theme, name, "Named presets must use their canonical name in portable settings");
@@ -303,10 +304,10 @@ try {
   progress("fit a custom theme on a touch phone and restore it on reload");
   current = await open("theme-mobile", { ...exported, system_accent: false }, { phone: true });
   await draftPalette(current, custom);
-  for (const name of ["tokyo_night", "dark", "rose_pine"]) {
+  for (const name of ["tokyo_night", "dark", "rose_pine", "apprentice"]) {
     await chooseTheme(current, name); await closeSettings(current); await draftPalette(current, palettes[name]);
     await boot(current, true); await draftPalette(current, palettes[name]);
-    if (["dark", "rose_pine"].includes(name)) await capture(current.page, `theme-${name.replaceAll("_", "-")}-mobile`);
+    if (["dark", "rose_pine", "apprentice"].includes(name)) await capture(current.page, `theme-${name.replaceAll("_", "-")}-mobile`);
   }
   await chooseTheme(current, "custom"); await closeSettings(current); await draftPalette(current, custom);
   const panel = await current.page.locator("#jig-draft-panel").boundingBox();
@@ -316,7 +317,7 @@ try {
   await boot(current, true); await draftPalette(current, custom);
   assert.deepEqual((await settings(current.page)).custom_theme, custom); await preserved(current.page);
   assert.deepEqual(issues, [], "Theme changes must not issue external requests or cause browser errors");
-  console.log("Themes browser checks passed: v1 appearance migration; actual preset selection, canvas/Draft colors and reload including Catppuccin, Gruvbox, Tokyo Night, Dark and Rosé Pine; unchanged task/sheet/chart data and semantic ink; custom HEX editing/validation and retained palettes; preset/custom settings file round trips; OS light/dark and real native-accent fallback; and phone menu selection, fit and reload.");
+  console.log("Themes browser checks passed: v1 appearance migration; actual preset selection, canvas/Draft colors and reload including Catppuccin, Gruvbox, Tokyo Night, Dark, Rosé Pine and Apprentice; audited Terminalcolors anchors with Ember preserved; unchanged task/sheet/chart data and semantic ink; custom HEX editing/validation and retained palettes; preset/custom settings file round trips; OS light/dark and real native-accent fallback; and phone menu selection, fit and reload.");
 } catch (error) {
   console.error(`Themes browser failed during: ${phase}`, error);
   if (current?.page && !current.page.isClosed()) {

@@ -76,7 +76,8 @@ async function closeSettings(scene) {
 }
 async function chooseTheme(scene, name) {
   await openSettings(scene); await tab(scene.page, scene.phone ? 2 : 1); await key(scene.page, "Space");
-  await tab(scene.page, { ember: 2, paper: 3, system: 4, nord: 5, dracula: 6, graphite: 7, catppuccin: 8, gruvbox: 9, tokyo_night: 10, custom: 11 }[name]);
+  // The parent panel and scrolling popup each precede the theme options.
+  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, custom: 12 }[name]);
   await key(scene.page, "Space");
   await waitSettings(scene.page, value => value.version === 2 && value.theme === name, `Selecting ${name} must save its canonical v2 preference`);
   await preserved(scene.page);

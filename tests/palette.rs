@@ -37,7 +37,7 @@ fn version_one_names_keep_their_existing_appearance() {
         ember
     );
 
-    // Adding Rosé Pine must retain existing Nord files and its palette anchors.
+    // Nord keeps its key while its foreground follows the Terminalcolors source.
     let nord = AppSettings::from_json(r#"{"theme":"nord"}"#).unwrap();
     assert_eq!(nord.theme, Theme::Nord);
     assert_eq!(nord.theme.label(), "Nord");
@@ -46,7 +46,7 @@ fn version_one_names_keep_their_existing_appearance() {
     let colors = ThemePalette::resolve(nord.theme, None, true, None);
     assert_eq!(colors, ThemePalette::NORD);
     assert_eq!(colors.background, [46, 52, 64]);
-    assert_eq!(colors.text, [236, 239, 244]);
+    assert_eq!(colors.text, [216, 222, 233]);
     assert_eq!(colors.accent, [136, 192, 208]);
 }
 
@@ -64,6 +64,7 @@ fn presets_are_distinct_and_keep_small_text_readable() {
         Theme::TokyoNight,
         Theme::Dark,
         Theme::RosePine,
+        Theme::Apprentice,
     ] {
         let colors = ThemePalette::resolve(theme, None, true, None);
         assert!(backgrounds.insert(colors.background), "{theme:?}");
@@ -97,12 +98,28 @@ fn presets_are_distinct_and_keep_small_text_readable() {
 fn added_presets_keep_canonical_names_and_standard_anchor_colors() {
     for (theme, name, label, background, text, accent) in [
         (
+            Theme::Nord,
+            "nord",
+            "Nord",
+            [46, 52, 64],
+            [216, 222, 233],
+            [136, 192, 208],
+        ),
+        (
+            Theme::Dracula,
+            "dracula",
+            "Dracula",
+            [40, 42, 54],
+            [248, 248, 242],
+            [189, 147, 249],
+        ),
+        (
             Theme::Catppuccin,
             "catppuccin",
             "Catppuccin",
             [30, 30, 46],
             [205, 214, 244],
-            [203, 166, 247],
+            [245, 194, 231],
         ),
         (
             Theme::Gruvbox,
@@ -124,9 +141,17 @@ fn added_presets_keep_canonical_names_and_standard_anchor_colors() {
             Theme::RosePine,
             "rose_pine",
             "Rosé Pine",
-            [25, 23, 36],
+            [31, 29, 46],
             [224, 222, 244],
             [235, 188, 186],
+        ),
+        (
+            Theme::Apprentice,
+            "apprentice",
+            "Apprentice",
+            [38, 38, 38],
+            [188, 188, 188],
+            [135, 175, 215],
         ),
     ] {
         let json = format!(r#"{{"version":2,"theme":"{name}"}}"#);
@@ -150,6 +175,25 @@ fn added_presets_keep_canonical_names_and_standard_anchor_colors() {
             colors,
             "Explicit dark presets must not follow system light mode"
         );
+    }
+    for (theme, selection) in [
+        (Theme::Nord, [63, 71, 88]),
+        (Theme::Dracula, [68, 71, 90]),
+        (Theme::Catppuccin, [53, 55, 72]),
+        (Theme::TokyoNight, [40, 52, 87]),
+        (Theme::RosePine, [47, 44, 64]),
+    ] {
+        let colors = ThemePalette::resolve(theme, None, true, None);
+        assert_eq!(colors.selected, selection);
+    }
+    assert_eq!(ThemePalette::ROSE_PINE.surface, [38, 35, 58]);
+    for (colors, error) in [
+        (ThemePalette::CATPPUCCIN, [243, 139, 168]),
+        (ThemePalette::TOKYO_NIGHT, [247, 118, 142]),
+        (ThemePalette::ROSE_PINE, [235, 111, 146]),
+        (ThemePalette::APPRENTICE, [255, 135, 0]),
+    ] {
+        assert_eq!(colors.error, error);
     }
 }
 

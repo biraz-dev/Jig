@@ -317,7 +317,7 @@ async function prefix(page) { return 7 + Number((await backupStatus(page)).suppo
 async function chooseTheme(scene, theme) {
   await focusSetting(scene, 1); await key(scene.page, "Space");
   // The parent panel and scrolling popup each precede the theme options.
-  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, dark: 12, rose_pine: 13, apprentice: 14, custom: 15 }[theme]); await key(scene.page, "Space");
+  await tab(scene.page, { apprentice: 3, catppuccin: 4, custom: 5, dark: 6, dracula: 7, ember: 8, graphite: 9, gruvbox: 10, nord: 11, paper: 12, rose_pine: 13, system: 14, tokyo_night: 15 }[theme]); await key(scene.page, "Space");
   await waitSettings(scene.page, { theme });
 }
 async function brightness(page) {
@@ -472,7 +472,7 @@ try {
   await tapSettings(current);
   // A real tap focuses Done. The phone panel's ScrollArea precedes Theme;
   // once open, the parent and popup scroll targets precede its options.
-  await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 4); await key(current.page, "Space");
+  await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 12); await key(current.page, "Space");
   await waitSettings(current.page, { theme: "paper" }); await waitBrightness(current.page, true);
   assert.equal(await raw(current.page), taskRaw); await boot(current, true);
   assert.equal((await settings(current.page)).theme, "paper"); await waitBrightness(current.page, true);

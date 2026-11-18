@@ -275,9 +275,10 @@ PDF/image source bytes are session-only and are not embedded in saved state.
 Open **Settings** between **Charts** and **Help**, or use **Ctrl+,**. It opens a
 full main view; **Done** returns to the workspace. **Appearance** offers **Ember**
 (Jig's original warm dark look), **Paper**, neutral dark **Graphite**, **Nord**,
-**Dracula**, **Catppuccin** (Mocha), **Gruvbox** (Dark), **Tokyo Night** (Night),
-**Dark** (neutral near-black), and **Rosé Pine** (main dark palette). **System**
-follows the browser's light/dark preference.
+**Dracula**, **Catppuccin** (Mocha), **Gruvbox** (Dark), **Tokyo Night** (Default),
+**Dark** (neutral near-black), **Rosé Pine** (Default), and **Apprentice** (Default).
+The community presets follow their [Terminalcolors variants](docs/preview.md#application-settings).
+**System** follows the browser's light/dark preference.
 
 Expand **Customize colors** at the end of Settings to edit background, surface,
 text and accent with `#RRGGBB` values or a color picker. Choose **Custom** to use

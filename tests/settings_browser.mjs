@@ -316,8 +316,8 @@ async function focusedRecoveryPoint(page, footer = false) {
 async function prefix(page) { return 7 + Number((await backupStatus(page)).supported); }
 async function chooseTheme(scene, theme) {
   await focusSetting(scene, 1); await key(scene.page, "Space");
-  // The ComboBox's popup scroll target precedes the theme options.
-  await tab(scene.page, { ember: 2, paper: 3, system: 4, nord: 5, dracula: 6, graphite: 7, catppuccin: 8, gruvbox: 9, tokyo_night: 10, custom: 11 }[theme]); await key(scene.page, "Space");
+  // The parent panel and scrolling popup each precede the theme options.
+  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, custom: 12 }[theme]); await key(scene.page, "Space");
   await waitSettings(scene.page, { theme });
 }
 async function brightness(page) {

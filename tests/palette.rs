@@ -47,6 +47,9 @@ fn presets_are_distinct_and_keep_small_text_readable() {
         Theme::Nord,
         Theme::Dracula,
         Theme::Graphite,
+        Theme::Catppuccin,
+        Theme::Gruvbox,
+        Theme::TokyoNight,
     ] {
         let colors = ThemePalette::resolve(theme, None, true, None);
         assert!(backgrounds.insert(colors.background), "{theme:?}");
@@ -73,6 +76,58 @@ fn presets_are_distinct_and_keep_small_text_readable() {
         assert_ne!(colors.selected, colors.background);
         assert_ne!(colors.active, colors.hover);
         assert_eq!(colors.is_dark, theme != Theme::Paper);
+    }
+}
+
+#[test]
+fn added_presets_keep_canonical_names_and_standard_anchor_colors() {
+    for (theme, name, label, background, text, accent) in [
+        (
+            Theme::Catppuccin,
+            "catppuccin",
+            "Catppuccin",
+            [30, 30, 46],
+            [205, 214, 244],
+            [203, 166, 247],
+        ),
+        (
+            Theme::Gruvbox,
+            "gruvbox",
+            "Gruvbox",
+            [40, 40, 40],
+            [235, 219, 178],
+            [250, 189, 47],
+        ),
+        (
+            Theme::TokyoNight,
+            "tokyo_night",
+            "Tokyo Night",
+            [26, 27, 38],
+            [192, 202, 245],
+            [122, 162, 247],
+        ),
+    ] {
+        let json = format!(r#"{{"version":2,"theme":"{name}"}}"#);
+        let settings = AppSettings::from_json(&json).unwrap();
+        assert_eq!(settings.theme, theme);
+        assert_eq!(theme.label(), label);
+        assert_eq!(
+            Theme::ALL.iter().filter(|choice| **choice == theme).count(),
+            1
+        );
+        assert_eq!(serde_json::to_value(&settings).unwrap()["theme"], name);
+        let colors = ThemePalette::resolve(theme, None, true, None);
+        assert_eq!(colors.background, background);
+        assert_eq!(colors.text, text);
+        assert_eq!(colors.accent, accent);
+        for background in [colors.background, colors.surface] {
+            assert!(contrast(colors.error, background) >= 4.5, "{theme:?}");
+        }
+        assert_eq!(
+            ThemePalette::resolve(theme, None, false, None),
+            colors,
+            "Explicit dark presets must not follow system light mode"
+        );
     }
 }
 

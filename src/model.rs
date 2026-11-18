@@ -922,14 +922,32 @@ impl State {
         date: NaiveDate,
         timezone: &Tz,
     ) -> Vec<CalendarTask<'_>> {
-        self.deadlines
+        let deadlines: Vec<_> = self
+            .deadlines
             .iter()
             .filter(|deadline| deadline.at.with_timezone(timezone).date_naive() == date)
+            .collect();
+        // Empty and single-deadline dates need no index. On crowded dates,
+        // find each owner once instead of scanning all tasks for every row.
+        let owners = (deadlines.len() > 1).then(|| {
+            let mut owners = HashMap::new();
+            for task in &self.tasks {
+                if let Some(id) = task.deadline {
+                    owners.entry(id).or_insert(task);
+                }
+            }
+            owners
+        });
+        deadlines
+            .into_iter()
             .map(|deadline| {
-                let task = self
-                    .tasks
-                    .iter()
-                    .find(|task| task.deadline == Some(deadline.id));
+                let task = match &owners {
+                    Some(owners) => owners.get(&deadline.id).copied(),
+                    None => self
+                        .tasks
+                        .iter()
+                        .find(|task| task.deadline == Some(deadline.id)),
+                };
                 CalendarTask {
                     task_id: task.map(|task| task.id),
                     list_id: task.map_or_else(|| self.default_list_id(), |task| task.list_id),

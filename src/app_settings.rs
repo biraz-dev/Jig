@@ -20,11 +20,12 @@ pub enum Theme {
     Catppuccin,
     Gruvbox,
     TokyoNight,
+    Dark,
     Custom,
 }
 
 impl Theme {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Ember,
         Self::Paper,
         Self::System,
@@ -34,6 +35,7 @@ impl Theme {
         Self::Catppuccin,
         Self::Gruvbox,
         Self::TokyoNight,
+        Self::Dark,
         Self::Custom,
     ];
 
@@ -48,6 +50,7 @@ impl Theme {
             Self::Catppuccin => "Catppuccin",
             Self::Gruvbox => "Gruvbox",
             Self::TokyoNight => "Tokyo Night",
+            Self::Dark => "Dark",
             Self::Custom => "Custom",
         }
     }

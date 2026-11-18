@@ -470,9 +470,9 @@ try {
   current = await open("settings-mobile", { phone: true });
   await checkInfoPage(current, 1, "About"); await checkInfoPage(current, 4, "Help");
   await tapSettings(current);
-  // A real tap must open Settings and focus Done. The overflowing phone
-  // ScrollArea contributes one Tab stop before its Theme control.
-  await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 3); await key(current.page, "Space");
+  // A real tap focuses Done. The phone panel's ScrollArea precedes Theme;
+  // once open, the parent and popup scroll targets precede its options.
+  await tab(current.page, 2); await key(current.page, "Space"); await tab(current.page, 4); await key(current.page, "Space");
   await waitSettings(current.page, { theme: "paper" }); await waitBrightness(current.page, true);
   assert.equal(await raw(current.page), taskRaw); await boot(current, true);
   assert.equal((await settings(current.page)).theme, "paper"); await waitBrightness(current.page, true);

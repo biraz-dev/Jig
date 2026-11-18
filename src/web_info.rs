@@ -150,7 +150,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
     section(
         ui,
         "Themes",
-        "Settings offers Ember (the original warm look), Paper, neutral Graphite, Nord, Dracula, Catppuccin (Mocha), Gruvbox (Dark), Tokyo Night (Night), neutral near-black Dark, System and Custom. System follows the browser's light/dark preference. Expand Customize colors at the end of Settings to set background, surface, text and accent with hex values or a color picker. Choose Custom to use them; selecting a preset keeps your custom palette.",
+        "Settings offers Ember (the original warm look), Paper, neutral Graphite, Nord, Dracula, Catppuccin (Mocha), Gruvbox (Dark), Tokyo Night (Night), neutral near-black Dark, Rosé Pine (main dark palette), System and Custom. System follows the browser's light/dark preference. Expand Customize colors at the end of Settings to set background, surface, text and accent with hex values or a color picker. Choose Custom to use them; selecting a preset keeps your custom palette.",
     );
     ui.label("Optional system accent uses the browser's CSS AccentColor when available, with your chosen accent as the fallback. Manual controls remain available; browsers cannot read a full desktop theme. Themes apply to all browser workspaces, including Draft, without changing stored task/list, chart series or cell colors. PDF pages stay white. Settings export carries your theme separately from document data.");
     section(

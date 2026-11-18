@@ -276,8 +276,8 @@ Open **Settings** between **Charts** and **Help**, or use **Ctrl+,**. It opens a
 full main view; **Done** returns to the workspace. **Appearance** offers **Ember**
 (Jig's original warm dark look), **Paper**, neutral dark **Graphite**, **Nord**,
 **Dracula**, **Catppuccin** (Mocha), **Gruvbox** (Dark), **Tokyo Night** (Night),
-and **Dark** (neutral near-black). **System** follows the browser's light/dark
-preference.
+**Dark** (neutral near-black), and **Rosé Pine** (main dark palette). **System**
+follows the browser's light/dark preference.
 
 Expand **Customize colors** at the end of Settings to edit background, surface,
 text and accent with `#RRGGBB` values or a color picker. Choose **Custom** to use

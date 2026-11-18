@@ -28,6 +28,13 @@ impl Store {
         let path = parent
             .canonicalize()?
             .join(path.file_name().ok_or("State path needs a filename")?);
+        // Existing aliases must share a lock and keep atomic saves on the target.
+        // A dangling symlink fails canonicalization rather than being replaced.
+        let path = match fs::symlink_metadata(&path) {
+            Ok(_) => path.canonicalize()?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
+            Err(error) => return Err(error.into()),
+        };
         let lock = append_suffix(&path, ".lock");
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -130,6 +137,57 @@ mod tests {
         fs::remove_file(append_suffix(&first.path, ".tmp")).unwrap();
         first.save(&state).unwrap();
         drop((first, second, third));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_state_uses_the_target_lock_and_preserves_the_alias_on_save() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("jig-symlink-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("state.json");
+        let alias = dir.join("alias.json");
+        {
+            let store = Store::open(target.clone()).unwrap();
+            let mut state = State::default();
+            state.add_task("Original").unwrap();
+            store.save(&state).unwrap();
+            symlink("state.json", &alias).unwrap();
+            assert!(Store::open(alias.clone()).is_err());
+        }
+        {
+            let store = Store::open(alias.clone()).unwrap();
+            assert!(Store::open(target.clone()).is_err());
+            let mut state = store.load().unwrap();
+            state.add_task("Through the alias").unwrap();
+            store.save(&state).unwrap();
+            assert_eq!(fs::read_link(&alias).unwrap(), Path::new("state.json"));
+            let saved = State::from_json(&fs::read_to_string(&target).unwrap()).unwrap();
+            assert_eq!(saved.tasks.len(), 2);
+            assert_eq!(saved.tasks[1].text, "Through the alias");
+        }
+        let store = Store::open(target).unwrap();
+        assert_eq!(store.load().unwrap().tasks.len(), 2);
+        drop(store);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_state_symlink_is_rejected_without_creating_sidecars() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("jig-dangling-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let alias = dir.join("alias.json");
+        symlink("missing.json", &alias).unwrap();
+        assert!(Store::open(alias.clone()).is_err());
+        assert_eq!(fs::read_link(&alias).unwrap(), Path::new("missing.json"));
+        assert!(!dir.join("missing.json").exists());
+        assert!(!append_suffix(&alias, ".lock").exists());
+        assert!(!append_suffix(&alias, ".tmp").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 }

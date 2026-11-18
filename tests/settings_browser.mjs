@@ -317,7 +317,7 @@ async function prefix(page) { return 7 + Number((await backupStatus(page)).suppo
 async function chooseTheme(scene, theme) {
   await focusSetting(scene, 1); await key(scene.page, "Space");
   // The ComboBox's popup scroll target precedes the theme options.
-  await tab(scene.page, { ember: 2, paper: 3, system: 4, nord: 5, dracula: 6, graphite: 7, custom: 8 }[theme]); await key(scene.page, "Space");
+  await tab(scene.page, { ember: 2, paper: 3, system: 4, nord: 5, dracula: 6, graphite: 7, catppuccin: 8, gruvbox: 9, tokyo_night: 10, custom: 11 }[theme]); await key(scene.page, "Space");
   await waitSettings(scene.page, { theme });
 }
 async function brightness(page) {

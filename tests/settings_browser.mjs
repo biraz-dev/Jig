@@ -317,7 +317,7 @@ async function prefix(page) { return 7 + Number((await backupStatus(page)).suppo
 async function chooseTheme(scene, theme) {
   await focusSetting(scene, 1); await key(scene.page, "Space");
   // The parent panel and scrolling popup each precede the theme options.
-  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, dark: 12, rose_pine: 13, custom: 14 }[theme]); await key(scene.page, "Space");
+  await tab(scene.page, { ember: 3, paper: 4, system: 5, nord: 6, dracula: 7, graphite: 8, catppuccin: 9, gruvbox: 10, tokyo_night: 11, dark: 12, rose_pine: 13, apprentice: 14, custom: 15 }[theme]); await key(scene.page, "Space");
   await waitSettings(scene.page, { theme });
 }
 async function brightness(page) {

@@ -177,6 +177,24 @@ impl ThemePalette {
         is_dark: true,
     };
 
+    /// Neutral charcoal surfaces and gray accents, with red reserved for errors.
+    pub const DARK: Self = Self {
+        background: [16; 3],
+        surface: [25; 3],
+        text: [216; 3],
+        muted: [158; 3],
+        border: [72; 3],
+        grid: [43; 3],
+        accent: [192; 3],
+        selected: [39; 3],
+        hover: [30; 3],
+        active: [53; 3],
+        error: [236, 147, 147],
+        weekend: [20; 3],
+        pinned: [29; 3],
+        is_dark: true,
+    };
+
     /// System chooses the existing warm dark/light pair. An optional native
     /// accent is supplied by the adapter only when the user enables it.
     pub fn resolve(
@@ -196,6 +214,7 @@ impl ThemePalette {
             Theme::Catppuccin => Self::CATPPUCCIN,
             Theme::Gruvbox => Self::GRUVBOX,
             Theme::TokyoNight => Self::TOKYO_NIGHT,
+            Theme::Dark => Self::DARK,
             Theme::Custom => custom.map_or(Self::EMBER, Self::custom),
         };
         if let Some(accent) = system_accent {

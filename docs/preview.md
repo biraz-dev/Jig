@@ -16,7 +16,7 @@ CSV exchanges evaluated cells, and PDF prints sheets and chart pages. See the
 The default Ember palette keeps the original charcoal surfaces, warm white text
 and blood-orange accent. Settings also offers Nord, Dracula, neutral dark
 Graphite, Paper, Catppuccin Mocha, Gruvbox Dark, Tokyo Night, neutral near-black
-Dark, Rosé Pine, System and Custom.
+Dark, Rosé Pine, Apprentice, System and Custom.
 Themes cover all browser workspaces,
 including Draft and chart backgrounds, text and controls; task/list colors,
 chart series colors and explicit cell formatting retain their data values.
@@ -176,10 +176,29 @@ Application Undo/Redo remain available through
 their shortcuts; there are no header Undo/Redo buttons or personal/local labels.
 
 **Appearance** offers Ember, Paper, Nord, Dracula, neutral dark Graphite,
-Catppuccin (Mocha), Gruvbox (Dark), Tokyo Night (Night), neutral near-black Dark,
-Rosé Pine, System and Custom. Ember preserves Jig's original warm look. System
-follows the browser's light/dark preference, rather than reading a desktop or GTK palette.
+Catppuccin (Mocha), Gruvbox (Dark), Tokyo Night (Default), neutral near-black Dark,
+Rosé Pine (Default), Apprentice (Default), System and Custom. Ember preserves
+Jig's original warm look. System follows the browser's light/dark preference,
+rather than reading a desktop or GTK palette.
 Themes and customization do not require a network connection.
+
+Community presets use the background and foreground from these Terminalcolors
+entries, with accents chosen from the same palettes:
+
+| Preset | Terminalcolors variant |
+| --- | --- |
+| Nord | [Default](https://terminalcolors.com/themes/nord/default/) |
+| Dracula | [Default](https://terminalcolors.com/themes/dracula/default/) |
+| Catppuccin | [Mocha](https://terminalcolors.com/themes/catppuccin/mocha/) |
+| Gruvbox | [Dark](https://terminalcolors.com/themes/gruvbox/dark/) |
+| Tokyo Night | [Default](https://terminalcolors.com/themes/tokyo-night/default/) |
+| Rosé Pine | [Default](https://terminalcolors.com/themes/rose-pine/default/) |
+| Apprentice | [Default](https://terminalcolors.com/themes/apprentice/default/) |
+
+Jig adapts supporting surfaces, muted labels and warnings for readable controls.
+Bright terminal selections are tinted down where Jig uses a shared foreground.
+Ember, Paper, Graphite and Dark remain Jig's own palettes; System and Custom keep
+their existing behavior. All preset values are bundled for offline use.
 
 **Customize colors** is collapsed at the end of Settings. Its background,
 surface, text and accent controls accept hex values or a color picker. Select

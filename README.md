@@ -384,6 +384,10 @@ Tasks, their dates and the featured countdown are preserved.
 
 New tasks go into the active list. The task editor can move an existing task to
 another list. Reorder and clear-completed actions apply to the visible lists.
+**Move all completed** opens a destination-list picker for the selected lists.
+Choose a list to move their completed tasks in one action; dates, colors, details
+and completion status stay with each task. **Undo** restores their original lists.
+The move saves automatically and is included in JSON and Jig ODS backups.
 Sort places open tasks with the earliest due dates first, keeps undated tasks
 in their current relative order below them, and moves completed tasks to the
 bottom. Matching due dates retain their order. Sorting affects the selected

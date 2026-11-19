@@ -105,6 +105,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
         "Add work in Add new task. The checkbox completes it; the star features a dated task in the countdown. Drag task handles to reorder. Sort places open dated tasks first, undated tasks next and completed tasks last.",
     );
     ui.label("Keep up to five lists. + adds a list; double-click a tab name to rename it. Shift-click tabs, or use Multi on touchscreens, to show several lists together. New tasks go into the active list. Click − twice, or choose Remove after the first click, to remove a list and move its tasks into the remaining list. Cancel or Esc dismisses the question. The last list stays.");
+    ui.label("Move all completed lets you choose a destination for completed tasks in the selected lists, including Multi views. Dates, colors and details stay with each task. The move saves automatically; Undo restores the original lists.");
     section(
         ui,
         "Dates and calendar",

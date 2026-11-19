@@ -155,21 +155,21 @@ async function renameList(scene, index, name) {
   await key(scene.page, "Enter");
   await scene.page.waitForFunction(({ key, index, name }) => JSON.parse(localStorage.getItem(key)).task_lists?.[index]?.name === name, { key: storageKey, index, name });
 }
-async function focusedControlPoint(page, limit = 180, minHeight = 10, fill = [77, 49, 39]) {
+async function focusedControlPoint(page, limit = 180, minHeight = 10, fill = [77, 49, 39], options = {}) {
   const until = Date.now() + 2000;
   let point;
   do {
-    point = await readFocusedControlPoint(page, limit, minHeight, fill);
+    point = await readFocusedControlPoint(page, limit, minHeight, fill, options);
     if (point) return point;
     await paint(page);
   } while (Date.now() < until);
   assert.ok(point, "A focused list control must be visibly identifiable for touch/cap checks");
 }
-async function readFocusedControlPoint(page, limit, minHeight, fill = [77, 49, 39]) {
+async function readFocusedControlPoint(page, limit, minHeight, fill = [77, 49, 39], options = {}) {
   // The ordinary keyboard-focused button has Jig's active graphite fill.
   // Read its visible pixels; no Rust/widget state is exposed to this driver.
   const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
-  const point = await page.evaluate(async ({ encoded, limit, minHeight, fill }) => {
+  const point = await page.evaluate(async ({ encoded, limit, minHeight, fill, options }) => {
     const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
     const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
@@ -190,7 +190,10 @@ async function readFocusedControlPoint(page, limit, minHeight, fill = [77, 49, 3
           if (!seen[next] && matches(next)) { seen[next] = 1; stack.push(next); }
         }
       }
-      if (r.count > 100 && r.bottom - r.top >= minHeight && r.bottom - r.top <= 40 && r.right - r.left < 180) regions.push(r);
+      const owner = options.exclude;
+      const overlapsOwner = owner && r.left <= owner.right && r.right >= owner.left && r.top <= owner.bottom && r.bottom >= owner.top;
+      if (!overlapsOwner && r.count > 100 && r.bottom - r.top >= minHeight && r.bottom - r.top <= 40
+        && r.right - r.left < (options.maxWidth ?? 180)) regions.push(r);
     }
     const r = regions.sort((a, b) => a.top - b.top || b.count - a.count)[0];
     if (r) {
@@ -210,7 +213,7 @@ async function readFocusedControlPoint(page, limit, minHeight, fill = [77, 49, 3
     }
     bitmap.close();
     return r ? { ...r, x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
-  }, { encoded: png.toString("base64"), limit, minHeight, fill });
+  }, { encoded: png.toString("base64"), limit, minHeight, fill, options });
   return point;
 }
 async function bars(page) {
@@ -313,6 +316,26 @@ async function focusSort(scene, selectedLists = [1]) {
   await tab(scene.page, 2 + bulkDelete); // +, optional existing delete button, Sort.
   await scene.page.waitForTimeout(200); await paint(scene.page);
   return focusedControlPoint(scene.page, scene.page.viewportSize().height - 25);
+}
+async function focusMoveDestination(scene, target, selectedLists = [1], method = "keyboard") {
+  await focusSort(scene, selectedLists);
+  await tab(scene.page); // Move all completed follows Sort.
+  const viewport = scene.page.viewportSize();
+  const owner = await focusedControlPoint(scene.page, viewport.height - 25, 10, [77, 49, 39], { maxWidth: viewport.width - 12 });
+  if (method === "touch") await scene.page.touchscreen.tap(owner.x, owner.y);
+  else if (method === "mouse") await scene.page.mouse.click(owner.x, owner.y);
+  else await key(scene.page, "Space");
+  await paint(scene.page);
+  const data = await state(scene.page);
+  const eligible = (await lists(scene)).filter(list => data.tasks.some(task => task.complete
+    && selectedLists.includes(task.list_id ?? 1) && (task.list_id ?? 1) !== list.id));
+  const index = eligible.findIndex(list => list.id === target);
+  assert.ok(index >= 0, "The chosen list must have completed tasks to receive");
+  await tab(scene.page, index + 2); // Popup Area, then destinations; disabled zero counts are skipped.
+  const item = await focusedControlPoint(scene.page, viewport.height - 2, 10, [77, 49, 39], { exclude: owner, maxWidth: viewport.width - 12 });
+  assert.ok(item.left > 0 && item.right < viewport.width - 2 && item.top >= 42 && item.bottom < viewport.height - 2,
+    "The complete destination target must remain visible, including on a phone");
+  return { owner, item };
 }
 async function undo(scene, expected) {
   await key(scene.page, "Escape"); await key(scene.page, "Control+z");
@@ -740,6 +763,100 @@ try {
   await undo(current, phoneSort);
   await current.context.close();
 
+  progress("move completed tasks to a chosen list without changing their records or the visible list");
+  const completedLists = {
+    ...structuredClone(fixture),
+    tasks: [
+      { ...structuredClone(fixture.tasks[0]), complete: true, details: "Sample: cast studies\nKeep the full firing notes." },
+      { ...structuredClone(fixture.tasks[1]), complete: true },
+      structuredClone(fixture.tasks[2]),
+      { id: 4, text: "Sample: unfinished studio work", complete: false, deadline: 104, color: "rose", start: "2026-10-26T12:00:00Z", details: "Sample: this open task must stay here." },
+      { id: 5, text: "Sample: completed undated work", complete: true, color: "blue", details: "Sample: keep this useful reference." },
+      { id: 6, text: "Sample: completed hidden work", complete: true, list_id: 3, deadline: 106, color: "sage", start: "2026-10-26T12:00:00Z" },
+    ],
+    deadlines: [
+      ...structuredClone(fixture.deadlines),
+      { id: 104, title: "Sample: unfinished studio work", at: "2026-10-30T18:00:00Z" },
+      { id: 106, title: "Sample: completed hidden work", at: "2026-10-30T18:00:00Z" },
+    ],
+    notes: [{ id: 401, text: "Sample: unrelated pinned note", pinned: true }],
+  };
+  const moveMembership = (data, ids, list) => {
+    const moved = structuredClone(data);
+    for (const task of moved.tasks) if (ids.includes(task.id)) {
+      if (list === 1) delete task.list_id; // The portable format omits the default list.
+      else task.list_id = list;
+    }
+    return moved;
+  };
+  const movedCompleted = moveMembership(completedLists, [1, 5], 2);
+  current = await open("task-lists-move-completed", completedLists);
+  const beforeMenu = await raw(current.page);
+  await focusMoveDestination(current, 2);
+  await key(current.page, "Escape");
+  assert.equal(await raw(current.page), beforeMenu, "Opening and cancelling the destination menu must not write or move anything");
+  const destination = await focusMoveDestination(current, 2, [1], "mouse");
+  await capture(current.page, "task-lists-move-completed");
+  await current.page.mouse.click(destination.item.x, destination.item.y); await paint(current.page);
+  await expectState(current.page, movedCompleted, "Only completed Studio tasks must change list ID; exact dates, details, colors, record order, hidden tasks and the featured countdown must stay intact");
+  await expectBars(current.page, ["rose"]); // Studio's unfinished task remains visible.
+  await undo(current, completedLists);
+  await key(current.page, "Control+z");
+  await expectState(current.page, completedLists, "Menu opening/cancellation and a bulk move must create exactly one Undo entry");
+  await key(current.page, "Control+Shift+z");
+  await expectState(current.page, movedCompleted, "Redo must restore the entire completed-task move together");
+  await boot(current, true);
+  await expectState(current.page, movedCompleted, "Moved list membership and all linked records must survive refresh");
+  const movedExport = await exportData(current);
+  assert.deepEqual(movedExport, movedCompleted, "JSON export must contain the original records with only the intended membership changes");
+  for (const data of [completedLists, movedExport]) {
+    const beforeImport = await state(current.page);
+    await current.page.locator("#jig-import").setInputFiles({ name: "sample-moved-completed.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
+    await current.page.waitForTimeout(1200);
+    await expectState(current.page, beforeImport, "Choosing a completed-task backup must still wait for confirmation");
+    await resetTasks(current); await tab(current.page, 6); await key(current.page, "Space");
+    await expectState(current.page, data, "Import must restore exact completed-task membership and metadata");
+  }
+  await boot(current, true); await expectState(current.page, movedCompleted);
+  await current.context.close();
+
+  progress("move completed work from combined lists, including a destination already selected");
+  current = await open("task-lists-move-combined", completedLists);
+  await selectList(current, 1, true);
+  await focusMoveDestination(current, 3, [1, 2]);
+  await key(current.page, "Space");
+  const movedCombined = moveMembership(completedLists, [1, 2, 5], 3);
+  await expectState(current.page, movedCombined, "A combined move must include both selected sources, preserve an existing destination task, and leave all open tasks unchanged");
+  await expectBars(current.page, ["rose"]); // Keep the selected sources and featured task independent.
+  await undo(current, completedLists);
+  await focusMoveDestination(current, 2, [1, 2]);
+  await key(current.page, "Space");
+  await expectState(current.page, movedCompleted, "Choosing an already selected destination must skip its completed tasks without duplicating them");
+  await undo(current, completedLists);
+  await selectList(current, 1);
+  await focusMoveDestination(current, 1, [2]);
+  await key(current.page, "Space");
+  const movedToDefault = moveMembership(completedLists, [2], 1);
+  await expectState(current.page, movedToDefault, "Moving completed work back to the default list must use its canonical omitted list ID and retain exact metadata");
+  await undo(current, completedLists);
+  await key(current.page, "Control+Shift+z"); await expectState(current.page, movedToDefault);
+  await boot(current, true); await expectState(current.page, movedToDefault);
+  await current.context.close();
+
+  progress("move completed work using the phone's touch destination picker");
+  const phoneCompleted = structuredClone(completedLists);
+  phoneCompleted.task_lists[2].name = "Finished sculptures and studio preparation reference archive";
+  current = await open("task-lists-move-mobile", phoneCompleted, true);
+  const touchDestination = await focusMoveDestination(current, 3, [1], "touch");
+  await capture(current.page, "task-lists-move-completed-mobile");
+  await current.page.touchscreen.tap(touchDestination.item.x, touchDestination.item.y); await paint(current.page);
+  const movedPhone = moveMembership(phoneCompleted, [1, 5], 3);
+  await expectState(current.page, movedPhone, "A real touch must move the same completed records to the chosen list without changing open or hidden work");
+  await undo(current, phoneCompleted);
+  await key(current.page, "Control+Shift+z"); await expectState(current.page, movedPhone);
+  await boot(current, true); await expectState(current.page, movedPhone);
+  await current.context.close();
+
   progress("delete completed work only from the selected list and undo it");
   const bulk = structuredClone(fixture); bulk.tasks[0].complete = true; bulk.tasks[1].complete = true;
   current = await open("task-lists-bulk", bulk);
@@ -754,7 +871,7 @@ try {
   await current.context.close();
 
   assert.deepEqual(issues, [], "Task-list changes must stay local and produce no app errors");
-  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, stable scoped due-date sorting via mouse/keyboard/touch with single Undo and reload/JSON round trips, without featured changes.");
+  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, stable scoped due-date sorting, and completed-task moves to chosen lists through mouse/keyboard/touch with menu cancellation, single/Multi scope, selected destinations, preserved records and featured work, atomic Undo/Redo, refresh and JSON round trips.");
 } catch (error) {
   console.error(`Task-list browser checks failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "task-lists-failure").catch(() => {});

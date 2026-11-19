@@ -3319,6 +3319,141 @@ impl BrowserApp {
         }
     }
 
+    fn move_completed_tasks_to_list(&mut self, target: u64, ctx: &egui::Context) {
+        if self.pending_task_input.is_some() {
+            self.status = "Finish the current task input before moving completed tasks.".into();
+            return;
+        }
+        let moves_task = |id| {
+            self.state.tasks.iter().any(|task| {
+                task.id == id
+                    && task.complete
+                    && self.selected_task_lists.contains(&task.list_id)
+                    && task.list_id != target
+            })
+        };
+        let move_task_editor = self.task_edit.is_some_and(moves_task);
+        let move_date_editor = self.task_date_edit.is_some_and(moves_task);
+        let move_color_editor = self.task_color_edit.is_some_and(|deadline| {
+            self.state
+                .tasks
+                .iter()
+                .find(|task| task.deadline == Some(deadline))
+                .is_some_and(|task| moves_task(task.id))
+        });
+        if move_task_editor && self.has_task_draft() {
+            self.status = "Save or cancel the task edit before moving that completed task.".into();
+            return;
+        }
+        if move_date_editor && self.has_schedule_draft() {
+            self.status = "Save or cancel the date edit before moving that completed task.".into();
+            return;
+        }
+        self.cancel_task_note_drag(ctx);
+        self.timeline.cancel_gesture();
+        match self
+            .state
+            .move_completed_tasks_in_lists(&self.selected_task_lists, target)
+        {
+            Ok(0) => {}
+            Ok(_) => {
+                // A clean editor still points at the old list. Close it rather
+                // than letting a later Save move the task back inadvertently.
+                if move_task_editor {
+                    self.task_edit = None;
+                    self.task_edit_original = None;
+                    self.task_edit_list = None;
+                    self.task_text.clear();
+                    self.task_details.clear();
+                    self.focus_task_input = false;
+                }
+                if move_date_editor {
+                    self.close_task_dates();
+                }
+                if move_color_editor {
+                    self.task_color_edit = None;
+                }
+                self.confirm_clear_completed = false;
+                self.changed();
+                ctx.request_repaint();
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn move_completed_menu(&mut self, ui: &mut Ui, completed: usize) {
+        let enabled = completed > 0 && self.state.task_lists.len() > 1;
+        let popup = egui::Id::new("move-completed-menu");
+        let response = ui
+            .push_id("move-completed-button", |ui| {
+                ui.add_enabled(enabled, egui::Button::new("Move all completed").small())
+            })
+            .inner
+            .on_hover_text(
+                "Move completed tasks from the selected lists. Undo restores their lists.",
+            )
+            .on_disabled_hover_text(if completed == 0 {
+                "There are no completed tasks in the selected lists."
+            } else {
+                "Add another task list to move completed tasks."
+            });
+        if response.gained_focus() {
+            response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+        }
+        if response.clicked() {
+            self.confirm_clear_completed = false;
+            ui.memory_mut(|memory| memory.toggle_popup(popup));
+        }
+        if !enabled && ui.memory(|memory| memory.is_popup_open(popup)) {
+            ui.memory_mut(|memory| memory.close_popup());
+        }
+        let mut target = None;
+        egui::popup::popup_below_widget(
+            ui,
+            popup,
+            &response,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_width(
+                    response
+                        .rect
+                        .width()
+                        .max(220.0)
+                        .min((ui.ctx().screen_rect().width() - 32.0).max(80.0)),
+                );
+                for list in &self.state.task_lists {
+                    let count = self
+                        .state
+                        .tasks
+                        .iter()
+                        .filter(|task| {
+                            task.complete
+                                && self.selected_task_lists.contains(&task.list_id)
+                                && task.list_id != list.id
+                        })
+                        .count();
+                    if ui
+                        .add_enabled(
+                            count > 0,
+                            egui::Button::new(format!("{} ({count})", list.name))
+                                .truncate()
+                                .min_size(egui::vec2(ui.available_width(), 30.0)),
+                        )
+                        .on_hover_text(&list.name)
+                        .clicked()
+                    {
+                        target = Some(list.id);
+                        ui.memory_mut(|memory| memory.close_popup());
+                        response.request_focus();
+                    }
+                }
+            },
+        );
+        if let Some(target) = target {
+            self.move_completed_tasks_to_list(target, ui.ctx());
+        }
+    }
+
     fn tasks(&mut self, ui: &mut Ui) -> Vec<TaskDropRow> {
         let palette = web_theme::colors(ui.ctx());
         let task_deadlines: std::collections::HashSet<_> = self
@@ -3829,6 +3964,7 @@ impl BrowserApp {
             if sort.clicked() {
                 self.sort_visible_tasks(ui.ctx());
             }
+            self.move_completed_menu(ui, completed);
         });
         self.drag_auto_scroll(ui);
         targets

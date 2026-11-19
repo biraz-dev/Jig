@@ -312,6 +312,11 @@ tasks, and moves completed tasks to the bottom. Equal due dates retain their
 order. The Gantt follows the same saved order; one Undo restores it. Sorting is
 explicit, so manual ordering still works afterward. Sort can also link older
 standalone deadline rows on request, reusing their existing deadline IDs.
+**Move all completed** opens a menu of destination lists, with a count of tasks
+that would move to each. It acts on the selected lists, including Multi views.
+Choosing a destination saves one undoable move, preserving task order, dates,
+colors, details and completion status. Tasks already in the destination stay
+there. Save or cancel an unfinished edit to an affected task before moving it.
 Tasks may have a due date; a star chooses the featured countdown and reveals its
 date in the calendar. Starring an undated task opens its date editor first.
 Completing a task clears its star and subdues its calendar mark; removing a task

@@ -756,6 +756,28 @@ impl State {
         Ok(())
     }
 
+    /// Move completed work from the selected lists without changing task order
+    /// or linked records. Tasks already in the destination are not counted.
+    pub fn move_completed_tasks_in_lists(
+        &mut self,
+        list_ids: &[u64],
+        target: u64,
+    ) -> Result<usize> {
+        if self.task_list(target).is_none()
+            || list_ids.iter().any(|id| self.task_list(*id).is_none())
+        {
+            return Err("Task list not found".into());
+        }
+        let mut moved = 0;
+        for task in &mut self.tasks {
+            if task.complete && task.list_id != target && list_ids.contains(&task.list_id) {
+                task.list_id = target;
+                moved += 1;
+            }
+        }
+        Ok(moved)
+    }
+
     pub fn add_task(&mut self, text: &str) -> Result<u64> {
         self.add_task_to_list(self.default_list_id(), text)
     }

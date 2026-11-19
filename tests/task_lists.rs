@@ -179,6 +179,168 @@ fn scoped_completed_clear_keeps_hidden_lists_and_reuses_deadline_records() {
 }
 
 #[test]
+fn completed_moves_preserve_records_and_restore_the_destination_calendar_and_gantt() {
+    let mut state = State::default();
+    let studio = state.default_list_id();
+    let home = state.add_task_list("Home").unwrap();
+    let archive = state.add_task_list("Archive").unwrap();
+    let hidden = state.add_task_list("Hidden").unwrap();
+    let cast = state.add_task_to_list(studio, "Cast main form").unwrap();
+    let hidden_done = state.add_task_to_list(hidden, "Hidden completed").unwrap();
+    let featured = state.add_task_to_list(home, "Upcoming exhibition").unwrap();
+    let archived = state.add_task_to_list(archive, "Already archived").unwrap();
+    let photograph = state.add_task_to_list(home, "Photograph work").unwrap();
+    let open = state.add_task_to_list(studio, "Order clay").unwrap();
+    let undated = state.add_task_to_list(studio, "Clean tools").unwrap();
+    for (task, color) in [
+        (cast, TaskColor::Rose),
+        (photograph, TaskColor::Sage),
+        (featured, TaskColor::Amber),
+        (hidden_done, TaskColor::Blue),
+    ] {
+        state
+            .set_task_schedule(
+                task,
+                Some("2026-11-15T09:00:00-05:00"),
+                Some("2026-11-20T18:00:00-05:00"),
+            )
+            .unwrap();
+        state.set_task_color(task, Some(color)).unwrap();
+    }
+    state
+        .set_task_details(
+            cast,
+            Some("Cast main form\r\n\r\n  Keep these measurements"),
+        )
+        .unwrap();
+    state
+        .set_task_details(photograph, Some("Photograph work\nSend full-size files"))
+        .unwrap();
+    for task in [cast, hidden_done, archived, photograph, undated] {
+        state.toggle_task(task).unwrap();
+    }
+    state.feature_task(featured).unwrap();
+    state.add_note("Keep the test tile measurements").unwrap();
+    let mut expected = snapshot(&state);
+    for task in expected["tasks"].as_array_mut().unwrap() {
+        if [cast, photograph, undated].contains(&task["id"].as_u64().unwrap()) {
+            task["list_id"] = json!(archive);
+        }
+    }
+
+    assert_eq!(
+        state
+            .move_completed_tasks_in_lists(&[studio, home, archive, home], archive)
+            .unwrap(),
+        3,
+        "Destination tasks are not moved again and repeated sources count once"
+    );
+    assert_eq!(snapshot(&state), expected);
+    state.validate().unwrap();
+
+    let json = State::from_json(&serde_json::to_string(&state).unwrap()).unwrap();
+    let ods = read_ods(&save_ods(&state).unwrap())
+        .unwrap()
+        .embedded_state
+        .unwrap();
+    for restored in [&state, &json, &ods] {
+        assert_eq!(snapshot(restored), expected);
+        let ids = |lists: &[u64]| {
+            timeline::rows_for_lists(restored, &Utc, lists)
+                .iter()
+                .filter_map(|row| row.task_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&[archive]), [cast, archived, photograph, undated]);
+        assert_eq!(ids(&[studio, home]), [featured, open]);
+        assert_eq!(ids(&[hidden]), [hidden_done]);
+        let due = NaiveDate::from_ymd_opt(2026, 11, 20).unwrap();
+        let calendar = restored.tasks_on_date(due, &Utc);
+        for task_id in [cast, photograph] {
+            let task = calendar
+                .iter()
+                .find(|task| task.task_id == Some(task_id))
+                .unwrap();
+            assert_eq!(task.list_id, archive);
+            assert!(task.complete);
+        }
+    }
+}
+
+#[test]
+fn completed_moves_validate_lists_before_mutation_and_report_only_actual_changes() {
+    let mut state = State::default();
+    let studio = state.default_list_id();
+    let archive = state.add_task_list("Archive").unwrap();
+    let hidden = state.add_task_list("Hidden").unwrap();
+    let completed = state.add_task("Completed studio work").unwrap();
+    let hidden_done = state
+        .add_task_to_list(hidden, "Completed hidden work")
+        .unwrap();
+    state.add_task("Unfinished studio work").unwrap();
+    state.toggle_task(completed).unwrap();
+    state.toggle_task(hidden_done).unwrap();
+    let before = snapshot(&state);
+    for (sources, target) in [
+        (vec![studio], 999),
+        (vec![studio, 999], archive),
+        (vec![0], archive),
+        (vec![], 999),
+    ] {
+        assert!(state
+            .move_completed_tasks_in_lists(&sources, target)
+            .is_err());
+        assert_eq!(
+            snapshot(&state),
+            before,
+            "Invalid lists must not partially move work"
+        );
+    }
+    for (sources, target) in [
+        (vec![], archive),
+        (vec![archive], archive),
+        (vec![studio, studio], studio),
+    ] {
+        assert_eq!(
+            state
+                .move_completed_tasks_in_lists(&sources, target)
+                .unwrap(),
+            0
+        );
+        assert_eq!(snapshot(&state), before);
+    }
+    assert_eq!(
+        state
+            .move_completed_tasks_in_lists(&[studio, studio], archive)
+            .unwrap(),
+        1
+    );
+    let mut expected = before.clone();
+    expected["tasks"][0]["list_id"] = json!(archive);
+    assert_eq!(snapshot(&state), expected);
+    assert_eq!(
+        state
+            .move_completed_tasks_in_lists(&[studio, archive], archive)
+            .unwrap(),
+        0,
+        "Repeated moves must not create an empty Undo action"
+    );
+    assert_eq!(snapshot(&state), expected);
+    assert_eq!(
+        state
+            .move_completed_tasks_in_lists(&[archive], studio)
+            .unwrap(),
+        1
+    );
+    assert_eq!(snapshot(&state), before);
+    assert!(snapshot(&state)["tasks"][0].get("list_id").is_none());
+    let restored = State::from_json(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(snapshot(&restored), before);
+    assert_eq!(restored.tasks[0].list_id, studio);
+    state.validate().unwrap();
+}
+
+#[test]
 fn task_sort_is_stable_uses_due_instants_and_preserves_metadata_and_saved_order() {
     let mut state = State::default();
     let ids: Vec<_> = [

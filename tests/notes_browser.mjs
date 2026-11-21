@@ -753,6 +753,7 @@ try {
   await current.page.mouse.click(outsideTaskInput.x, outsideTaskInput.y); await paint(current.page);
   await expectState(current.page, archived, "Clicking the Task input must cancel the note edit before that input takes focus");
   await expectNoNoteDraft(current.page);
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
   const cleanTaskText = "Sample: fresh task after cancelling a note";
   // Do not select-all or clear: a leaked note character must remain detectable.
   await current.page.keyboard.type(cleanTaskText, { delay: 10 }); await key(current.page, "Enter");

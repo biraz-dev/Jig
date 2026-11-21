@@ -1856,11 +1856,9 @@ impl BrowserApp {
         if self.expanded || !wide {
             self.cancel_task_area_split(ui.ctx());
         }
-        // Apply queued note text before allowing an upper control to move focus.
+        // OrderedInput delivers queued note text before later clicks. Keep the
+        // upper controls interactive so the dismissing click can focus them.
         ui.scope(|ui| {
-            if self.pending_note_input {
-                ui.disable();
-            }
             let top = ui.cursor().top();
             self.task_list_tabs(ui);
             ui.add_space(3.0);

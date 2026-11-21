@@ -472,8 +472,9 @@ impl NotesPanel {
                 ui.set_width((width - 12.0).max(68.0));
                 ui.set_min_height(height - 12.0);
                 let mut remove = false;
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.spacing_mut().button_padding.x = 3.0;
                     let grip_id = ui.id().with("grip");
                     self.keyboard_ids.push(grip_id);
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), Sense::hover());
@@ -536,7 +537,9 @@ impl NotesPanel {
                         self.convert = Some((note.id, if state.task_list(list).is_some() { list } else { state.default_list_id() }));
                         ui.ctx().request_repaint();
                     }
-                    remove = ui.small_button("del").on_hover_text("Delete this note · Undo restores it").clicked();
+                    let delete = ui.small_button("×").on_hover_text("Delete this note · Undo restores it");
+                    delete.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Delete note"));
+                    remove = delete.clicked();
                 });
                 if editing {
                     self.editor(ui, actions);

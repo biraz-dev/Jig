@@ -187,6 +187,9 @@ pub struct Preferences {
     /// Preferred share of the Tasks panel when shown beside the timeline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_panel_percent: Option<u8>,
+    /// Preferred share of the Tasks/Notes height used by Tasks and the timeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_area_percent: Option<u8>,
     /// Preferred share of the timeline width reserved for task labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline_label_percent: Option<u8>,
@@ -199,6 +202,7 @@ impl Default for Preferences {
             weather: None,
             clay: None,
             task_panel_percent: None,
+            task_area_percent: None,
             timeline_label_percent: None,
         }
     }
@@ -341,6 +345,10 @@ impl State {
             || self
                 .preferences
                 .task_panel_percent
+                .is_some_and(|percent| !(20..=80).contains(&percent))
+            || self
+                .preferences
+                .task_area_percent
                 .is_some_and(|percent| !(20..=80).contains(&percent))
             || self
                 .preferences

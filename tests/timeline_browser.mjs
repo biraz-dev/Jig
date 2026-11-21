@@ -65,9 +65,9 @@ async function canvasFocus(page) {
 }
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
-  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-mobile", "timeline-edit", "timeline-calendar", "timeline-failure"]);
+  const allowed = new Set(["timeline-desktop", "timeline-dashboard", "timeline-divider", "timeline-notes-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-mobile", "timeline-edit", "timeline-calendar", "timeline-failure"]);
   const requested = new Set((process.env.JIG_RENDER_LOGS ?? "").split(","));
-  const requestedDivider = ["timeline-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-calendar"].includes(name) && requested.has("timeline-dashboard");
+  const requestedDivider = ["timeline-divider", "timeline-notes-divider", "timeline-label-divider", "timeline-range-drag", "timeline-tall", "timeline-calendar"].includes(name) && requested.has("timeline-dashboard");
   if (allowed.has(name) && (requested.has(name) || requestedDivider) && png.length <= 1024 * 1024) {
     console.log(`JIG_RENDER_BEGIN_${name}`);
     const encoded = png.toString("base64");
@@ -188,6 +188,40 @@ async function waitForDivider(page, expected = () => true) {
     bounds = await dividerBounds(page, Math.max(1, until - Date.now()));
   } while ((!bounds || !expected(bounds)) && Date.now() < until);
   assert.ok(bounds && expected(bounds), `The rendered Tasks/timeline divider must reach its expected position; found ${JSON.stringify(bounds)}`);
+  return bounds;
+}
+async function notesDividerBounds(page, timeout = 60000) {
+  const png = await page.screenshot({ timeout, animations: "disabled", caret: "hide" });
+  return page.evaluate(async encoded => {
+    const picture = new Image(); picture.src = `data:image/png;base64,${encoded}`; await picture.decode();
+    const canvas = document.createElement("canvas"); canvas.width = picture.width; canvas.height = picture.height;
+    const context = canvas.getContext("2d"); context.drawImage(picture, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const matches = (x, y, color) => color.every((value, axis) => Math.abs(data[(y * canvas.width + x) * 4 + axis] - value) <= 3);
+    const line = (x, y) => matches(x, y, [113, 102, 93]) || matches(x, y, [244, 107, 74]);
+    const candidates = [];
+    for (let y = 150; y < canvas.height - 45; y++) {
+      let count = 0, left = canvas.width, right = 0;
+      for (let x = 8; x < canvas.width - 8; x++) {
+        if (!line(x, y)) continue;
+        count++; left = Math.min(left, x); right = x;
+      }
+      if (count < canvas.width * 0.85) continue;
+      const x = Math.round((left + right) / 2);
+      // The centered grip interrupts this rule with the ordinary surface color.
+      // Pane borders and footer rules instead continue through their centers.
+      if (matches(x, y, [41, 37, 34])) candidates.push({ x, y, left, right });
+    }
+    return candidates.at(-1) ?? null;
+  }, png.toString("base64"));
+}
+async function waitForNotesDivider(page, expected = () => true) {
+  const until = Date.now() + 60000;
+  let bounds;
+  do {
+    bounds = await notesDividerBounds(page, Math.max(1, until - Date.now()));
+  } while ((!bounds || !expected(bounds)) && Date.now() < until);
+  assert.ok(bounds && expected(bounds), `The rendered Tasks/Notes divider must reach its expected position; found ${JSON.stringify(bounds)}`);
   return bounds;
 }
 async function expectState(page, expected, message) {
@@ -636,6 +670,85 @@ try {
   await paint(current.page);
   await expectState(current.page, fixture, "Double-clicking the divider must omit the preference and restore the original data exactly");
   await waitForDivider(current.page, item => Math.abs(item.x - initialDivider.x) <= 3);
+  await current.context.close();
+
+  progress("resize the Tasks/Gantt and Notes areas with mouse, keyboard and touch");
+  const notesFixture = {
+    ...structuredClone(fixture),
+    notes: [
+      { id: 401, text: "Sample: keep fired measurements handy", pinned: true },
+      { id: 402, text: "Sample: notes share space with the plan", pinned: false },
+    ],
+  };
+  current = await open("timeline-notes-divider", notesFixture, false, true);
+  const initialNotesDivider = await waitForNotesDivider(current.page);
+  const beforeNotesResize = await raw(current.page);
+  await current.page.mouse.move(initialNotesDivider.x, initialNotesDivider.y);
+  await current.page.waitForFunction(() => document.body.style.cursor === "ns-resize", undefined, { timeout: 10000, polling: 25 });
+  await current.page.mouse.down(); await paint(current.page);
+  await current.page.mouse.move(initialNotesDivider.x, initialNotesDivider.y - 120, { steps: 6 });
+  await paint(current.page);
+  assert.equal(await raw(current.page), beforeNotesResize, "Resizing the Tasks/Notes preview must not save until release");
+  await current.page.mouse.up(); await paint(current.page);
+  const notesResized = await state(current.page);
+  const notesPercent = notesResized.preferences.task_area_percent;
+  assert.ok(Number.isInteger(notesPercent) && notesPercent >= 20 && notesPercent <= 80,
+    "The released horizontal divider must save a bounded upper-area height");
+  const unchangedNotes = structuredClone(notesResized); delete unchangedNotes.preferences.task_area_percent;
+  assert.deepEqual(unchangedNotes, notesFixture, "Resizing must preserve notes, tasks, dates, colors and the starred countdown");
+  const movedNotesDivider = await waitForNotesDivider(current.page, item => initialNotesDivider.y - item.y >= 50);
+  await key(current.page, "Control+z");
+  await expectState(current.page, notesFixture, "One Undo must restore the complete Tasks/Notes resize");
+  await key(current.page, "Control+Shift+z");
+  await expectState(current.page, notesResized, "Redo must restore the saved Tasks/Notes split");
+  await current.page.mouse.click(movedNotesDivider.x, movedNotesDivider.y); await paint(current.page);
+  await key(current.page, "ArrowDown");
+  const tallerTasks = structuredClone(notesResized); tallerTasks.preferences.task_area_percent = notesPercent + 1;
+  await expectState(current.page, tallerTasks, "Down Arrow on the divider must give the upper area one percentage point more space");
+  await key(current.page, "ArrowUp");
+  await expectState(current.page, notesResized, "Up Arrow must restore the previous height");
+  await key(current.page, "Shift+ArrowDown");
+  const largerStep = structuredClone(notesResized); largerStep.preferences.task_area_percent = notesPercent + 5;
+  await expectState(current.page, largerStep, "Shift+Down must resize in five-percentage-point steps");
+  await key(current.page, "Shift+ArrowUp");
+  await expectState(current.page, notesResized, "Shift+Up must restore the previous height without changing records");
+  await boot(current.page, true);
+  await expectState(current.page, notesResized, "The horizontal split must survive a normal refresh");
+  await waitForNotesDivider(current.page, item => Math.abs(item.y - movedNotesDivider.y) <= 12);
+  await current.page.setViewportSize({ width: 390, height: 844 }); await key(current.page, "Escape");
+  await expectState(current.page, notesResized, "The narrow stacked layout must preserve the saved desktop height");
+  assert.equal(await current.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true,
+    "The shared Tasks/Notes workspace must fit a narrow screen without horizontal overflow");
+  await current.page.setViewportSize({ width: 1440, height: 1000 }); await key(current.page, "Escape");
+  const restoredNotesDivider = await waitForNotesDivider(current.page, item => Math.abs(item.y - movedNotesDivider.y) <= 12);
+  await current.page.mouse.dblclick(restoredNotesDivider.x, restoredNotesDivider.y); await paint(current.page);
+  await expectState(current.page, notesFixture, "Double-click must remove the split preference and restore the adaptive height");
+  const defaultNotesDivider = await waitForNotesDivider(current.page, item => Math.abs(item.y - initialNotesDivider.y) <= 3);
+  const notesTouchSession = await current.context.newCDPSession(current.page);
+  const notesTouch = (type, point) => notesTouchSession.send("Input.dispatchTouchEvent", {
+    type, touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }],
+  });
+  const notesTouchStart = { x: defaultNotesDivider.x, y: defaultNotesDivider.y };
+  const moveNotesTouch = async () => {
+    await notesTouch("touchStart", notesTouchStart); await paint(current.page);
+    for (let step = 1; step <= 6; step++) {
+      await notesTouch("touchMove", { x: notesTouchStart.x, y: notesTouchStart.y - 80 * step / 6 });
+      await current.page.waitForTimeout(25);
+    }
+    await paint(current.page);
+    await expectState(current.page, notesFixture, "A held touch resize must remain an unsaved preview");
+  };
+  await moveNotesTouch(); await notesTouch("touchCancel"); await paint(current.page);
+  await expectState(current.page, notesFixture, "Cancelled touch must discard the split preview without changing any records");
+  await waitForNotesDivider(current.page, item => Math.abs(item.y - initialNotesDivider.y) <= 3);
+  await moveNotesTouch(); await notesTouch("touchEnd"); await paint(current.page);
+  const notesTouchResized = await state(current.page);
+  assert.ok(Number.isInteger(notesTouchResized.preferences.task_area_percent), "Touch release must save the horizontal divider preference");
+  const touchUnchanged = structuredClone(notesTouchResized); delete touchUnchanged.preferences.task_area_percent;
+  assert.deepEqual(touchUnchanged, notesFixture, "A touch resize must preserve the complete task, note and deadline records");
+  await capture(current.page, "timeline-notes-divider");
+  await key(current.page, "Control+z");
+  await expectState(current.page, notesFixture, "A touch resize must also be one Undo step");
   await current.context.close();
 
   progress("inspect overlapping durations, completion and deadline-only work without changing records");

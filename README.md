@@ -409,6 +409,12 @@ default split. A finished resize is one Undo step, and the preferred width is
 saved with your local preferences and portable backups. Narrow screens stack
 the panels without replacing your saved split.
 
+In wide layouts, drag the horizontal divider's up/down grip to share space
+between Tasks/Gantt and Notes. Focus it and use **Up/Down**, or **Shift-Up/Down**
+for larger steps. Release saves one undoable resize; **Esc** cancels the preview.
+Double-click restores the adaptive height. Its position travels with your local
+preferences and backups; narrow screens retain their stacked layout.
+
 The separate Workbench tab, header title and tagline are removed. The selected
 task or calendar/timeline panel can be maximized/restored with **Ctrl-M**.
 Arrows outside text fields move panel selection; **Esc** leaves an editor or

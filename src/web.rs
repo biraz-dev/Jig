@@ -32,6 +32,7 @@ use std::time::Duration;
 
 const UNDO_BYTES: usize = 64 * 1024 * 1024;
 const TASK_SPLIT_WIDTH: f32 = 12.0;
+const TASK_NOTES_SPLIT_HEIGHT: f32 = 16.0;
 const DRAFT_BACKUP_BYTES: usize = 128 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -83,6 +84,18 @@ enum TaskDateField {
 
 fn task_split_id() -> egui::Id {
     egui::Id::new("task-timeline-divider")
+}
+
+fn task_notes_split_id() -> egui::Id {
+    egui::Id::new("task-notes-divider")
+}
+
+struct TaskAreaDrag {
+    initial_top: f32,
+    origin_y: f32,
+    available: f32,
+    width: f32,
+    percent: f32,
 }
 
 enum UndoEntry {
@@ -240,6 +253,7 @@ pub struct BrowserApp {
     calendar_weather_date: Option<NaiveDate>,
     timeline_view: bool,
     task_split_draft: Option<f32>,
+    task_area_drag: Option<TaskAreaDrag>,
     timeline: TimelinePanel,
     sheet: SheetPanel,
     sheet_workspace: bool,
@@ -388,6 +402,7 @@ impl BrowserApp {
             calendar_weather_date: None,
             timeline_view: workspace == "tasks",
             task_split_draft: None,
+            task_area_drag: None,
             timeline: TimelinePanel::new(today),
             sheet: SheetPanel::new(),
             sheet_workspace: matches!(workspace.as_str(), "sheet" | "charts"),
@@ -682,6 +697,7 @@ impl BrowserApp {
     }
 
     fn changed(&mut self) {
+        self.task_area_drag = None;
         self.draft_undo_group = false;
         self.sheet.invalidate();
         self.charts.invalidate();
@@ -793,6 +809,7 @@ impl BrowserApp {
     }
 
     fn reset_document_session(&mut self) {
+        self.task_area_drag = None;
         self.draft_undo_group = false;
         self.sync_draft(true);
         if let Err(error) = crate::draft_storage::reset_recovery() {
@@ -840,6 +857,10 @@ impl BrowserApp {
     }
 
     fn step_history(&mut self, ctx: &egui::Context, redo: bool) {
+        if self.cancel_task_area_split(ctx) {
+            ctx.request_repaint();
+            return;
+        }
         self.draft_undo_group = false;
         ctx.stop_dragging();
         self.charts.cancel_gesture();
@@ -911,6 +932,7 @@ impl BrowserApp {
     }
 
     fn reset_editors(&mut self) {
+        self.task_area_drag = None;
         self.draft_undo_group = false;
         self.sync_draft(true);
         self.ctx.stop_dragging();
@@ -1837,6 +1859,11 @@ impl BrowserApp {
 
     fn tasks_main(&mut self, ui: &mut Ui, height: f32) {
         let palette = web_theme::colors(ui.ctx());
+        let wide = ui.available_width() >= 800.0;
+        let mut notes_height = None;
+        if self.expanded || !wide {
+            self.cancel_task_area_split(ui.ctx());
+        }
         // Apply queued note text before allowing an upper control to move focus.
         ui.scope(|ui| {
             if self.pending_note_input {
@@ -1902,8 +1929,32 @@ impl BrowserApp {
             if self.expanded {
                 self.cancel_task_split(ui.ctx());
                 self.tool(ui, if self.focus == 2 { 2 } else { 1 }, panel_height);
-            } else if ui.available_width() >= 800.0 {
-                self.task_timeline_panels(ui, panel_height, true);
+            } else if wide {
+                let available =
+                    (height - TASK_NOTES_SPLIT_HEIGHT - ui.spacing().item_spacing.y * 2.0)
+                        .max(320.0)
+                        .max(panel_height / 0.8);
+                if self.task_area_drag.as_ref().is_some_and(|drag| {
+                    (drag.available - available).abs() > 0.5
+                        || (drag.width - ui.available_width()).abs() > 0.5
+                }) {
+                    self.cancel_task_area_split(ui.ctx());
+                }
+                let percent = self
+                    .task_area_drag
+                    .as_ref()
+                    .map(|drag| drag.percent)
+                    .or_else(|| self.state.preferences.task_area_percent.map(f32::from));
+                let top_height = percent
+                    .map_or(panel_height, |percent| available * percent / 100.0)
+                    .clamp(250.0_f32.min(available * 0.8), available * 0.8);
+                egui::ScrollArea::vertical()
+                    .id_salt("tasks-upper-area")
+                    .max_height(top_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.task_timeline_panels(ui, top_height, true));
+                self.task_notes_splitter(ui, available, top_height);
+                notes_height = Some(available - top_height);
             } else {
                 self.cancel_task_split(ui.ctx());
                 self.tool(ui, 1, 300.0);
@@ -1912,8 +1963,212 @@ impl BrowserApp {
             }
         });
         if !self.expanded {
-            ui.add_space(10.0);
-            self.notes_board(ui);
+            if let Some(height) = notes_height {
+                egui::ScrollArea::vertical()
+                    .id_salt("tasks-notes-board")
+                    .max_height(height)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        self.notes_board(ui);
+                        self.drag_auto_scroll(ui);
+                    });
+            } else {
+                ui.add_space(10.0);
+                self.notes_board(ui);
+            }
+        }
+    }
+
+    fn cancel_task_area_split(&mut self, ctx: &egui::Context) -> bool {
+        let active = self.task_area_drag.take().is_some();
+        if ctx.dragged_id() == Some(task_notes_split_id()) {
+            ctx.stop_dragging();
+        }
+        if active {
+            ctx.request_repaint();
+        }
+        active
+    }
+
+    fn commit_task_area_split(&mut self, percent: Option<u8>) {
+        self.task_area_drag = None;
+        if self.state.preferences.task_area_percent != percent {
+            self.state.preferences.task_area_percent = percent;
+            self.changed();
+        }
+    }
+
+    fn task_notes_splitter(&mut self, ui: &mut Ui, available: f32, top: f32) {
+        let palette = web_theme::colors(ui.ctx());
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(width, TASK_NOTES_SPLIT_HEIGHT),
+            egui::Sense::hover(),
+        );
+        let response = ui.interact(rect, task_notes_split_id(), egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+            .on_hover_text("Resize Tasks/Gantt and Notes · Up/Down arrows · Shift for larger steps · Double-click to reset");
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        let cancelled = ui.input(|input| {
+            !input.focused
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                })
+                || (input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::PointerGone))
+                    && !input.pointer.button_released(egui::PointerButton::Primary))
+        });
+        let minimum = 250.0_f32.min(available * 0.8);
+        if cancelled {
+            self.cancel_task_area_split(ui.ctx());
+        } else if response.double_clicked() {
+            self.commit_task_area_split(None);
+            ui.ctx().request_repaint();
+        } else {
+            if response.drag_started() {
+                if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
+                    self.task_area_drag = Some(TaskAreaDrag {
+                        initial_top: top,
+                        origin_y: origin.y,
+                        available,
+                        width,
+                        percent: top / available * 100.0,
+                    });
+                }
+            }
+            if response.dragged() || response.drag_stopped() {
+                if let (Some(drag), Some(pointer)) = (
+                    self.task_area_drag.as_mut(),
+                    ui.input(|input| input.pointer.interact_pos()),
+                ) {
+                    drag.percent = (drag.initial_top + pointer.y - drag.origin_y)
+                        .clamp(minimum, available * 0.8)
+                        / available
+                        * 100.0;
+                    ui.ctx().request_repaint();
+                }
+            }
+            if response.drag_stopped() {
+                if ui.input(|input| input.pointer.button_released(egui::PointerButton::Primary)) {
+                    if let Some(drag) = self.task_area_drag.take() {
+                        if (drag.percent * available / 100.0 - drag.initial_top).abs() >= 0.5 {
+                            self.commit_task_area_split(Some(
+                                drag.percent.round().clamp(20.0, 80.0) as u8,
+                            ));
+                        }
+                    }
+                } else {
+                    self.cancel_task_area_split(ui.ctx());
+                }
+            }
+            if response.has_focus() {
+                ui.memory_mut(|memory| {
+                    memory.set_focus_lock_filter(
+                        task_notes_split_id(),
+                        egui::EventFilter {
+                            vertical_arrows: true,
+                            ..Default::default()
+                        },
+                    )
+                });
+                let step = ui.input_mut(|input| {
+                    if input.pointer.any_down() || response.drag_stopped() {
+                        return 0;
+                    }
+                    let arrow = input.events.iter().find_map(|event| match event {
+                        egui::Event::Key {
+                            key,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } if matches!(key, egui::Key::ArrowUp | egui::Key::ArrowDown)
+                            && !modifiers.ctrl
+                            && !modifiers.alt
+                            && !modifiers.command =>
+                        {
+                            Some((*key, *modifiers))
+                        }
+                        _ => None,
+                    });
+                    let Some((key, modifiers)) = arrow else {
+                        return 0;
+                    };
+                    if !input.consume_key(modifiers, key) {
+                        return 0;
+                    }
+                    let amount = if modifiers.shift { 5 } else { 1 };
+                    if key == egui::Key::ArrowUp {
+                        -amount
+                    } else {
+                        amount
+                    }
+                });
+                if step != 0 {
+                    let next_top =
+                        (top + step as f32 * available / 100.0).clamp(minimum, available * 0.8);
+                    let next = (next_top / available * 100.0).round().clamp(20.0, 80.0) as u8;
+                    let rendered =
+                        (f32::from(next) / 100.0 * available).clamp(minimum, available * 0.8);
+                    if (step < 0 && rendered < top - 0.5) || (step > 0 && rendered > top + 0.5) {
+                        self.commit_task_area_split(Some(next));
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::slider(
+                ui.is_enabled(),
+                f64::from(top / available * 100.0),
+                "Tasks/Gantt area height",
+            )
+        });
+        let active = response.hovered() || response.dragged() || response.has_focus();
+        let color = if active { palette.accent } else { palette.rule };
+        let center = rect.center();
+        ui.painter().hline(
+            rect.x_range(),
+            center
+                .y
+                .round_to_pixel_center(ui.painter().pixels_per_point()),
+            Stroke::new(1.0_f32, color),
+        );
+        let grip = egui::Rect::from_center_size(center, egui::vec2(26.0, TASK_NOTES_SPLIT_HEIGHT));
+        ui.painter().rect_filled(grip, 2.0, palette.surface);
+        for sign in [-1.0, 1.0] {
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    center + egui::vec2(-3.0, sign * 2.0),
+                    center + egui::vec2(0.0, sign * 5.0),
+                    center + egui::vec2(3.0, sign * 2.0),
+                ],
+                Stroke::new(
+                    1.2_f32,
+                    if active {
+                        palette.accent
+                    } else {
+                        palette.muted
+                    },
+                ),
+            ));
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                grip,
+                2.0,
+                Stroke::new(1.0_f32, palette.accent),
+                egui::StrokeKind::Inside,
+            );
         }
     }
 
@@ -3115,7 +3370,8 @@ impl BrowserApp {
         }
     }
 
-    fn cancel_task_note_drag(&self, ctx: &egui::Context) {
+    fn cancel_task_note_drag(&mut self, ctx: &egui::Context) {
+        self.cancel_task_area_split(ctx);
         if egui::DragAndDrop::has_payload_of_type::<TaskDragPayload>(ctx)
             || egui::DragAndDrop::has_payload_of_type::<NoteDragPayload>(ctx)
         {
@@ -4783,6 +5039,7 @@ impl eframe::App for BrowserApp {
             {
                 let list_editor = self.task_list_rename.take().is_some()
                     || self.task_list_remove.take().is_some();
+                self.cancel_task_area_split(ctx);
                 if !list_editor && !self.timeline.cancel_gesture() {
                     self.expanded = false;
                 }
@@ -4808,6 +5065,7 @@ impl eframe::App for BrowserApp {
                     self.undo_last(ctx);
                 }
                 let divider_focused = ctx.memory(|memory| memory.has_focus(task_split_id()))
+                    || ctx.memory(|memory| memory.has_focus(task_notes_split_id()))
                     || self.timeline.owns_keyboard(ctx)
                     || self.calendar_panel.owns_keyboard(ctx)
                     || ctx.memory(|memory| memory.any_popup_open())

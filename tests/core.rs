@@ -218,21 +218,27 @@ fn task_layout_preferences_preserve_legacy_and_portable_state_and_reject_bad_bou
     state.calculate("1 / 3").unwrap();
     let legacy = serde_json::to_value(&state).unwrap();
     assert!(legacy["preferences"].get("task_panel_percent").is_none());
+    assert!(legacy["preferences"].get("task_area_percent").is_none());
     assert!(legacy["preferences"]
         .get("timeline_label_percent")
         .is_none());
     let restored = State::from_json(&legacy.to_string()).unwrap();
     assert_eq!(restored.preferences.task_panel_percent, None);
+    assert_eq!(restored.preferences.task_area_percent, None);
     assert_eq!(restored.preferences.timeline_label_percent, None);
     assert_eq!(serde_json::to_value(&restored).unwrap(), legacy);
 
-    for (panel_percent, label_percent) in [(20, 80), (80, 10), (57, 13), (80, 80)] {
+    for (panel_percent, label_percent, area_percent) in
+        [(20, 80, 20), (80, 10, 80), (57, 13, 57), (80, 80, 58)]
+    {
         state.preferences.task_panel_percent = Some(panel_percent);
+        state.preferences.task_area_percent = Some(area_percent);
         state.preferences.timeline_label_percent = Some(label_percent);
         state.validate().unwrap();
         let json = serde_json::to_string(&state).unwrap();
         let restored = State::from_json(&json).unwrap();
         assert_eq!(restored.preferences.task_panel_percent, Some(panel_percent));
+        assert_eq!(restored.preferences.task_area_percent, Some(area_percent));
         assert_eq!(
             restored.preferences.timeline_label_percent,
             Some(label_percent)
@@ -255,14 +261,15 @@ fn task_layout_preferences_preserve_legacy_and_portable_state_and_reject_bad_bou
     let before = serde_json::to_value(&state).unwrap();
     for (preference, invalid_percents) in [
         ("task_panel_percent", [0, 19, 81, 100, 255]),
+        ("task_area_percent", [0, 19, 81, 100, 255]),
         ("timeline_label_percent", [0, 9, 81, 100, 255]),
     ] {
         for percent in invalid_percents {
             let mut invalid = state.clone();
-            if preference == "task_panel_percent" {
-                invalid.preferences.task_panel_percent = Some(percent);
-            } else {
-                invalid.preferences.timeline_label_percent = Some(percent);
+            match preference {
+                "task_panel_percent" => invalid.preferences.task_panel_percent = Some(percent),
+                "task_area_percent" => invalid.preferences.task_area_percent = Some(percent),
+                _ => invalid.preferences.timeline_label_percent = Some(percent),
             }
             assert!(invalid.validate().is_err(), "{preference}: {percent}");
             assert!(

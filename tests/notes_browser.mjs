@@ -54,6 +54,10 @@ async function expectState(page, expected, message) {
   } while (Date.now() < until);
   assert.deepEqual(actual, expected, message);
 }
+async function expectNoNoteDraft(page) {
+  await page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.note,
+    undefined, { timeout: 10000, polling: 25 });
+}
 async function capture(page, name) {
   const png = await page.screenshot({ path: resolve(results, `${name}.png`), timeout: 60000, animations: "disabled", caret: "hide" });
   if (new Set((process.env.JIG_RENDER_LOGS ?? "").split(",")).has(name) && png.length <= 1024 * 1024) {
@@ -498,34 +502,107 @@ try {
   const edited = structuredClone(added); edited.notes[0].text = updated;
   await expectState(current.page, edited, "Editing a note must preserve its ID and every other record");
 
-  progress("copy the full clipped body and keep the final character during a quick workspace change");
+  progress("copy the full clipped body and explicitly save the final queued character");
   await current.page.evaluate(() => navigator.clipboard.writeText("Notes copy pending"));
   await focusNote(current, 0, 3); await key(current.page, "Space");
   await expectClipboard(current.page, updated);
   await expectState(current.page, edited, "Copy must preserve the note and all other records");
   await focusNote(current, 0, 6); await key(current.page, "Space");
   const quickBody = updated + "\nFinal character: ";
+  const beforeFinalSave = structuredClone(edited);
   await typeBody(current.page, quickBody);
   await current.page.keyboard.type("Z");
-  await current.page.keyboard.press("Control+Alt+2"); // Intentionally no paint after the final character.
+  await current.page.keyboard.press("Control+Enter"); // Intentionally no paint after the final character.
   await paint(current.page);
   edited.notes[0].text = quickBody + "Z";
-  await expectState(current.page, edited, "A quick workspace change must save the full note, including the final input character");
-  await taskGanttButtonPoint(current.page); // The actual Tasks toolbar proves the deferred switch occurred.
+  await expectState(current.page, edited, "Explicit Ctrl-Enter must save the full note, including the final queued character");
+  await expectNoNoteDraft(current.page);
 
-  progress("keep a note's final character when immediately clicking Add note");
+  progress("cancel an outside-click edit without changing saved text or the existing Undo/Redo history");
+  await undo(current, beforeFinalSave);
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  await typeBody(current.page, "Sample: discard this existing-note draft");
+  const blankNotes = { x: current.page.viewportSize().width - 30, y: 400 };
+  await current.page.mouse.click(blankNotes.x, blankNotes.y); await paint(current.page);
+  await expectState(current.page, beforeFinalSave, "Clicking blank board space must cancel the edit and retain the saved note");
+  await expectNoNoteDraft(current.page);
+  await key(current.page, "Control+Shift+z");
+  await expectState(current.page, edited, "Cancelling an edit must retain the Redo of the preceding explicit Save");
+  await key(current.page, "Control+z");
+  await expectState(current.page, beforeFinalSave, "Cancellation must create no Undo entry above the real Save");
+  await key(current.page, "Control+Shift+z"); await expectState(current.page, edited);
+
+  progress("cancel a pending note edit when immediately changing workspace");
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  await typeBody(current.page, "Sample: discard on workspace switch ");
+  await current.page.keyboard.type("Z");
+  await current.page.keyboard.press("Control+Alt+2"); // No paint: the queued character must not turn Cancel into Save.
+  await paint(current.page);
+  await expectState(current.page, edited, "A quick workspace change must cancel the note edit without committing any text");
+  await expectNoNoteDraft(current.page);
+  await taskGanttButtonPoint(current.page); // The actual Tasks toolbar proves the switch occurred.
+
+  progress("cancel the old edit on Add note, then discard a new note by clicking outside");
   await notes(current); await tab(current.page, headerTargets + 1);
   const addAfterEdit = await focusedButtonRect(current.page);
   await focusNote(current, 0, 6); await key(current.page, "Space");
-  const pointerBody = edited.notes[0].text + "\nPointer switch: Q";
+  const pointerBody = "Sample: discard on Add note Q";
   await typeBody(current.page, pointerBody.slice(0, -1));
   await current.page.keyboard.type("Q");
-  await current.page.mouse.click(addAfterEdit.x, addAfterEdit.y); // No paint: save the old field before starting the new card.
+  await current.page.mouse.click(addAfterEdit.x, addAfterEdit.y); // No paint: cancel the old field before starting the new card.
   await paint(current.page);
-  edited.notes[0].text = pointerBody;
-  await expectState(current.page, edited, "Clicking Add note must retain the old note's complete text without creating a partial blank record");
-  await key(current.page, "Escape"); // Cancel the new empty card after the old note was saved.
-  await expectState(current.page, edited, "Cancelling the new card must preserve the preceding note's final character");
+  await expectState(current.page, edited, "Clicking Add note must discard the old draft and leave all saved notes intact");
+  await expectNoNoteDraft(current.page); // The new editor is empty; no queued old character may leak into it.
+  await typeBody(current.page, "Sample: new notes also require an explicit Save");
+  await current.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.note?.id === null);
+  await current.page.mouse.click(blankNotes.x, blankNotes.y); await paint(current.page);
+  await expectState(current.page, edited, "Clicking outside a new unsaved note must discard it without allocating a saved record");
+  await expectNoNoteDraft(current.page);
+
+  progress("cancel the current draft when clicking another note, while retaining editor-local Copy and Save");
+  const otherGrip = await grip(current, 1);
+  const otherBody = { x: otherGrip.x + 40, y: otherGrip.y + 65 };
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  await typeBody(current.page, "Sample: discard before opening another note");
+  await current.page.mouse.click(otherBody.x, otherBody.y); await paint(current.page);
+  await expectEditorText(current.page, edited.notes[1].text);
+  await expectState(current.page, edited, "Clicking another note must open its saved text and discard the old edit");
+  await expectNoNoteDraft(current.page); // The newly opened, unchanged editor has no recovery text.
+  await key(current.page, "Escape");
+  await focusNote(current, 0, 3); const copyInEditor = await focusedButtonRect(current.page);
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  const copyDraft = "Sample: Copy keeps this working note ";
+  await typeBody(current.page, copyDraft);
+  // The short draft can shrink the editor's inner scroller relative to its
+  // original long body. Measure Save only after that layout has settled.
+  await tab(current.page); const explicitSave = await focusedButtonRect(current.page);
+  await key(current.page, "Shift+Tab");
+  await current.page.evaluate(() => navigator.clipboard.writeText("Working-note Copy pending"));
+  await current.page.mouse.click(copyInEditor.x, copyInEditor.y); await paint(current.page);
+  await expectClipboard(current.page, copyDraft);
+  await current.page.waitForFunction(text => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.note?.text === text, copyDraft);
+  await expectState(current.page, edited, "Copy inside the edited card must retain the draft without committing it");
+  await current.page.mouse.click(explicitSave.x + 35, explicitSave.top - 35); await paint(current.page);
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
+  await current.page.keyboard.type("Z");
+  await current.page.mouse.click(explicitSave.x, explicitSave.y); // No paint: explicit Save must include the last character.
+  await current.page.mouse.click(blankNotes.x, blankNotes.y); // A rapid later outside click must not cancel that Save.
+  await paint(current.page);
+  const pointerSaved = structuredClone(edited); pointerSaved.notes[0].text = copyDraft + "Z";
+  await expectState(current.page, pointerSaved, "Explicit Save must persist the final queued character even when an outside click immediately follows it");
+  await expectNoNoteDraft(current.page);
+  await undo(current, edited);
+
+  progress("explicitly save a note with Ctrl-S without dropping queued input");
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  const shortcutBody = "Sample: Ctrl-S explicitly saves this note ";
+  await typeBody(current.page, shortcutBody);
+  await current.page.keyboard.type("Z");
+  await current.page.keyboard.press("Control+s"); await paint(current.page);
+  const shortcutSaved = structuredClone(edited); shortcutSaved.notes[0].text = shortcutBody + "Z";
+  await expectState(current.page, shortcutSaved, "Ctrl-S must explicitly save the complete note rather than merely closing it");
+  await expectNoNoteDraft(current.page);
+  await undo(current, edited);
 
   progress("cancel a settled note edit and clear its unfinished recovery text");
   await focusNote(current, 0, 6); await key(current.page, "Space");
@@ -666,10 +743,42 @@ try {
   await key(current.page, "Control+Alt+2"); await tab(current.page, headerTargets + 2); await key(current.page, "Space");
   await key(current.page, "Shift+Tab"); await key(current.page, "Shift+Space");
   let notePoints = await sharedNotePoints(current.page);
+  const outsideTaskInput = await taskGanttButtonPoint(current.page, "input");
   await current.page.mouse.click(notePoints.body.x, notePoints.body.y); await paint(current.page);
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
-  await key(current.page, "Escape");
-  await expectState(current.page, archived, "A plain note-body click must still edit, and cancelling must preserve the saved note");
+  await typeBody(current.page, "Sample: this cancelled note character stays out of Tasks ");
+  await current.page.keyboard.type("Z");
+  await current.page.mouse.click(outsideTaskInput.x, outsideTaskInput.y); await paint(current.page);
+  await expectState(current.page, archived, "Clicking the Task input must cancel the note edit before that input takes focus");
+  await expectNoNoteDraft(current.page);
+  const cleanTaskText = "Sample: fresh task after cancelling a note";
+  // Do not select-all or clear: a leaked note character must remain detectable.
+  await current.page.keyboard.type(cleanTaskText, { delay: 10 }); await key(current.page, "Enter");
+  await current.page.waitForFunction(({ key, count }) => JSON.parse(localStorage.getItem(key)).tasks.length === count,
+    { key: storageKey, count: archived.tasks.length + 1 });
+  const afterOutsideTask = await state(current.page);
+  const cleanTask = afterOutsideTask.tasks.find(task => !archived.tasks.some(original => original.id === task.id));
+  assert.ok(cleanTask, "The new Task input must create exactly the separate requested task");
+  assert.equal(cleanTask.text, cleanTaskText, "The old note's queued character must never leak into the newly focused Task input");
+  assert.equal(cleanTask.complete, false); assert.equal(cleanTask.list_id ?? 1, 1);
+  const precedingRecords = structuredClone(afterOutsideTask);
+  precedingRecords.tasks = precedingRecords.tasks.filter(task => task.id !== cleanTask.id);
+  assert.deepEqual(precedingRecords, archived, "The cancelled note and its archived schedule must survive adding the separate fresh task");
+  await undo(current, archived);
+  await canvasFocus(current.page);
+  await key(current.page, "Control+Alt+2"); await tab(current.page, headerTargets + 2); await key(current.page, "Space");
+  await key(current.page, "Shift+Tab"); await key(current.page, "Shift+Space");
+  notePoints = await sharedNotePoints(current.page);
+  await current.page.mouse.click(notePoints.body.x, notePoints.body.y); await paint(current.page);
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
+  await typeBody(current.page, "Sample: changing task lists cancels this note draft");
+  await current.page.mouse.click(110, 55); await paint(current.page); // Show tab, outside the note editor.
+  await expectState(current.page, archived, "Selecting a task list must cancel the shared-board note edit without changing its archived task");
+  await expectNoNoteDraft(current.page);
+  // Restore Studio-active combined lists before targeting the Show row below.
+  await canvasFocus(current.page);
+  await key(current.page, "Control+Alt+2"); await tab(current.page, headerTargets + 2); await key(current.page, "Space");
+  await key(current.page, "Shift+Tab"); await key(current.page, "Shift+Space");
   await canvasFocus(current.page);
   await key(current.page, "Control+Alt+2"); await tab(current.page, headerTargets + 8); // Header, strip5, commands2, first star.
   const rowStar = await focusedButtonRect(current.page);
@@ -697,6 +806,21 @@ try {
   // A touch-capable wide viewport keeps the source board and target visible;
   // the separate phone checks exercise the narrow responsive layout.
   current = await open("notes-task-touch-drop", archived, false, false, true);
+  notePoints = await sharedNotePoints(current.page);
+  await current.page.mouse.click(notePoints.body.x, notePoints.body.y); await paint(current.page);
+  const sharedSaveBody = "Sample: Ctrl-S saves the shared Tasks note ";
+  await typeBody(current.page, sharedSaveBody);
+  await current.page.keyboard.type("Z");
+  const sharedDownloads = [];
+  const recordSharedDownload = download => sharedDownloads.push(download.suggestedFilename());
+  current.page.on("download", recordSharedDownload);
+  await current.page.keyboard.press("Control+s"); await paint(current.page);
+  const sharedSaved = structuredClone(archived); sharedSaved.notes[0].text = sharedSaveBody + "Z";
+  await expectState(current.page, sharedSaved, "Ctrl-S in the shared Tasks board must save its active note, including queued text");
+  await expectNoNoteDraft(current.page);
+  assert.deepEqual(sharedDownloads, [], "Saving an active shared note must not also download the Tasks ODS backup");
+  await undo(current, archived);
+  await canvasFocus(current.page); await key(current.page, "Control+Alt+2");
   notePoints = await sharedNotePoints(current.page);
   const taskToolbar = await taskGanttButtonPoint(current.page);
   const blankDrop = { x: 220, y: taskToolbar.y + 120 };
@@ -728,10 +852,30 @@ try {
   await expectState(current.page, archived, "A rapid cancel/restart on the same note grip must remain a preview until release");
   await noteTouch("touchEnd"); await paint(current.page);
   await expectState(current.page, restored, "A blank-pane touch drop must use the active list and preserve the original note/task metadata");
-  await undo(current, archived); await current.context.close();
+  await undo(current, archived);
+  // Keep observing through subsequent app frames and the complete touch flow,
+  // so a delayed wrong ODS dispatch cannot escape an early absence check.
+  assert.deepEqual(sharedDownloads, [], "Explicit note Save must never schedule a delayed Tasks backup download");
+  current.page.off("download", recordSharedDownload);
+  await current.context.close();
 
-  progress("reorder the same notes using a real touch drag");
+  progress("explicitly Save by touch, cancel a touched-outside draft, and reorder the same notes");
   current = await open("notes-mobile", fixture, true);
+  await focusNote(current, 0, 6); await key(current.page, "Space");
+  const touchBody = "Sample: explicit touch Save retains this note";
+  await typeBody(current.page, touchBody);
+  await tab(current.page); const touchSave = await focusedButtonRect(current.page);
+  await current.page.touchscreen.tap(touchSave.x, touchSave.y); await paint(current.page);
+  const touchSaved = structuredClone(fixture); touchSaved.notes[0].text = touchBody;
+  await expectState(current.page, touchSaved, "Tapping Save must explicitly persist the edited note");
+  await expectNoNoteDraft(current.page);
+  await undo(current, fixture);
+  await notes(current); await tab(current.page, headerTargets + 1); await key(current.page, "Space");
+  await typeBody(current.page, "Sample: tapping outside discards this new note");
+  await current.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.note?.id === null);
+  await current.page.touchscreen.tap(350, 600); await paint(current.page);
+  await expectState(current.page, fixture, "A real touch outside a new unsaved note must discard it without creating a record");
+  await expectNoNoteDraft(current.page);
   const first = await grip(current, 0), second = await grip(current, 1);
   const session = await current.context.newCDPSession(current.page);
   const touch = (type, x, y) => session.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y, radiusX: 1, radiusY: 1, force: 1, id: 1 }] });
@@ -779,7 +923,7 @@ try {
   assert.equal(await current.page.evaluate(() => document.activeElement?.tagName === "INPUT"), false, "A scrolling body swipe must not open the editor");
   await current.context.close();
   assert.deepEqual(issues, [], "The shared note board must stay local and emit no app errors");
-  console.log("Notes browser checks passed: titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, atomic Undo, shared Notes/Tasks board, body-click editing and mouse/touch grip drops with release-only conversion and safe cancellation/rapid restart, full text/metadata/featured preservation, reload, JSON import/export and 81-note limit.");
+  console.log("Notes browser checks passed: explicit Ctrl-Enter/Ctrl-S/button/touch Save including queued input; outside-click, workspace, other-note, Add-note and task-list cancellation without autosave or Undo/Redo mutation; cancelled note input cannot leak into Tasks; editor-local Copy and keyboard focus; titleless multiline add/edit/delete, pin and keyboard/pointer/touch reorder, shared Notes/Tasks board, release-only grip conversion and cancellation/rapid restart, full metadata/featured preservation, reload, JSON import/export and 81-note limit.");
 } catch (error) {
   console.error(`Notes browser failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) {

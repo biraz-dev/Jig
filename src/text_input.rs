@@ -138,6 +138,7 @@ impl OrderedInput {
         let mut finish_before_press = false;
         let mut sheet_edit_pending = false;
         let mut press_origin = None;
+        let mut completed_editor_click = None;
         for (index, event) in input.events.iter().enumerate() {
             if finish_before_press
                 && matches!(
@@ -162,9 +163,11 @@ impl OrderedInput {
                 break;
             }
             if let Event::PointerMoved(pos) = event {
-                if press_origin.is_some_and(|origin| origin != *pos) {
-                    // A resumed touch must hit-test its grip before later motion
-                    // can move the pointer over a different widget.
+                if press_origin.is_some_and(|origin| origin != *pos)
+                    || completed_editor_click.is_some_and(|position| position != *pos)
+                {
+                    // Hit-test the completed click or resumed touch before
+                    // later motion moves the pointer onto another widget.
                     self.deferred = input.events.split_off(index);
                     ctx.request_repaint();
                     break;
@@ -226,6 +229,20 @@ impl OrderedInput {
                     ..
                 }
             );
+            // Finish an editor's button click before a later click can switch
+            // its context, even when focus has moved to the Save button.
+            if protect_editor {
+                if let Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    ..
+                } = event
+                {
+                    completed_editor_click = Some(*pos);
+                    finish_before_press = true;
+                }
+            }
             finish_before_press |= editor_focused
                 && matches!(
                     event,

@@ -58,6 +58,9 @@ pub struct NotesPanel {
     drag: Option<Drag>,
     reveal: Option<u64>,
     error: Option<String>,
+    editor_rect: Option<(egui::Rect, egui::Rect)>,
+    outside_check_pass: Option<u64>,
+    save_requested: bool,
     keyboard_ids: Vec<egui::Id>,
     pub focused: bool,
 }
@@ -158,6 +161,7 @@ impl NotesPanel {
     /// Finish a valid edit as one application action. An invalid draft stays
     /// available for correction; an unchanged edit closes without an action.
     pub fn finish_edit(&mut self) -> Option<NoteAction> {
+        self.save_requested = false;
         if self
             .draft
             .as_ref()
@@ -175,6 +179,7 @@ impl NotesPanel {
             }
         };
         let draft = self.draft.take()?;
+        self.editor_rect = None;
         self.error = None;
         match draft.id {
             Some(id) if draft.original != text => Some(NoteAction::Edit { id, text }),
@@ -185,7 +190,57 @@ impl NotesPanel {
 
     pub fn cancel_edit(&mut self) {
         self.draft = None;
+        self.pending_edit = None;
+        self.editor_rect = None;
+        self.save_requested = false;
         self.error = None;
+    }
+
+    /// Handle an outside click before a header action can hide the board.
+    /// Blur, keyboard navigation and scrolling leave the recovery draft intact.
+    pub fn cancel_if_clicked_outside(&mut self, ctx: &egui::Context) -> bool {
+        let Some((rect, viewport)) = self.editor_rect else {
+            return false;
+        };
+        if !self.has_draft() || viewport != ctx.screen_rect() {
+            return false;
+        }
+        let pass = ctx.cumulative_pass_nr();
+        if self.outside_check_pass == Some(pass) {
+            return false;
+        }
+        if !ctx.input(|input| input.pointer.primary_clicked()) {
+            return false;
+        }
+        // The pre-header check uses the card the user actually saw. Do not
+        // reinterpret that click if this frame's layout moves the card.
+        self.outside_check_pass = Some(pass);
+        let outside = ctx.input(|input| {
+            input.pointer.primary_clicked()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|position| !rect.contains(position))
+                && !input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                })
+        });
+        if outside {
+            self.cancel_edit();
+            ctx.request_repaint();
+        }
+        outside
+    }
+
+    /// Queue an explicit Save until the text field has consumed pending input.
+    pub fn request_save(&mut self) {
+        self.save_requested = self.has_draft();
     }
 
     pub fn reset(&mut self) {
@@ -239,13 +294,12 @@ impl NotesPanel {
         if self.draft.as_ref().is_some_and(|draft| draft.id == id) {
             return;
         }
-        // A header or earlier card can be clicked in the same input frame as
-        // the last text/paste event for a later card. Let its editor consume
-        // that input before finishing the old draft or replacing its target.
+        // Open the new target after the old card has rendered, so its queued
+        // text input cannot accidentally enter a different note.
         self.pending_edit = Some((id, text.to_owned()));
     }
 
-    fn finish_pending_edit(&mut self, state: &State, actions: &mut Vec<NoteAction>) {
+    fn finish_pending_edit(&mut self, state: &State, actions: &[NoteAction]) {
         let Some((id, text)) = self.pending_edit.take() else {
             return;
         };
@@ -257,12 +311,7 @@ impl NotesPanel {
         }) {
             return;
         }
-        if let Some(action) = self.finish_edit() {
-            actions.push(action);
-        }
-        if self.has_draft() {
-            return;
-        }
+        self.cancel_edit();
         self.convert = None;
         self.drag = None;
         self.error = None;
@@ -343,6 +392,8 @@ impl NotesPanel {
             ui.label(RichText::new(error).small().color(colors.error));
         }
         let mut cards = Vec::new();
+        let editing = self.draft.as_ref().map(|draft| draft.id);
+        let mut editor_rect = None;
         // Override Grid's centered layout per cell so frames share the row's top edge.
         egui::Grid::new("notes-board")
             .num_columns(columns)
@@ -370,20 +421,24 @@ impl NotesPanel {
                         )
                         .inner;
                     cards.push((note.id, note.pinned, rect));
+                    if editing == Some(Some(note.id)) {
+                        editor_rect = Some(rect.intersect(ui.clip_rect()));
+                    }
                     count += 1;
                     if count % columns == 0 {
                         ui.end_row();
                     }
                 }
                 if self.draft.as_ref().is_some_and(|draft| draft.id.is_none()) {
-                    ui.scope_builder(
-                        egui::UiBuilder::new()
-                            .id_salt("new-note")
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                        |ui| {
-                            self.editor_card(ui, width, &mut actions);
-                        },
-                    );
+                    let rect = ui
+                        .scope_builder(
+                            egui::UiBuilder::new()
+                                .id_salt("new-note")
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                            |ui| self.editor_card(ui, width, &mut actions),
+                        )
+                        .inner;
+                    editor_rect = Some(rect.intersect(ui.clip_rect()));
                 }
             });
 
@@ -430,9 +485,16 @@ impl NotesPanel {
                 }
             }
         }
+        self.editor_rect = if editing == self.draft.as_ref().map(|draft| draft.id) {
+            editor_rect.map(|rect| (rect, ui.ctx().screen_rect()))
+        } else {
+            None
+        };
         if self.pending_edit.is_some() {
-            self.finish_pending_edit(state, &mut actions);
+            self.finish_pending_edit(state, &actions);
             ui.ctx().request_repaint();
+        } else {
+            self.cancel_if_clicked_outside(ui.ctx());
         }
         actions
     }
@@ -581,7 +643,12 @@ impl NotesPanel {
         response.response.rect
     }
 
-    fn editor_card(&mut self, ui: &mut Ui, width: f32, actions: &mut Vec<NoteAction>) {
+    fn editor_card(
+        &mut self,
+        ui: &mut Ui,
+        width: f32,
+        actions: &mut Vec<NoteAction>,
+    ) -> egui::Rect {
         let colors = web_theme::colors(ui.ctx());
         egui::Frame::default()
             .fill(colors.bg)
@@ -597,16 +664,13 @@ impl NotesPanel {
                         self.editor(ui, actions);
                     },
                 );
-            });
+            })
+            .response
+            .rect
     }
 
     fn editor(&mut self, ui: &mut Ui, actions: &mut Vec<NoteAction>) {
-        if self.pending_edit.is_some() {
-            // The clicked switch target may have taken keyboard focus before
-            // this card was rendered. Retain the old input long enough to
-            // consume this frame's final text/paste events before committing.
-            ui.memory_mut(|memory| memory.request_focus(draft_input_id()));
-        }
+        let save_requested = std::mem::take(&mut self.save_requested);
         let Some(draft) = self.draft.as_mut() else {
             return;
         };
@@ -634,7 +698,7 @@ impl NotesPanel {
             draft.focus = false;
             ui.ctx().request_repaint();
         }
-        let mut save = save_key;
+        let mut save = save_key || save_requested;
         let mut cancel = false;
         ui.horizontal_wrapped(|ui| {
             let save_button = ui.small_button("Save").on_hover_text("Ctrl-Enter");

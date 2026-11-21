@@ -983,9 +983,8 @@ impl BrowserApp {
                 | SheetAction::OpenOds
                 | SheetAction::ImportCsv(_)
                 | SheetAction::ExportCsv(_)
-        ) && !self.flush_notes_edit()
-        {
-            return false;
+        ) {
+            self.cancel_notes_edit();
         }
         match &action {
             SheetAction::ImportCsv(id) => {
@@ -1210,19 +1209,9 @@ impl BrowserApp {
         }
     }
 
-    fn flush_notes_edit(&mut self) -> bool {
-        if self.pending_note_input {
-            self.status = "Save the note edit before continuing.".into();
-            return false;
-        }
-        if let Some(action) = self.notes.finish_edit() {
-            return self.apply_note_action(action);
-        }
-        if self.notes.has_draft() {
-            self.status = "Finish or cancel the note edit before continuing.".into();
-            return false;
-        }
-        true
+    fn cancel_notes_edit(&mut self) {
+        self.notes.cancel_edit();
+        self.pending_note_input = false;
     }
 
     fn notes_board(&mut self, ui: &mut Ui) {
@@ -1241,9 +1230,10 @@ impl BrowserApp {
             self.deferred_view = Some(DeferredView::Notes);
             return false;
         }
-        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
+        if !self.flush_sheet_edit() {
             return false;
         }
+        self.cancel_notes_edit();
         self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
@@ -1310,9 +1300,10 @@ impl BrowserApp {
             });
             return false;
         }
-        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
+        if !self.flush_sheet_edit() {
             return false;
         }
+        self.cancel_notes_edit();
         self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
@@ -1397,9 +1388,10 @@ impl BrowserApp {
             self.deferred_view = Some(DeferredView::Tasks);
             return false;
         }
-        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
+        if !self.flush_sheet_edit() {
             return false;
         }
+        self.cancel_notes_edit();
         self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.calendar_task_date_target = None;
@@ -2445,9 +2437,6 @@ impl BrowserApp {
         date_columns: &[usize],
         amount_columns: &[usize],
     ) -> bool {
-        if !self.flush_notes_edit() {
-            return false;
-        }
         let apply = |book: &mut Workbook, target| -> Result<bool, String> {
             let mut changed = book.set_block(target, origin, &rows)?;
             if !rows.is_empty() {
@@ -2754,9 +2743,10 @@ impl BrowserApp {
             self.status = "Save or clear task edits before opening another dataset.".into();
             return;
         }
-        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
+        if !self.flush_sheet_edit() {
             return;
         }
+        self.cancel_notes_edit();
         if self.dirty {
             self.status =
                 "Save your changes before opening another dataset. If saving is unavailable, export JSON, then reload to reopen the saved copy."
@@ -2832,19 +2822,15 @@ impl BrowserApp {
                 if ui.button("Open local data").clicked() {
                     self.open_local();
                 }
-                if ui.button("Import JSON").clicked()
-                    && self.flush_sheet_edit()
-                    && self.flush_notes_edit()
-                {
+                if ui.button("Import JSON").clicked() && self.flush_sheet_edit() {
+                    self.cancel_notes_edit();
                     self.cancel_document_import();
                     if let Err(error) = browser_storage::request_import() {
                         self.status = error;
                     }
                 }
-                if ui.button("Export JSON").clicked()
-                    && self.flush_sheet_edit()
-                    && self.flush_notes_edit()
-                {
+                if ui.button("Export JSON").clicked() && self.flush_sheet_edit() {
+                    self.cancel_notes_edit();
                     self.status = match browser_storage::download(&self.state) {
                         Ok(()) => "JSON download prepared on this device.".into(),
                         Err(error) => error,
@@ -2891,7 +2877,8 @@ impl BrowserApp {
             let summary = format!("Import {sheets} sheets / {cells} cells, {} tasks, {} notes, {} deadlines and {} calculations? This replaces the browser's saved Jig data.", import.tasks.len(), import.notes.len(), import.deadlines.len(), import.history.len());
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(summary).color(palette.accent));
-                if ui.button("Confirm import").clicked() && self.flush_notes_edit() {
+                if ui.button("Confirm import").clicked() {
+                    self.cancel_notes_edit();
                     if let Some(import) = self.pending_import.take() {
                         self.replace_personal(import);
                     }
@@ -4873,6 +4860,7 @@ impl eframe::App for BrowserApp {
                 .is_some_and(|id| TextEdit::load_state(ctx, id).is_some());
         let protect = sheet_input
             || chart_input
+            || self.notes.has_draft()
             || self.settings_open
             || ctx.memory(|memory| memory.focused()).is_some_and(|id| {
                 id == egui::Id::new("task-input")
@@ -4909,6 +4897,9 @@ impl eframe::App for BrowserApp {
             crate::settings_storage::system_accent(self.settings.system_accent),
         );
         let palette = web_theme::colors(ctx);
+        if self.notes.cancel_if_clicked_outside(ctx) {
+            self.pending_note_input = false;
+        }
         self.process_draft_events(ctx);
         self.process_settings_events();
         if self.ordered_input.has_pending() {
@@ -4967,6 +4958,19 @@ impl eframe::App for BrowserApp {
         crate::settings_storage::set_capture(settings_capture);
         if !self.settings_open && self.info_page.is_none() && !settings_capture {
             self.navigation_shortcuts(ctx);
+            if (self.notes_workspace || (self.tasks_workspace && self.notes.has_draft()))
+                && Self::consume_chord(
+                    ctx,
+                    jig::app_settings::Chord::ctrl(jig::app_settings::ShortcutKey::S),
+                )
+            {
+                if self.notes.has_draft() {
+                    self.notes.request_save();
+                    ctx.request_repaint();
+                } else if self.dirty {
+                    self.save_current();
+                }
+            }
             if self.sheet_workspace || self.tasks_workspace {
                 for (key, action) in [
                     (jig::app_settings::ShortcutKey::S, SheetAction::SaveOds),
@@ -4982,16 +4986,6 @@ impl eframe::App for BrowserApp {
                         self.apply_sheet_action(action);
                     }
                 }
-            }
-            if self.notes_workspace
-                && Self::consume_chord(
-                    ctx,
-                    jig::app_settings::Chord::ctrl(jig::app_settings::ShortcutKey::S),
-                )
-                && self.flush_notes_edit()
-                && self.dirty
-            {
-                self.save_current();
             }
             if !self.sheet_workspace
                 && !self.notes_workspace
@@ -5294,6 +5288,7 @@ impl eframe::App for BrowserApp {
                     if self.has_pending_editor_input() {
                         self.toggle_settings(ctx);
                     } else if self.flush_sheet_edit() {
+                        self.cancel_notes_edit();
                         self.charts.cancel_gesture();
                         self.cancel_task_note_drag(ctx);
                         self.timeline.cancel_gesture();
@@ -5311,6 +5306,7 @@ impl eframe::App for BrowserApp {
                     if self.has_pending_editor_input() {
                         self.deferred_view = Some(DeferredView::Info(page));
                     } else if self.flush_sheet_edit() {
+                        self.cancel_notes_edit();
                         self.charts.cancel_gesture();
                         self.cancel_task_note_drag(ctx);
                         self.timeline.cancel_gesture();

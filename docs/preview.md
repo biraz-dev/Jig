@@ -140,7 +140,11 @@ storage.
 Normal refreshes and deployed application updates retain that saved dataset.
 Unfinished task/note text and date edits are backed up per tab in session storage and restored
 after refresh; changed underlying records are recovered as new drafts rather than
-overwritten. Save/Ctrl-Enter commits a note, and Enter adds a task. Workspace
+overwritten. Save, Ctrl-Enter or Ctrl-S commits a note; Enter adds a task.
+Cancel, Escape, an outside click, changing notes or leaving the note's workspace
+discards its draft without changing saved notes or Undo/Redo. Clicking inside the
+card, scrolling, tabbing between its controls or losing browser focus keeps the
+draft open. Workspace
 preferences are stored separately in this browser.
 Commit a sheet editor with Enter before leaving. Start empty deliberately starts
 an empty dataset. Legacy temporary-demo drafts are ignored rather than restored

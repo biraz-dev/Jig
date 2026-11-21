@@ -498,12 +498,16 @@ Open **Notes** in the top bar, or press **Ctrl-Alt-N**. The same board also appe
 below Tasks/Gantt. Notes are plain text with no title field: up to 81 cards, with
 at most nine columns on wide screens and fewer columns on smaller screens.
 
-Choose **Add note**, type or paste, and use **Save** or **Ctrl-Enter**. Enter adds
-a new line; Escape cancels the draft. Click a card's text to edit it. **copy**
+Choose **Add note**, type or paste, and use **Save**, **Ctrl-Enter** or **Ctrl-S**.
+Enter adds a new line. **Cancel**, **Escape**, clicking outside the editing card,
+or leaving its workspace discards the draft and keeps the saved note unchanged.
+Opening another note or choosing Add note also discards the previous draft.
+Click a card's text to edit it. **copy**
 copies its complete text, including lines hidden by the compact card preview.
 Pinned notes stay first. Drag a card's handle to reorder it, or focus the handle
 and use **Alt-arrows**; pinned and unpinned notes reorder within their groups.
-**del** discards a card. Editing, pinning, moving and deletion use the shared Undo.
+**×** deletes a card. Saved edits, pinning, moving and deletion use the shared Undo;
+cancelling a draft leaves Undo and Redo unchanged.
 
 Choose **task** on a note to pick a task list and convert it. Its first nonblank
 line becomes the checklist name, and the full original text stays with the task.

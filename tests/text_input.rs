@@ -4,7 +4,7 @@ pub use egui;
 #[path = "../src/text_input.rs"]
 mod text_input;
 
-use egui::{Context, Event, Id, Key, Modifiers, RawInput, Rect, TextEdit};
+use egui::{Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, TextEdit};
 
 fn input(events: Vec<Event>) -> RawInput {
     RawInput {
@@ -29,6 +29,99 @@ fn key(key: Key, modifiers: Modifiers) -> Vec<Event> {
             modifiers,
         })
         .collect()
+}
+
+fn click(position: Pos2) -> Vec<Event> {
+    [true, false]
+        .into_iter()
+        .map(|pressed| Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        })
+        .collect()
+}
+
+#[test]
+fn save_click_finishes_before_a_queued_outside_click_without_text_focus() {
+    let ctx = Context::default();
+    let mut ordered = text_input::OrderedInput::default();
+    let mut targets = [Pos2::ZERO; 2];
+    let mut save_id = Id::NULL;
+    let mut actions = Vec::new();
+    let mut frame = |events, time| {
+        let mut raw = input(events);
+        raw.time = Some(time);
+        ordered.process(&ctx, &mut raw, true, false, &[]);
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let save = ui.button("Save");
+                    let outside = ui.button("Another tool");
+                    targets = [save.rect.center(), outside.rect.center()];
+                    save_id = save.id;
+                    if save.clicked() {
+                        actions.push("save");
+                    }
+                    if outside.clicked() {
+                        actions.push("outside");
+                    }
+                });
+            });
+        });
+        (targets, save_id)
+    };
+    let (targets, save) = frame(vec![], 0.0);
+    ctx.memory_mut(|memory| memory.request_focus(save));
+    frame(vec![Event::PointerMoved(targets[0])], 0.01);
+    let mut events = click(targets[0]);
+    events.push(Event::PointerMoved(targets[1]));
+    events.extend(click(targets[1]));
+    frame(events, 0.02);
+    frame(vec![], 0.03);
+    frame(vec![], 0.04); // Prime the outside pointer, then deliver its press.
+    assert_eq!(actions, ["save", "outside"]);
+    assert!(!ordered.has_pending());
+}
+
+#[test]
+fn protected_double_clicks_still_register_and_ordinary_click_batches_are_unchanged() {
+    let ctx = Context::default();
+    let mut ordered = text_input::OrderedInput::default();
+    let mut target = Pos2::ZERO;
+    let mut double_clicked = false;
+    let mut frame = |events, time| {
+        let mut raw = input(events);
+        raw.time = Some(time);
+        ordered.process(&ctx, &mut raw, true, false, &[]);
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let response = ui.button("Reset");
+                target = response.rect.center();
+                double_clicked |= response.double_clicked();
+            });
+        });
+        target
+    };
+    let target = frame(vec![], 0.0);
+    frame(vec![Event::PointerMoved(target)], 0.01);
+    let events = [click(target), click(target)].concat();
+    frame(events.clone(), 0.02);
+    frame(vec![], 0.03);
+    assert!(
+        double_clicked,
+        "Splitting clicks must preserve double-click timing"
+    );
+    assert!(!ordered.has_pending());
+
+    let mut ordinary = input(events.clone());
+    ordered.process(&ctx, &mut ordinary, false, false, &[]);
+    assert_eq!(
+        ordinary.events, events,
+        "Unprotected widgets keep their existing batching"
+    );
+    assert!(!ordered.has_pending());
 }
 
 #[test]

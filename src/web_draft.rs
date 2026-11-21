@@ -109,9 +109,10 @@ impl BrowserApp {
             self.deferred_view = Some(DeferredView::Draft);
             return false;
         }
-        if !self.flush_sheet_edit() || !self.flush_notes_edit() {
+        if !self.flush_sheet_edit() {
             return false;
         }
+        self.cancel_notes_edit();
         self.charts.cancel_gesture();
         self.cancel_task_note_drag(ctx);
         self.timeline.cancel_gesture();

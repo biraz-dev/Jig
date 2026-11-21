@@ -122,7 +122,7 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
     section(
         ui,
         "Notes",
-        "Keep up to 81 plain-text cards. Add note, type or paste, then Save or Ctrl+Enter. Enter adds a line; Esc cancels. Click text to edit it, copy to copy all of it, and pin to keep it first. Drag handles to reorder cards within their pinned or unpinned group.",
+        "Keep up to 81 plain-text cards. Add note, type or paste, then Save, Ctrl+Enter or Ctrl+S. Enter adds a line. Cancel, Esc, clicking outside the editing card or leaving its workspace discards the draft; opening another note also discards it. Click text to edit it, copy to copy all of it, and pin to keep it first. Drag handles to reorder cards within their pinned or unpinned group.",
     );
     ui.label("On Tasks, drag a note's handle onto the task list to turn it into a task at the highlighted position. The note's task button also lets you choose its list. To note in the task editor converts it back. Conversion moves the record and retains its full text; a converted scheduled task keeps its dates for restoration.");
     section(

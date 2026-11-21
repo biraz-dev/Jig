@@ -217,6 +217,15 @@ impl CalendarPanel {
         }
         if response.has_focus() {
             let page = (width / self.view.day_width()).floor().max(1.0) * self.view.day_width();
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    id,
+                    egui::EventFilter {
+                        horizontal_arrows: true,
+                        ..Default::default()
+                    },
+                )
+            });
             let (days, pan, home, zoom) = ui.input_mut(|input| {
                 let none = egui::Modifiers::NONE;
                 let days = if input.consume_key(none, egui::Key::ArrowLeft) {

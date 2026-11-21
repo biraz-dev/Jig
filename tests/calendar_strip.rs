@@ -1,6 +1,22 @@
 use chrono::{Datelike, NaiveDate};
 use jig::calendar_strip::{Viewport, MAX_DAY_WIDTH, MIN_DAY_WIDTH};
 
+extern crate self as eframe;
+pub use egui;
+#[allow(dead_code)]
+#[path = "../src/calendar_ui.rs"]
+mod calendar_ui;
+#[allow(dead_code)]
+#[path = "../src/web_theme.rs"]
+mod web_theme;
+
+// The empty calendar fixture has no task marks; only the color adapter is needed.
+mod web {
+    pub fn task_color(_: Option<jig::model::TaskColor>, _: bool) -> egui::Color32 {
+        egui::Color32::WHITE
+    }
+}
+
 fn day(year: i32, month: u32, date: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, date).unwrap()
 }
@@ -66,4 +82,108 @@ fn reveal_and_pan_remain_within_portable_dates_and_reject_invalid_motion() {
     assert_eq!(view, before);
     assert!(view.visible(f32::INFINITY).is_empty());
     assert!(view.visible(-1.0).is_empty());
+}
+
+#[test]
+fn dates_keep_keyboard_navigation_and_zoom_inside_a_scrolling_pane() {
+    use egui::{epaint::Shape, Context, Event, Key, Modifiers, Pos2, RawInput, Rect};
+
+    fn selected_width(shape: &Shape, color: egui::Color32) -> Option<f32> {
+        match shape {
+            Shape::Rect(rect) if rect.fill == color && rect.rect.height() > 50.0 => {
+                Some(rect.rect.width())
+            }
+            Shape::Vec(shapes) => shapes.iter().find_map(|shape| selected_width(shape, color)),
+            _ => None,
+        }
+    }
+
+    for changing_weather in [false, true] {
+        let ctx = Context::default();
+        web_theme::apply(&ctx, &jig::app_settings::AppSettings::default(), None);
+        let state = jig::model::State::default();
+        let today = day(2026, 10, 30);
+        let mut selected = today;
+        let mut calendar = calendar_ui::CalendarPanel::new(today);
+        calendar.request_focus();
+        let mut normal_width = 0.0;
+        for (frame, key) in [
+            None,
+            None,
+            Some(Key::Home),
+            Some(Key::ArrowRight),
+            Some(Key::Home),
+            Some(Key::Equals),
+            Some(Key::Minus),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let events = key.map_or_else(Vec::new, |key| {
+                [true, false]
+                    .into_iter()
+                    .map(|pressed| Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    })
+                    .collect()
+            });
+            let output = ctx.run(
+                RawInput {
+                    focused: true,
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1440.0, 1000.0))),
+                    time: Some(frame as f64 * 0.1),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("tasks-upper-area")
+                            .drag_to_scroll(false)
+                            .max_height(560.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(760.0);
+                                ui.horizontal(|ui| {
+                                    ui.label("Calendar");
+                                    ui.label("Dates");
+                                    ui.label("Timeline");
+                                });
+                                ui.label("Sample Harbor · °C · options");
+                                if changing_weather && selected != today {
+                                    ui.label("High 22°C · Low 14°C");
+                                    ui.label("Rain 60% · Humidity 75%");
+                                } else {
+                                    ui.label("High 20°C · Low 12°C");
+                                }
+                                if let Some(date) = calendar.ui(ui, &state, today, selected, &[1]) {
+                                    selected = date;
+                                }
+                                ui.add_space(400.0);
+                            });
+                    });
+                },
+            );
+            assert!(calendar.owns_keyboard(&ctx), "Focus lost after {key:?}");
+            let width = output
+                .shapes
+                .iter()
+                .find_map(|shape| selected_width(&shape.shape, web_theme::colors(&ctx).selected))
+                .expect("The selected date must remain visible");
+            match key {
+                Some(Key::ArrowRight) => assert_eq!(selected, today + chrono::Duration::days(1)),
+                Some(Key::Home) => {
+                    assert_eq!(selected, today);
+                    normal_width = width;
+                }
+                Some(Key::Equals) => assert!(width > normal_width + 5.0),
+                Some(Key::Minus) => assert!((width - normal_width).abs() < 2.0),
+                _ => {}
+            }
+        }
+    }
 }

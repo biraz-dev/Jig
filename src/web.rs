@@ -1950,6 +1950,7 @@ impl BrowserApp {
                     .clamp(250.0_f32.min(available * 0.8), available * 0.8);
                 egui::ScrollArea::vertical()
                     .id_salt("tasks-upper-area")
+                    .drag_to_scroll(false)
                     .max_height(top_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| self.task_timeline_panels(ui, top_height, true));

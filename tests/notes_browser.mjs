@@ -584,6 +584,8 @@ try {
   await expectState(current.page, edited, "Copy inside the edited card must retain the draft without committing it");
   await current.page.mouse.click(explicitSave.x + 35, explicitSave.top - 35); await paint(current.page);
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
+  await expectEditorText(current.page, copyDraft);
+  await key(current.page, "Control+End"); // Refocusing by pointer can select a word; append at an explicit document end.
   await current.page.keyboard.type("Z");
   await current.page.mouse.click(explicitSave.x, explicitSave.y); // No paint: explicit Save must include the last character.
   await current.page.mouse.click(blankNotes.x, blankNotes.y); // A rapid later outside click must not cancel that Save.

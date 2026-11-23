@@ -590,6 +590,39 @@ impl BrowserApp {
             if let Some(note) = drafts.note {
                 recovered |= self.notes.restore_draft(note, &self.state)?;
             }
+            if let Some(schedule) = &drafts.schedule {
+                let target = (schedule.task_id, schedule.legacy_id);
+                let task_matches = drafts.task.as_ref().is_none_or(|task| {
+                    if (task.id, task.legacy_id) != target {
+                        return false;
+                    }
+                    let current = match target {
+                        (Some(id), None) => self
+                            .state
+                            .tasks
+                            .iter()
+                            .find(|item| item.id == id)
+                            .and_then(|item| serde_json::to_string(item).ok()),
+                        (None, Some(id)) => self
+                            .state
+                            .deadlines
+                            .iter()
+                            .find(|item| item.id == id)
+                            .and_then(|item| serde_json::to_string(item).ok()),
+                        _ => None,
+                    };
+                    current.is_some() && current.as_ref() == task.original.as_ref()
+                });
+                if schedule.task_id.is_some() == schedule.legacy_id.is_some()
+                    || self
+                        .schedule_source(schedule.task_id, schedule.legacy_id)
+                        .as_ref()
+                        != Some(&schedule.original)
+                    || !task_matches
+                {
+                    return Err("An unfinished task and date edit belongs to a changed or different item. Its complete backup has been preserved.".into());
+                }
+            }
             let mut restored_target = None;
             if let Some(task) = drafts.task {
                 let target = match (task.id, task.legacy_id) {
@@ -632,16 +665,6 @@ impl BrowserApp {
             }
             if let Some(schedule) = drafts.schedule {
                 let target = (schedule.task_id, schedule.legacy_id);
-                if schedule.task_id.is_some() == schedule.legacy_id.is_some()
-                    || self
-                        .schedule_source(schedule.task_id, schedule.legacy_id)
-                        .as_ref()
-                        != Some(&schedule.original)
-                    || restored_target.is_some_and(|restored| restored != target)
-                    || restored_target.is_none() && self.has_task_draft()
-                {
-                    return Err("An unfinished date edit belongs to a changed or different item. Its backup has been preserved.".into());
-                }
                 if restored_target.is_none() {
                     let ctx = self.ctx.clone();
                     self.edit_task_target(
@@ -3988,7 +4011,17 @@ impl BrowserApp {
 
     fn tasks(&mut self, ui: &mut Ui) -> Vec<TaskDropRow> {
         self.repair_task_selection(None);
-        let list_top = ui.cursor().top();
+        // Register before row click callbacks: a batched press/release must
+        // not blur the keyboard owner immediately after a row requests it.
+        ui.interact(
+            ui.available_rect_before_wrap(),
+            task_selection_id(),
+            if ui.memory(|memory| memory.has_focus(task_selection_id())) {
+                egui::Sense::focusable_noninteractive()
+            } else {
+                egui::Sense::hover()
+            },
+        );
         let palette = web_theme::colors(ui.ctx());
         let task_deadlines: std::collections::HashSet<_> = self
             .state
@@ -4385,18 +4418,6 @@ impl BrowserApp {
                 });
             }
         }
-        ui.interact(
-            egui::Rect::from_min_max(
-                egui::pos2(ui.max_rect().left(), list_top),
-                egui::pos2(ui.max_rect().right(), ui.cursor().top()),
-            ),
-            task_selection_id(),
-            if ui.memory(|memory| memory.has_focus(task_selection_id())) {
-                egui::Sense::focusable_noninteractive()
-            } else {
-                egui::Sense::hover()
-            },
-        );
         if ui.memory(|memory| memory.has_focus(task_selection_id())) {
             ui.memory_mut(|memory| {
                 memory.set_focus_lock_filter(

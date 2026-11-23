@@ -453,22 +453,83 @@ try {
   assert.equal(added.featured, fixture.featured);
   await undo(current, fixture);
 
-  progress("edit a task's membership and title atomically, then undo it");
+  progress("double-click a task and save its name, details, list and timed dates atomically");
   await selectList(current, 0);
-  await focusRowControl(current, 5); // First row's edit control.
-  await key(current.page, "Space");
-  // Only one row is selected: del, Studio, Home. Membership choices precede input.
-  await tab(current.page, 3);
-  await key(current.page, "Space");
-  await tab(current.page, 2); // Show, then task text input.
+  await focusRowControl(current, 4); // Dated row: star, complete, ×, color.
+  const color = await focusedControlPoint(current.page, 520);
+  await current.page.mouse.dblclick(color.right + 35, color.y, { delay: 80 });
+  await paint(current.page);
+  await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT");
+  await expectState(current.page, fixture, "Double-clicking a task must open its editor without changing any saved record");
   await replaceEditor(current.page, "Sample: revised casting studies");
+  await tab(current.page); // Name -> Due, in the same editor.
+  await replaceEditor(current.page, "2026-11-02 16:45");
+  await tab(current.page, 2); // Due picker -> Start.
+  await replaceEditor(current.page, "2026-10-27 08:30");
+  await tab(current.page, 3); // Start picker, Remove date, Details.
+  await replaceEditor(current.page, "Sample: revised casting studies");
+  await key(current.page, "End"); await key(current.page, "Shift+Enter");
+  await current.page.keyboard.type("Keep both measurements and firing notes."); await paint(current.page);
+  await expectState(current.page, fixture, "Shift+Enter in Details must insert a newline without saving any staged field");
+  await tab(current.page, 2); // Studio, Home.
+  await key(current.page, "Space");
+  const nameField = await taskInputPoint(current.page);
+  assert.ok(nameField, "The unified Task editor must retain a visible Name field beside its date controls");
+  await current.page.mouse.click(nameField.x, nameField.y); await paint(current.page);
   await key(current.page, "Enter");
   const moved = structuredClone(fixture);
   moved.tasks[0].text = "Sample: revised casting studies"; moved.tasks[0].list_id = 2;
+  moved.tasks[0].details = moved.tasks[0].text + "\nKeep both measurements and firing notes.";
+  moved.tasks[0].start = "2026-10-27T08:30:00Z";
   moved.deadlines[0].title = moved.tasks[0].text;
-  await expectState(current.page, moved, "Membership editing must reuse task/deadline IDs and preserve dates, colors and featured work");
+  moved.deadlines[0].at = "2026-11-02T16:45:00Z";
+  await expectState(current.page, moved, "One Save must reuse task/deadline IDs and commit the full name/details/list/timed schedule together");
   await undo(current, fixture);
-  await expectBars(current.page, ["rose"]);
+  await key(current.page, "Control+z"); await expectState(current.page, fixture, "One full name/details/list/date Save must create exactly one Undo entry");
+  await key(current.page, "Control+Shift+z"); await expectState(current.page, moved, "Redo must restore every field of the unified edit together");
+  await boot(current, true); await expectState(current.page, moved, "The complete unified edit must survive refresh");
+  assert.deepEqual(await exportData(current), moved, "Portable JSON must preserve every field from the unified timed Task edit");
+  await selectList(current, 0); // Reopen Studio, whose task moved to Home.
+  // Reload resets in-memory Undo, so test an independent second edit on Home.
+  await selectList(current, 1);
+  await focusRowControl(current, 6); await key(current.page, "Space");
+  await replaceEditor(current.page, "Sample: one atomic revision");
+  await tab(current.page); await replaceEditor(current.page, "2026-11-03 17:15");
+  await key(current.page, "Enter");
+  const secondRevision = structuredClone(moved);
+  secondRevision.tasks[0].text = "Sample: one atomic revision";
+  secondRevision.deadlines[0].title = secondRevision.tasks[0].text;
+  secondRevision.deadlines[0].at = "2026-11-03T17:15:00Z";
+  await expectState(current.page, secondRevision, "Enter in Due must save the name and timed date through the same transaction");
+  await undo(current, moved);
+  await key(current.page, "Control+z"); await expectState(current.page, moved, "One combined edit must create exactly one Undo entry");
+
+  progress("cancel all staged Task fields with Escape or an outside click while preserving Redo");
+  await focusRowControl(current, 6); await key(current.page, "Space");
+  await replaceEditor(current.page, "Sample: discard this name");
+  await tab(current.page); await replaceEditor(current.page, "2026-12-01 14:00");
+  await key(current.page, "Escape");
+  await expectState(current.page, moved, "Escape must discard the entire Task edit, including its name and timed date");
+  await key(current.page, "Control+Shift+z");
+  await expectState(current.page, secondRevision, "Opening and cancelling a Task edit must preserve the preceding Redo branch");
+  await undo(current, moved);
+  await focusRowControl(current, 6); await key(current.page, "Space");
+  await replaceEditor(current.page, "Sample: outside cancellation");
+  await tab(current.page); await replaceEditor(current.page, "2026-12-02 14:00");
+  await current.page.keyboard.type("Z");
+  await current.page.locator("#jig_canvas").click({ position: { x: 1434, y: 994 } }); // No paint after queued old-field text.
+  await paint(current.page);
+  await expectState(current.page, moved, "Clicking outside must discard every staged field, including a final queued character");
+  await current.page.waitForFunction(() => {
+    const draft = JSON.parse(sessionStorage.getItem("jig.drafts.v1"));
+    return !draft?.task && !draft?.schedule;
+  });
+  await key(current.page, "Control+Shift+z");
+  await expectState(current.page, secondRevision, "Outside cancellation must preserve Redo and create no saved work");
+  await undo(current, moved);
+  await current.context.close();
+  current = await open("task-lists-after-unified-edit", fixture);
+  await selectList(current, 0);
 
   progress("edit a linked due date and completion inside the selected list");
   const first = (await bars(current.page)).rose;
@@ -484,6 +545,19 @@ try {
   const completed = structuredClone(fixture); completed.tasks[0].complete = true;
   await expectState(current.page, completed, "Completing a selected task must retain its list, color, dates and another list's featured task");
   await expectBars(current.page, []);
+  await undo(current, fixture);
+
+  progress("delete through the compact boxed × beside the completion checkbox, then restore with Undo");
+  await focusRowControl(current, 2);
+  const completionBox = await focusedControlPoint(current.page, 520);
+  await tab(current.page);
+  const deleteBox = await focusedControlPoint(current.page, 520);
+  assert.ok(deleteBox.left > completionBox.right && deleteBox.left - completionBox.right < 18,
+    "The boxed × delete control must sit immediately after the completion checkbox");
+  await current.page.mouse.click(deleteBox.x, deleteBox.y); await paint(current.page);
+  const deletedTask = structuredClone(fixture);
+  deletedTask.tasks.splice(0, 1); deletedTask.deadlines.splice(0, 1);
+  await expectState(current.page, deletedTask, "The boxed × must remove only its task and linked deadline, preserving other lists and featured work");
   await undo(current, fixture);
 
   progress("remove a populated list by moving its existing tasks, then undo the operation");
@@ -871,7 +945,7 @@ try {
   await current.context.close();
 
   assert.deepEqual(issues, [], "Task-list changes must stay local and produce no app errors");
-  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, linked membership/name/date/completion edits and scoped completed removal, stable scoped due-date sorting, and completed-task moves to chosen lists through mouse/keyboard/touch with menu cancellation, single/Multi scope, selected destinations, preserved records and featured work, atomic Undo/Redo, refresh and JSON round trips.");
+  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, double-click unified name/details/list/timed-date editing with atomic Save/Undo, Escape/outside cancellation retaining Redo, compact boxed × deletion, linked date/completion edits and scoped completed removal, stable scoped due-date sorting, and completed-task moves to chosen lists through mouse/keyboard/touch with menu cancellation, single/Multi scope, selected destinations, preserved records and featured work, atomic Undo/Redo, refresh and JSON round trips.");
 } catch (error) {
   console.error(`Task-list browser checks failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "task-lists-failure").catch(() => {});

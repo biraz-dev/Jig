@@ -371,16 +371,19 @@ The compact Gantt adapter in `src/timeline_ui.rs` draws day-based Week/Month ran
 `src/timeline.rs` projection. Existing task colors and completion status appear
 on bars, with deadline-only diamonds and explicit No date rows. Tab, Enter/Space,
 pointer and touch open an inline editor. Selection is independent of featuring.
-The checklist and timeline share the same date editor and global Undo/Redo
+The checklist and timeline share one task editor and global Undo/Redo
 journal. The calendar icon beside either date field opens a month picker with a
 local 24-hour HH:MM time. Browsing and selecting days only change the picker;
-Use date updates the draft, Save date commits the range, and Cancel leaves the
-stored schedule untouched.
+Use date updates the draft. Save or Enter commits the name, details, list and
+schedule together in one Undo step. Shift-Enter adds a line in Details. Escape,
+Cancel or clicking outside discards the whole edit. Double-clicking task text,
+its edit control or its date control opens this same editor. The boxed × beside
+the completion checkbox deletes the task; the old del control is removed.
 
-To choose dates on the Calendar grid or Dates strip, keep the task's date editor
+To choose dates on the Calendar grid or Dates strip, keep the task editor
 open, switch to Calendar or Dates, and click or focus Start or Due. A label shows
-which field the next selected day will fill. The chosen time is retained, and Save date commits the
-whole range. Done picking or Esc leaves picking mode without discarding the
+which field the next selected day will fill. The chosen time is retained, and Save commits the
+whole task. Done picking or Esc leaves picking mode without discarding the
 draft. Panning and zooming only move the view; the featured countdown changes
 only when a saved edit changes its task's schedule.
 

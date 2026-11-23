@@ -538,7 +538,7 @@ try {
   await current.page.mouse.click(dueCaret.x + 6, dueCaret.y); await paint(current.page);
   await expectEditorText(current.page, "2026-11-02");
   await expectState(current.page, fixture, "Rejecting a resize must keep the unfinished editor without saving it");
-  await tab(current.page, 6); await key(current.page, "Space"); // Due picker, Start, Start picker, Save, Remove date, Cancel.
+  await key(current.page, "Escape"); // Cancel the complete task draft, including its dates.
   await timeline(current.page); rangeBar = await waitForBar(current.page);
   await startBarResize(current.page, rangeBar, "due", (rangeBar.width + 1) / 5);
   await current.page.mouse.up(); await paint(current.page);
@@ -885,10 +885,10 @@ try {
   const legacyOnly = { ...structuredClone(fixture), tasks: [], deadlines: [structuredClone(fixture.deadlines.at(-1))], featured: 107 };
   current = await open("timeline-legacy-checklist", legacyOnly);
   await tasks(current.page);
-  await tab(current.page, 14); await key(current.page, "Space"); // Header6, Tasks/+, Gantt/ODS, then star/check/color/date.
+  await tab(current.page, 15); await key(current.page, "Space"); // Header6, Tasks/+, Gantt/ODS, then star/check/×/color/date.
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
   assert.equal(await raw(current.page), JSON.stringify(legacyOnly), "Opening the checklist date field must not save a migrated record");
-  await tab(current.page, 6); await key(current.page, "Space"); // Cancel the untouched date form.
+  await key(current.page, "Escape"); // Cancel the untouched combined task form.
   assert.deepEqual(await exportData(current.page), legacyOnly, "Cancelling must preserve the actual in-memory legacy document without creating a task");
   await key(current.page, "Control+z"); await key(current.page, "Control+Shift+z");
   assert.deepEqual(await exportData(current.page), legacyOnly, "Merely viewing and cancelling a legacy date must not consume an Undo entry");
@@ -905,8 +905,7 @@ try {
   await key(current.page, "Space");
   await current.page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 50 });
   assert.equal(await raw(current.page), JSON.stringify(old), "Merely opening a legacy deadline editor must not create a linked task");
-  await tab(current.page, 6); // Due picker, Start, Start picker, Save, Remove date, Cancel.
-  await key(current.page, "Space");
+  await key(current.page, "Escape");
   assert.equal(await raw(current.page), JSON.stringify(old), "Cancelling the draft must leave legacy data intact");
 
   progress("give an existing undated task a range without duplicating its checklist row");

@@ -384,6 +384,13 @@ Tasks, their dates and the featured countdown are preserved.
 
 New tasks go into the active list. The task editor can move an existing task to
 another list. Reorder and clear-completed actions apply to the visible lists.
+
+Double-click a task's text, or choose **edit**, to open its inline editor. Text,
+details, list, Start and Due share one **Save**. **Enter** saves; **Shift-Enter**
+adds a line in Details. **Escape**, **Cancel**, or clicking outside discards the
+whole edit without changing saved data or Undo/Redo. The date control opens the
+same editor with Due focused. A completed edit is one Undo step.
+
 **Move all completed** opens a destination-list picker for the selected lists.
 Choose a list to move their completed tasks in one action; dates, colors, details
 and completion status stay with each task. **Undo** restores their original lists.
@@ -446,7 +453,8 @@ gets the same mark in the calendar; several tasks show separate marks and dense
 dates add a count. Completed tasks keep subdued, hollow marks. Click/tap a date,
 or select a day with the focused strip's arrow keys, to see task names, Open/Done
 status and weather. Selecting a date leaves the starred countdown alone. Completing a task clears
-its star; deleting a task also removes its linked deadline. **del** removes one
+its star; deleting a task also removes its linked deadline. The boxed **×** beside
+the completion checkbox removes one
 task; **Delete all completed tasks** asks before clearing completed work.
 Calendar note controls are hidden in the browser, while saved notes and native
 CLI/terminal note functions remain available.
@@ -464,11 +472,11 @@ date stays fixed, and crossing it stops at a one-day range. Existing clock times
 task colors, completion and the starred countdown are preserved. Focus an end
 handle and use Left/Right to change one day, or Shift-Left/Right for a week;
 Esc cancels a drag. A clipped end must be brought into view before resizing it.
-Deadline-only diamonds still use the date editor.
+Deadline-only diamonds open the same task editor without creating a task until Save.
 
-Select a row to edit dates inline. A calendar icon beside each start/due field
+Select a row to edit its text and dates together. A calendar icon beside each start/due field
 opens a month picker with local 24-hour HH:MM time. **Use date** updates the draft;
-**Save date** commits the schedule and **Cancel** leaves it unchanged. You can
+**Save** commits the task and schedule together; **Cancel** leaves both unchanged. You can
 also type `YYYY-MM-DD`, local `YYYY-MM-DD HH:MM`, or a timezone-qualified RFC3339
 timestamp. Date-only edits retain an existing time; new starts use midnight and
 new deadlines use 09:00 local time. Unchanged displayed times retain their exact
@@ -476,11 +484,11 @@ stored precision, and nonexistent local times are rejected. Removing a due date
 clears its start. The starred task stays independent of calendar/timeline
 selection. Legacy standalone deadlines remain usable.
 
-You can also pick on the Calendar grid or Dates strip: keep the date editor
+You can also pick on the Calendar grid or Dates strip: keep the task editor
 open, choose Calendar or Dates, then click or focus Start or Due. The calendar
 labels the active field;
-selecting a day fills that draft and retains its time. **Save date** commits the
-range. **Done picking** or Esc exits picking without discarding the draft.
+selecting a day fills that draft and retains its time. **Save** commits the
+whole task. **Done picking** or Esc exits picking without discarding the draft.
 Panning and zooming do not assign dates or change the featured countdown.
 
 **Ctrl-Z** and **Ctrl-Shift-Z** are the default document Undo/Redo shortcuts and

@@ -192,11 +192,32 @@ async function expectCalculation(page, expression, result, length, unit) {
     try { const state = JSON.parse(localStorage.getItem(key)), last = state.history.at(-1); return state.history.length === length && last.expression === expression && last.result === result && last.unit === unit; } catch { return false; }
   }, { key, expression, result, length, unit }, { timeout: 15000 });
 }
-async function openTaskDates(page) {
+async function focusFirstTaskControl(page, control) {
   await resetFocus(page); await navigateKey(page, "Control+Alt+2");
-  // About/Data/Settings/Help/Calculator/Source, Tasks/+, Gantt/Save, then row date.
-  await tab(page, 14); await navigateKey(page, "Space");
+  // Six header/footer controls, Tasks/+, Gantt/Save, then star/check/×/color/date.
+  const controls = { delete: 13, date: 15 };
+  assert.ok(Object.hasOwn(controls, control), `Unknown first-task control: ${control}`);
+  await tab(page, controls[control]);
+}
+async function openTaskDates(page) {
+  await focusFirstTaskControl(page, "date"); await navigateKey(page, "Space");
   await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { polling: 25 });
+}
+async function firstTaskDeletePoint(page) {
+  await focusFirstTaskControl(page, "delete");
+  const regions = await filledRegions(page, [77, 49, 39], 80, 450, 35);
+  const button = regions.find(region => region.width >= 12 && region.width <= 30
+    && region.height >= 10 && region.height <= 28);
+  assert.ok(button, "The first task must expose a compact boxed × beside its completion checkbox");
+  return button;
+}
+async function clearTaskDates(page) {
+  // From Due: its picker, Start, its picker, then the draft-only Remove date.
+  await tab(page, 4); await navigateKey(page, "Space");
+  await page.waitForFunction(() => {
+    const schedule = JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule;
+    return schedule?.due === "" && schedule.start === "";
+  });
 }
 async function openDuePicker(page) {
   await openTaskDates(page);
@@ -327,6 +348,11 @@ async function openMonthFromStrip(page, picking = false) {
     lastPaint = paintCount;
   }
   assert.fail(`The Calendar grid must settle across app paints before measuring it: ${JSON.stringify(previous)}`);
+}
+async function finishCalendarPicking(page) {
+  // The focused date band follows five date-navigation controls and Done picking.
+  for (let index = 0; index < 6; index++) await navigateKey(page, "Shift+Tab");
+  await navigateKey(page, "Space");
 }
 async function monthDueMark(page, color, cell) {
   const until = Date.now() + 5000; let mark;
@@ -496,7 +522,30 @@ try {
   await navigateKey(picker.page, "Control+Shift+z");
   await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0].at === "2030-01-16T14:30:00Z", key);
   await boot(picker.page, true); assert.deepEqual(JSON.parse(await saved(picker.page)), dated);
-  await capture(picker.page, "task-date-time-picker"); await release(picker.context, "task-date-time-picker");
+  await capture(picker.page, "task-date-time-picker");
+
+  progress("stage date removal, cancel it, then save and undo the whole removal");
+  await openTaskDates(picker.page); await clearTaskDates(picker.page);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), dated, "Remove date must only clear the unified editor draft until Save");
+  await navigateKey(picker.page, "Escape");
+  await picker.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), dated, "Escape must cancel a staged removal without changing the starred deadline");
+  await openTaskDates(picker.page);
+  const clearedDueField = await imeCursor(picker.page);
+  await clearTaskDates(picker.page);
+  await focusVisibleInput(picker.page, clearedDueField); await navigateKey(picker.page, "Enter");
+  const undated = structuredClone(dated); delete undated.tasks[0].deadline; undated.deadlines = []; undated.featured = null;
+  await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines.length === 0, key);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), undated, "Saving date removal must retain the task, color, notes and unrelated records");
+  assert.deepEqual(await exportData(picker.page), undated, "JSON export must reflect the committed removal without an orphan deadline");
+  await resetFocus(picker.page); await navigateKey(picker.page, "Control+z");
+  await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines[0]?.at === "2030-01-16T14:30:00Z", key);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), dated, "One Undo must restore the exact linked deadline and featured selection");
+  await navigateKey(picker.page, "Control+Shift+z");
+  await picker.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).deadlines.length === 0, key);
+  await boot(picker.page, true);
+  assert.deepEqual(JSON.parse(await saved(picker.page)), undated, "A committed date removal must survive refresh");
+  await release(picker.context, "task-date-time-picker");
 
   for (const legacy of [false, true]) {
     const label = legacy ? "delete-legacy-date-draft" : "delete-task-date-draft";
@@ -506,11 +555,13 @@ try {
     else rows.tasks.push({ id: 5, text: "Sample: remaining dated task", complete: false, deadline: 6 });
     rows.deadlines.push({ id: 6, title: "Sample: remaining dated task", at: "2030-01-20T18:00:00Z" });
     const removed = await newPage(label, { raw: JSON.stringify(rows) });
-    await boot(removed.page); await openTaskDates(removed.page);
+    await boot(removed.page);
+    const removeButton = await firstTaskDeletePoint(removed.page);
+    await openTaskDates(removed.page);
     await navigateKey(removed.page, "Control+a"); await removed.page.keyboard.type("2030-01-17"); await paint(removed.page);
     await removed.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule?.due === "2030-01-17");
-    // The date editor follows its owning row, whose final control is del.
-    await navigateKey(removed.page, "Shift+Tab"); await navigateKey(removed.page, "Space");
+    // Use the real boxed × captured beside completion before opening the draft.
+    await removed.page.mouse.click(removeButton.x, removeButton.y); await paint(removed.page);
     await removed.page.waitForFunction(key => !JSON.parse(localStorage.getItem(key)).deadlines.some(deadline => deadline.id === 2), key);
     await removed.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule);
     await openTaskDates(removed.page);
@@ -535,9 +586,11 @@ try {
   const startDay = await selectedDay(calendarPick.page);
   await calendarPick.page.mouse.click(startDay.x, startDay.y); await paint(calendarPick.page);
   assert.equal(await saved(calendarPick.page), fixtureRaw, "Selecting a Start day must only change the unsaved task draft");
-  // Disarming keeps the chosen draft while ordinary Dates browsing resumes.
-  await navigateKey(calendarPick.page, "Escape"); const browseDay = await selectedDay(calendarPick.page);
-  await calendarPick.page.mouse.click(browseDay.x + browseDay.width + 2, browseDay.y); await paint(calendarPick.page);
+  // Done picking keeps the chosen draft; Escape or an ordinary outside click
+  // cancels it. Resume keyboard browsing without assigning another Start day.
+  await finishCalendarPicking(calendarPick.page);
+  await navigateKey(calendarPick.page, "Control+Alt+t"); await navigateKey(calendarPick.page, "Control+Alt+t");
+  await navigateKey(calendarPick.page, "ArrowRight");
   assert.equal(await saved(calendarPick.page), fixtureRaw);
   await focusVisibleInput(calendarPick.page, dueField);
   const dueDay = await selectedDay(calendarPick.page); // Picking status moves this band down.
@@ -711,7 +764,7 @@ try {
   assert.deepEqual(await outage.page.evaluate(key => JSON.parse(localStorage.getItem(key)), weatherCacheKey), staleCache);
   await release(outage.context, "weather-stale-outage");
   assert.deepEqual(issues, [], "Browser errors or unexpected remote requests");
-  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, Dates keyboard/touch/pan/zoom, Calendar desktop/phone month layout and New Year navigation, due marks and shared draft picking without changing the featured task, and mocked local weather/cache/offline recovery.");
+  console.log("Browser smoke passed: 19 bridge-race scenarios, personal Tasks startup and obsolete sample-query compatibility, calculator popup from Tasks/Sheet, arithmetic/fractions/conversions/unrounded ans/reload/invalid input, saved notes and linked tasks, JSON confirmation/invalid imports, corrupt/stale-tab protection, independent contexts, desktop/medium/mobile layout, staged date-picker edits and date removal with cancellation/Undo/reload/JSON, boxed task deletion without orphan drafts, Dates keyboard/touch/pan/zoom, Calendar desktop/phone month layout and New Year navigation, due marks and shared draft picking without changing the featured task, and mocked local weather/cache/offline recovery.");
 } catch (error) {
   console.error(`Browser smoke failed during: ${phase}`, error);
   for (const { page, label } of pages.slice(-2)) if (!page.isClosed()) await page.screenshot({ path: resolve(results, `failure-${label}.png`), timeout: 3000 }).catch(() => {});

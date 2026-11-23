@@ -59,6 +59,7 @@ async function open(label, initial = fixture) {
   const page = await context.newPage();
   page.on("pageerror", error => issues.push(`${label}: ${error.message}`));
   page.setDefaultTimeout(15000);
+  page.setDefaultNavigationTimeout(60000);
   await page.clock.setFixedTime(new Date("2026-10-30T12:00:00Z"));
   await boot(page);
   return { context, page };
@@ -139,7 +140,7 @@ try {
 
   progress("restore task deletion, completion, color and featured data with Undo/Redo");
   current = await open("undo-redo-task");
-  await taskControl(current.page, 6); await key(current.page, "Space");
+  await taskControl(current.page, 3); await key(current.page, "Space"); // Star, completion, then the boxed × delete control.
   const deleted = { ...structuredClone(fixture), tasks: [], deadlines: [], featured: null };
   await expectState(current.page, deleted);
   await undoKey(current.page); await expectState(current.page, fixture);
@@ -151,8 +152,8 @@ try {
   await undoKey(current.page); await expectState(current.page, fixture);
   await redoKey(current.page); await expectState(current.page, completed);
   await undoKey(current.page); await expectState(current.page, fixture);
-  await taskControl(current.page, 3); await key(current.page, "Space");
-  await tab(current.page, 6); await key(current.page, "Space"); // Date, edit, del, None, Rose, Amber.
+  await taskControl(current.page, 4); await key(current.page, "Space");
+  await tab(current.page, 5); await key(current.page, "Space"); // Date, edit, None, Rose, Amber.
   const amber = structuredClone(fixture); amber.tasks[0].color = "amber";
   await expectState(current.page, amber);
   await undoKey(current.page); await expectState(current.page, fixture);

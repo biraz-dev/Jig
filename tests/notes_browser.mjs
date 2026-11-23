@@ -137,6 +137,15 @@ async function typeBody(page, text) {
     await paint(page);
   }
 }
+async function typeTaskDetails(page, text) {
+  await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", undefined, { timeout: 10000, polling: 25 });
+  await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
+  for (const [index, line] of text.split("\n").entries()) {
+    if (index) await key(page, "Shift+Enter");
+    if (line) await page.keyboard.type(line, { delay: 10 });
+    await paint(page);
+  }
+}
 async function expectClipboard(page, expected) {
   const until = Date.now() + 10000;
   let actual;
@@ -155,7 +164,7 @@ async function expectEditorText(page, text) {
 }
 async function attemptOpenLocal(scene) {
   // Data follows About in this known desktop viewport.
-  // Clicking it transfers focus without cancelling the working Task editor.
+  // An existing Task editor treats this pointer click as an explicit cancellation.
   await scene.page.mouse.click(80, 14); await paint(scene.page);
   await tab(scene.page, 5); // Settings, Help, Calculator, Start empty, Open local.
   await key(scene.page, "Space"); await key(scene.page, "Control+Alt+d");
@@ -168,7 +177,7 @@ async function focusedButtonRect(page) {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
     const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data, seen = new Uint8Array(bitmap.width * bitmap.height), regions = [];
     const match = index => [77, 49, 39].every((value, axis) => Math.abs(pixels[index * 4 + axis] - value) <= 3);
-    for (let y = 42; y < Math.min(480, bitmap.height); y++) for (let x = 5; x < bitmap.width - 5; x++) {
+    for (let y = 42; y < Math.min(700, bitmap.height); y++) for (let x = 5; x < bitmap.width - 5; x++) {
       const start = y * bitmap.width + x;
       if (seen[start] || !match(start)) continue;
       const queue = [start], r = { left: x, right: x, top: y, bottom: y, count: 0 }; seen[start] = 1;
@@ -176,7 +185,7 @@ async function focusedButtonRect(page) {
         const p = queue.pop(), px = p % bitmap.width, py = Math.floor(p / bitmap.width);
         r.left = Math.min(r.left, px); r.right = Math.max(r.right, px); r.top = Math.min(r.top, py); r.bottom = Math.max(r.bottom, py); r.count++;
         for (const [nx, ny] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
-          if (nx < 0 || nx >= bitmap.width || ny < 42 || ny >= Math.min(480, bitmap.height)) continue;
+          if (nx < 0 || nx >= bitmap.width || ny < 42 || ny >= Math.min(700, bitmap.height)) continue;
           const next = ny * bitmap.width + nx;
           if (!seen[next] && match(next)) { seen[next] = 1; queue.push(next); }
         }
@@ -289,9 +298,9 @@ async function taskToNote(scene, listCount, complete) {
   await canvasFocus(scene.page);
   await key(scene.page, "Escape"); await key(scene.page, "Control+Alt+2");
   const strip = listCount + (listCount > 1 ? 3 : 1);
-  await tab(scene.page, headerTargets + strip + 2 + (complete ? 4 : 5));
-  await key(scene.page, "Space"); // Dated first row's edit; no other tasks in this list.
-  await tab(scene.page, (listCount > 1 ? listCount : 0) + 6); // del, choices, input, Save, full body, Cancel, To note.
+  await tab(scene.page, headerTargets + strip + 2 + (complete ? 5 : 6));
+  await key(scene.page, "Space"); // Dated first row's Edit opens the unified Name field.
+  await tab(scene.page, (listCount > 1 ? listCount : 0) + (complete ? 9 : 10)); // Due/picker, Start/picker, Remove, Details, lists, optional Featured, Save, Cancel, To note.
   await key(scene.page, "Space");
 }
 
@@ -336,7 +345,7 @@ try {
   assert.equal(firstTask.text, "Sample: plan exhibition", "First-use work must save as personal data");
   await canvasFocus(current.page);
   await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
-  await tab(current.page, headerTargets + 7); // Header, tabs2, commands2, star/checkbox/date.
+  await tab(current.page, headerTargets + 8); // Header, tabs2, commands2, star/checkbox/×/date.
   await key(current.page, "Space");
   await typeBody(current.page, "2026-11-02"); await tab(current.page, 2); // Due picker, then Start.
   await typeBody(current.page, "2026-10-30"); await key(current.page, "Enter");
@@ -351,7 +360,7 @@ try {
   for (const cancel of [true, false]) {
     await canvasFocus(current.page);
     await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
-    await tab(current.page, headerTargets + 8); await key(current.page, "Space");
+    await tab(current.page, headerTargets + 9); await key(current.page, "Space");
     await typeBody(current.page, "2026-11-05"); await tab(current.page, 2);
     await typeBody(current.page, "2026-11-01");
     await expectState(current.page, plan, "Changing a date form must not partially change the saved schedule");
@@ -360,7 +369,7 @@ try {
     await expectEditorText(current.page, "2026-11-01");
     await expectState(current.page, plan, "Refresh must restore both unfinished date fields without committing them");
     if (cancel) {
-      await tab(current.page, 4); await key(current.page, "Space"); // Start picker, Save, Remove date, Cancel.
+      await key(current.page, "Escape"); // Cancel the entire recovered editor, including its dates.
       await expectState(current.page, plan, "Cancelling a recovered date form must preserve the original dates");
     } else {
       await key(current.page, "Enter");
@@ -373,23 +382,28 @@ try {
     }
   }
 
-  progress("recover unfinished dates after a local color save but reject an externally changed task");
+  progress("cancel unfinished dates on a color click, then recover a fresh editor and reject external conflicts");
   const firstUse = current;
   current = await open("notes-date-metadata-recovery", plan, false, false);
   await canvasFocus(current.page); await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
-  await tab(current.page, headerTargets + 8); await key(current.page, "Space");
+  await tab(current.page, headerTargets + 8); // Dated row's color control, after the boxed ×.
+  const colorPoint = await focusedButtonRect(current.page);
+  await tab(current.page); await key(current.page, "Space"); // Date opens the unified editor on Due.
   await typeBody(current.page, "2026-11-06");
-  // The color control stays available while the row's date form is open.
-  for (let index = 0; index < 4; index++) await key(current.page, "Shift+Tab"); // del, edit, date, color.
-  await key(current.page, "Space");
-  await tab(current.page, 5); await key(current.page, "Space"); // date, edit, del, None, Rose.
+  await current.page.mouse.click(colorPoint.x, colorPoint.y); await paint(current.page);
+  await expectState(current.page, plan, "Clicking a row control outside the editor must cancel its unfinished date without saving");
+  await current.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule);
+  await tab(current.page, 4); await key(current.page, "Space"); // date, Edit, None, Rose.
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "rose", storageKey);
   const recolored = structuredClone(plan); recolored.tasks[0].color = "rose";
-  await expectState(current.page, recolored, "Saving a color must preserve the committed dates while the new due date remains a draft");
+  await expectState(current.page, recolored, "A color change must retain the committed dates and every other record");
+  await canvasFocus(current.page); await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
+  await tab(current.page, headerTargets + 9); await key(current.page, "Space");
+  await typeBody(current.page, "2026-11-06");
   await current.page.waitForFunction(() => JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule?.due === "2026-11-06");
   await boot(current, true, false);
   await expectEditorText(current.page, "2026-11-06");
-  await expectState(current.page, recolored, "Refresh must restore unfinished dates after this tab saved task metadata");
+  await expectState(current.page, recolored, "Refresh must restore unfinished dates while preserving the committed color");
 
   const external = structuredClone(recolored);
   external.tasks[0].text += " (changed elsewhere)";
@@ -649,45 +663,46 @@ try {
   await boot(current, true); await expectState(current.page, imported);
   await current.context.close();
 
-  progress("retain edited Task details when switching data or quickly clicking another task's Edit");
+  progress("cancel a Task edit when immediately clicking another task's Edit");
   const race = structuredClone(taskFixture);
   race.tasks[0].complete = false; delete race.tasks[1].list_id;
   current = await open("notes-task-edit-safety", race);
   await canvasFocus(current.page);
   await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
-  await tab(current.page, headerTargets + 19); // Header, two-list strip5, commands2, row1 controls7, row2 Edit5.
+  await tab(current.page, headerTargets + 13); await key(current.page, "Space"); // First row Edit, after ×.
+  // The editor is inline, so measure the second Edit only after it expands.
+  await tab(current.page, 18); // Name to six date/details controls, two lists, Star/Save/Cancel/To note, then row2 Edit.
   const otherEdit = await focusedButtonRect(current.page);
-  await canvasFocus(current.page);
-  await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
-  await tab(current.page, headerTargets + 12); await key(current.page, "Space"); // First row Edit.
   const details = await taskGanttButtonPoint(current.page, "details");
   await current.page.mouse.click(details.x, details.y); await paint(current.page);
   const reviewedBody = "Sample: fired test\nReviewed details\nFinal character: Z";
-  await typeBody(current.page, reviewedBody.slice(0, -1));
+  await typeTaskDetails(current.page, reviewedBody.slice(0, -1));
   await current.page.keyboard.type("Z");
-  await current.page.mouse.click(otherEdit.x, otherEdit.y); // Intentionally no paint after the final input.
+  await current.page.mouse.click(otherEdit.x, otherEdit.y); // No paint after the final old-field character.
   await paint(current.page);
-  await current.page.waitForFunction(({ key, text }) => {
-    const draft = JSON.parse(sessionStorage.getItem(key));
-    return draft?.task?.id === 1 && draft.task.details === text;
-  }, { key: "jig.drafts.v1", text: reviewedBody }, { timeout: 10000 });
-  await expectState(current.page, race, "Edit another task must wait for Save/Clear and leave both records unchanged");
-  // The native click may focus the blocked Edit button. Refocus the visible
-  // Details field for clipboard readback after checking the preserved draft.
-  const retainedDetails = await taskGanttButtonPoint(current.page, "details");
-  await current.page.mouse.click(retainedDetails.x, retainedDetails.y); await paint(current.page);
-  await expectEditorText(current.page, reviewedBody);
+  await expectEditorText(current.page, race.tasks[1].text);
+  await expectState(current.page, race, "Editing another task must discard the old draft without changing either saved record");
+  await current.page.waitForFunction(() => {
+    const draft = JSON.parse(sessionStorage.getItem("jig.drafts.v1"));
+    return !draft?.task && !draft?.schedule;
+  });
+  await key(current.page, "Escape");
 
-  progress("route each character once when clicking from Details into the earlier title field");
-  await key(current.page, "ArrowRight"); // Collapse the copied selection to the end of Details.
+  progress("route each queued character once within the unified Task editor and recover its full details");
+  await canvasFocus(current.page); await key(current.page, "Control+Alt+2");
+  await tab(current.page, headerTargets + 13); await key(current.page, "Space");
+  const firstDetails = await taskGanttButtonPoint(current.page, "details");
+  await current.page.mouse.click(firstDetails.x, firstDetails.y); await paint(current.page);
+  await typeTaskDetails(current.page, reviewedBody);
   const earlierTitle = await taskGanttButtonPoint(current.page, "input");
   await current.page.keyboard.type("R");
-  await current.page.mouse.click(earlierTitle.x, earlierTitle.y); // No paint between the old-field text and new-field click.
+  await current.page.mouse.click(earlierTitle.x, earlierTitle.y); // Route queued Details text before focusing Name.
   await paint(current.page);
   await current.page.waitForFunction(({ key, details, title }) => {
     const task = JSON.parse(sessionStorage.getItem(key))?.task;
     return task?.id === 1 && task.details === details && task.text === title;
   }, { key: "jig.drafts.v1", details: reviewedBody + "R", title: race.tasks[0].text }, { timeout: 10000 });
+  await key(current.page, "Control+End");
   await current.page.keyboard.type("Q"); await paint(current.page);
   await current.page.waitForFunction(({ key, details, title }) => {
     const task = JSON.parse(sessionStorage.getItem(key))?.task;
@@ -696,26 +711,25 @@ try {
   await typeBody(current.page, race.tasks[0].text);
   const previousDetails = await taskGanttButtonPoint(current.page, "details");
   await current.page.mouse.click(previousDetails.x, previousDetails.y); await paint(current.page);
-  await typeBody(current.page, reviewedBody);
-  await expectState(current.page, race, "Cross-field input must remain a working edit until explicit Save");
-
+  await typeTaskDetails(current.page, reviewedBody);
+  await expectState(current.page, race, "All fields must remain staged until the unified editor is explicitly saved");
   await key(current.page, "Control+Alt+o"); await expectEditorText(current.page, reviewedBody);
-  await attemptOpenLocal(current);
-  const guardedDetails = await taskGanttButtonPoint(current.page, "details");
-  await current.page.mouse.click(guardedDetails.x, guardedDetails.y); await paint(current.page);
-  await expectEditorText(current.page, reviewedBody);
-  await expectState(current.page, race, "Data switches must not discard or silently commit an existing Task's edited details");
   await boot(current, true, false);
   const restoredDetails = await taskGanttButtonPoint(current.page, "details");
   await current.page.mouse.click(restoredDetails.x, restoredDetails.y); await paint(current.page);
   await expectEditorText(current.page, reviewedBody);
-  await expectState(current.page, race, "Refreshing must restore the working details without modifying the saved task");
-  const titleInput = await taskGanttButtonPoint(current.page, "input");
-  await current.page.mouse.click(titleInput.x, titleInput.y); await paint(current.page);
-  await key(current.page, "Enter");
+  await expectState(current.page, race, "Refresh must restore the working details without modifying the saved task");
+  await key(current.page, "Enter"); // Enter saves Details; Shift+Enter above inserts its line breaks.
   const reviewed = structuredClone(race); reviewed.tasks[0].details = reviewedBody;
   await expectState(current.page, reviewed, "Explicit Save must commit the complete original Task edit without changing the other task");
-  await undo(current, race); await current.context.close();
+  await undo(current, race);
+  await canvasFocus(current.page); await key(current.page, "Control+Alt+2");
+  await tab(current.page, headerTargets + 13); await key(current.page, "Space");
+  await typeBody(current.page, "Sample: cancelled Data-navigation name");
+  await attemptOpenLocal(current);
+  await expectState(current.page, race, "Clicking Data must cancel an existing Task edit without silently saving or removing records");
+  await current.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.task);
+  await current.context.close();
 
   progress("move a dated completed task into Notes and restore its full metadata");
   current = await open("notes-task-conversion", taskFixture);

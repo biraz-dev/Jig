@@ -102,16 +102,16 @@ fn help(ui: &mut Ui, settings: &AppSettings) {
     section(
         ui,
         "Tasks and lists",
-        "Add work in Add new task. The checkbox completes it; the star features a dated task in the countdown. Drag task handles to reorder. Sort places open dated tasks first, undated tasks next and completed tasks last.",
+        "Add work in Add new task. The checkbox completes it; the boxed × beside it deletes it with Undo. Double-click task text or choose edit to change its text, details, list, Start and Due together. Enter saves; Shift+Enter adds a line in Details. Escape, Cancel or clicking outside discards the whole edit. The star features a dated task in the countdown. Drag task handles to reorder. Sort places open dated tasks first, undated tasks next and completed tasks last.",
     );
     ui.label("Keep up to five lists. + adds a list; double-click a tab name to rename it. Shift-click tabs, or use Multi on touchscreens, to show several lists together. New tasks go into the active list. Click − twice, or choose Remove after the first click, to remove a list and move its tasks into the remaining list. Cancel or Esc dismisses the question. The last list stays.");
     ui.label("Move all completed lets you choose a destination for completed tasks in the selected lists, including Multi views. Dates, colors and details stay with each task. The move saves automatically; Undo restores the original lists.");
     section(
         ui,
         "Dates and calendar",
-        "Use a task's date control to set Start and Due. The calendar icon opens a date picker with local 24-hour time. You can type YYYY-MM-DD or YYYY-MM-DD HH:MM. Use date fills the draft; Save date commits it.",
+        "A task's date control opens the same editor with Due focused. The calendar icon opens a date picker with local 24-hour time. You can type YYYY-MM-DD or YYYY-MM-DD HH:MM. Use date fills the draft; Save commits the whole task in one Undo step.",
     );
-    ui.label("You can also keep the date editor open, choose Calendar or Dates, select Start or Due, then pick a day. Colored marks show tasks due on that day; completed tasks are subdued. Selecting a day shows its tasks and optional forecast without changing the starred countdown.");
+    ui.label("You can also keep the task editor open, choose Calendar or Dates, select Start or Due, then pick a day. Colored marks show tasks due on that day; completed tasks are subdued. Selecting a day shows its tasks and optional forecast without changing the starred countdown.");
     section(
         ui,
         "Calendar and Gantt views",

@@ -675,13 +675,18 @@ try {
   await canvasFocus(current.page);
   await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
   await tab(current.page, headerTargets + 13); await key(current.page, "Space"); // First row Edit, after ×.
-  // The editor is inline, so measure the second Edit only after it expands.
-  await tab(current.page, 18); // Name to six date/details controls, two lists, Star/Save/Cancel/To note, then row2 Edit.
-  const otherEdit = await focusedButtonRect(current.page);
   const details = await taskGanttButtonPoint(current.page, "details");
   await current.page.mouse.click(details.x, details.y); await paint(current.page);
   const reviewedBody = "Sample: fired test\nReviewed details\nFinal character: Z";
   await typeTaskDetails(current.page, reviewedBody.slice(0, -1));
+  // Changing multiline text can shrink the inline editor and move later rows.
+  // Measure the actual second Edit after the draft has reached its final height.
+  await tab(current.page, 12); // Details -> lists2, Star/Save/Cancel/To note, then row2 Edit.
+  const otherEdit = await focusedButtonRect(current.page);
+  const settledDetails = await taskGanttButtonPoint(current.page, "details");
+  await current.page.mouse.click(settledDetails.x, settledDetails.y); await paint(current.page);
+  await expectEditorText(current.page, reviewedBody.slice(0, -1)); await key(current.page, "Control+End");
+  console.log("Unified task edit-switch pointer target:", JSON.stringify(otherEdit));
   await current.page.keyboard.type("Z");
   await current.page.mouse.click(otherEdit.x, otherEdit.y); // No paint after the final old-field character.
   await paint(current.page);

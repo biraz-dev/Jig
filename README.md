@@ -385,6 +385,11 @@ Tasks, their dates and the featured countdown are preserved.
 New tasks go into the active list. The task editor can move an existing task to
 another list. Reorder and clear-completed actions apply to the visible lists.
 
+Click a task's text or empty row space to select it with an outline. **Up/Down**
+moves the selection through the visible tasks without changing saved data.
+**Ctrl-Up/Ctrl-Down** moves the selected task one position, updates the Gantt
+order and saves one Undo step. Tasks in hidden lists stay in place.
+
 Double-click a task's text, or choose **edit**, to open its inline editor. Text,
 details, list, Start and Due share one **Save**. **Enter** saves; **Shift-Enter**
 adds a line in Details. **Escape**, **Cancel**, or clicking outside discards the

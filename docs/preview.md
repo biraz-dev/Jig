@@ -380,6 +380,12 @@ Cancel or clicking outside discards the whole edit. Double-clicking task text,
 its edit control or its date control opens this same editor. The boxed × beside
 the completion checkbox deletes the task; the old del control is removed.
 
+Clicking task text or empty row space outlines the selected task. Up/Down moves
+the selection through the visible rows; Ctrl-Up/Ctrl-Down reorders it by one
+position with one Undo step. Hidden-list slots and task metadata stay intact.
+Selection itself is temporary and never changes the featured countdown.
+These keys belong to the selected task list, leaving editors and pickers alone.
+
 To choose dates on the Calendar grid or Dates strip, keep the task editor
 open, switch to Calendar or Dates, and click or focus Start or Due. A label shows
 which field the next selected day will fill. The chosen time is retained, and Save commits the

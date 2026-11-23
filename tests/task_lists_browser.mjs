@@ -250,6 +250,37 @@ async function bars(page) {
     bitmap.close(); return result;
   }, png.toString("base64"));
 }
+async function expectTaskOutline(page, row, selected) {
+  assert.ok(Number.isFinite(row.rowTop) && Number.isFinite(row.rowBottom), "The task row must expose its visible frame");
+  const until = Date.now() + 3000;
+  let actual;
+  do {
+    const png = await page.screenshot({ timeout: 60000, animations: "disabled", caret: "hide" });
+    actual = await page.evaluate(async ({ encoded, row }) => {
+      const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0);
+      const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      const edge = y => {
+        let longest = 0, run = 0;
+        for (let x = 6; x < Math.min(bitmap.width - 6, Math.floor(bitmap.width * 0.43)); x++) {
+          const offset = (y * bitmap.width + x) * 4;
+          if ([244, 107, 74].every((value, axis) => Math.abs(pixels[offset + axis] - value) <= 5)) run++;
+          else run = 0;
+          longest = Math.max(longest, run);
+        }
+        return longest >= 120;
+      };
+      const near = y => Array.from({ length: 9 }, (_, offset) => Math.round(y) + offset - 4)
+        .some(y => y >= 0 && y < bitmap.height && edge(y));
+      const result = near(row.rowTop) && near(row.rowBottom);
+      bitmap.close(); return result;
+    }, { encoded: png.toString("base64"), row });
+    if (actual === selected) return;
+    await paint(page);
+  } while (Date.now() < until);
+  assert.equal(actual, selected, "Only the selected task must have the warm accent box around its entire row");
+}
 async function expectBars(page, names) {
   const until = Date.now() + 10000; let actual;
   do {
@@ -410,6 +441,45 @@ try {
   assert.ok(combined.amberShade > 100 && combined.sageShade > 100, "Combined lists must retain distinguishable graphite row shades alongside task colors");
   assert.equal(await raw(current.page), original, "Selecting or combining list tabs must not edit tasks or change the featured countdown");
   await capture(current.page, "task-lists-combined");
+
+  progress("select task rows and reorder visible work with the keyboard without changing hidden lists");
+  await focusRowControl(current, 4);
+  const firstSelectable = await focusedControlPoint(current.page, 520);
+  await focusRowControl(current, 10); // Two dated single-task lists: second row's color.
+  const secondSelectable = await focusedControlPoint(current.page, 520);
+  await current.page.mouse.click(secondSelectable.right + 35, secondSelectable.y); await paint(current.page);
+  assert.notEqual(await current.page.evaluate(() => document.activeElement?.tagName), "INPUT", "A single task click must select its row without opening the editor");
+  await expectTaskOutline(current.page, secondSelectable, true);
+  await expectTaskOutline(current.page, firstSelectable, false);
+  assert.equal(await raw(current.page), original, "Row selection must not change tasks, dates, lists or the featured countdown");
+  await key(current.page, "ArrowUp");
+  await expectTaskOutline(current.page, firstSelectable, true);
+  await expectTaskOutline(current.page, secondSelectable, false);
+  await key(current.page, "ArrowUp"); // Clamp at the first visible row; Studio remains hidden.
+  await expectTaskOutline(current.page, firstSelectable, true);
+  await key(current.page, "ArrowDown");
+  await expectTaskOutline(current.page, secondSelectable, true);
+  await key(current.page, "ArrowDown");
+  await expectTaskOutline(current.page, secondSelectable, true);
+  assert.equal(await raw(current.page), original, "Up/Down selection and boundary clamping must leave portable data untouched");
+  await key(current.page, "Control+ArrowUp");
+  const keyboardOrder = structuredClone(fixture);
+  [keyboardOrder.tasks[1], keyboardOrder.tasks[2]] = [keyboardOrder.tasks[2], keyboardOrder.tasks[1]];
+  await expectState(current.page, keyboardOrder, "Ctrl+Up must swap the selected visible task with its previous visible neighbor and preserve hidden slots, membership and all linked metadata");
+  const keyboardBars = await expectBars(current.page, ["amber", "sage"]);
+  assert.ok(keyboardBars.sage.top < keyboardBars.amber.top, "The Gantt must follow the task's keyboard move");
+  await key(current.page, "Control+z"); await expectState(current.page, fixture, "One Undo must restore the complete task order after Ctrl+Up");
+  await key(current.page, "Control+z"); await expectState(current.page, fixture, "Selection and clamped movement must create no additional Undo entries");
+  await key(current.page, "Control+Shift+z"); await expectState(current.page, keyboardOrder, "Redo must restore the keyboard reorder without duplicating task records");
+  await undo(current, fixture);
+  await selectList(current, 1); // Home alone: hidden Studio must never become a move target.
+  await focusRowControl(current, 4);
+  const onlyVisible = await focusedControlPoint(current.page, 520);
+  await current.page.mouse.click(onlyVisible.right + 35, onlyVisible.y); await paint(current.page);
+  await key(current.page, "Control+ArrowUp");
+  await expectState(current.page, fixture, "Ctrl+Up on the only visible task must not move it across work in a hidden list");
+  await selectList(current, 2, true); // Restore Home + Show for the pointer-drag regression below.
+  await expectBars(current.page, ["amber", "sage"]);
 
   progress("drag a task grip between combined lists without changing membership or saving the preview");
   await focusRowControl(current, 1);
@@ -945,7 +1015,7 @@ try {
   await current.context.close();
 
   assert.deepEqual(issues, [], "Task-list changes must stay local and produce no app errors");
-  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, double-click unified name/details/list/timed-date editing with atomic Save/Undo, Escape/outside cancellation retaining Redo, compact boxed × deletion, linked date/completion edits and scoped completed removal, stable scoped due-date sorting, and completed-task moves to chosen lists through mouse/keyboard/touch with menu cancellation, single/Multi scope, selected destinations, preserved records and featured work, atomic Undo/Redo, refresh and JSON round trips.");
+  console.log("Task-list browser checks passed: legacy state, five-list cap, create/rename/remove with task preservation, repeated-minus confirmation by mouse/keyboard/touch with cancellation and tab-switch disarming, single/Shift/touch combinations and distinct Gantt shades, single-click row boxes, bounded Up/Down selection and atomic visible-slot Ctrl+Up ordering, mouse/touch grip reorder with release-only commits/cancellation/atomic Undo, double-click unified name/details/list/timed-date editing with atomic Save/Undo, Escape/outside cancellation retaining Redo, compact boxed × deletion, linked date/completion edits and scoped completed removal, stable scoped due-date sorting, and completed-task moves to chosen lists through mouse/keyboard/touch with menu cancellation, single/Multi scope, selected destinations, preserved records and featured work, atomic Undo/Redo, refresh and JSON round trips.");
 } catch (error) {
   console.error(`Task-list browser checks failed during: ${phase}`, error);
   if (current && !current.page.isClosed()) await capture(current.page, "task-lists-failure").catch(() => {});

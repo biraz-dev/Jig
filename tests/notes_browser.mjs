@@ -393,6 +393,11 @@ try {
   await current.page.mouse.click(colorPoint.x, colorPoint.y); await paint(current.page);
   await expectState(current.page, plan, "Clicking a row control outside the editor must cancel its unfinished date without saving");
   await current.page.waitForFunction(() => !JSON.parse(sessionStorage.getItem("jig.drafts.v1"))?.schedule);
+  // The dismissed field owned keyboard focus. Re-enter the color control
+  // through the normal Tasks tab order rather than assuming a pointer click
+  // transfers egui keyboard focus from an editor that has just disappeared.
+  await canvasFocus(current.page); await key(current.page, "Escape"); await key(current.page, "Control+Alt+2");
+  await tab(current.page, headerTargets + 8); await key(current.page, "Space");
   await tab(current.page, 4); await key(current.page, "Space"); // date, Edit, None, Rose.
   await current.page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).tasks[0].color === "rose", storageKey);
   const recolored = structuredClone(plan); recolored.tasks[0].color = "rose";
